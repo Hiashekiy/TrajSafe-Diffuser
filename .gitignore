@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+dist/
+build/
+
+# Virtual envs / IDE
+.venv/
+venv/
+env/
+.env
+.idea/
+.vscode/
+*.swp
+
+# Data artifacts (large / generated)
+data/d4rl/*.hdf5
+data/processed/
+logs/
+
+# Training / inference outputs
+outputs/
+
+# Testing / temp
+.pytest_cache/
+.mypy_cache/
+*.tmp
+.DS_Store
+Thumbs.db
+
+# archive
+_archive/

@@ -1,0 +1,130 @@
+# ============================================================
+# Maze2D 安全扩散规划器 —— 单一主配置（混合三场景训练 / 离线 IRIS 标签）
+#
+# 说明：
+#   - 这个文件是全部超参/路径的唯一来源，后端代码只读这里，不在代码里硬编码数值。
+#   - 默认把三张迷宫数据混合，train.py 使用 data/processed/mixed 数据集；
+#     同时保留「离线 IRIS MVIE」椭圆标签生成（scripts/data/04）与 mixed 构建（scripts/data/build_mixed_dataset.py）。
+#   - 不再依赖 Neural-IRIS 网络（其模型/benchmark 已归档到 _archive/neural_iris_legacy/）。
+#
+# 用法：
+#   python train.py --config configs/config.yaml
+#   python scripts/data/04_generate_ellipse_labels.py --config configs/config.yaml
+# ============================================================
+
+# ---------- 环境与通用 ----------
+env:
+  # 运行训练/采样用的 Python 可执行文件（仅作记录/便捷脚本调用用）
+  python: "E:/CondaEnvData/envs/GGMPC/python.exe"
+  # 计算设备；'cuda' 时若 torch 检测到 CUDA 就用 GPU，否则回退 CPU
+  device: "cuda"
+  # 全局随机种子（set_seed 会固定 numpy / torch 随机数）
+  seed: 42
+
+# ---------- 数据（umaze 单场景旧默认，保留用于 sample/evaluate/单场景脚本兼容）----------
+# 注意：训练不直接用这里的 processed_dir / maze；实际训练数据是 data/processed/mixed。
+data:
+  maze: "umaze"                                     # 迷宫名（旧单场景默认）
+  raw_hdf5: "data/d4rl/maze2d-umaze-sparse-v1.hdf5" # 原始 D4RL 数据（重新准备时用）
+  raw_dir: "data/d4rl"                              # 原始数据目录
+  processed_dir: "data/processed/maze2d_umaze"      # umaze 预处理输出目录（旧单场景）
+  horizon: 128                                      # 轨迹长度/扩散模型窗口长度
+  stride: 32                                        # 切窗步长
+  max_episodes: 0                                   # 0=使用全部轨迹（限制条数用）
+  train_val_test: [0.9, 0.05, 0.05]                 # 切分比例
+
+# ---------- 几何 / 地图（umaze 旧默认，仅作模型构造兜底）----------
+# scene 用 [0,8]^2 网格（见 EXTENT），此处 extent 只是 Planner 构造时的兜底。
+geometry:
+  coord_module: "src/geometry/d4rl_coordinates.py"   # 坐标/墙心换算模块
+  maze_name: "umaze"                                 # 迷宫名（旧）
+  obs_offset: [1.2, 1.2]                             # qpos→obs 坐标偏移
+  wall_half: 0.5                                     # 墙半宽
+  particle_radius: 0.1                               # 粒子半径（SDF 膨胀用）
+  cell_map: "round"                                  # 占位网格取整方式
+  extent: [0, 4, 0, 4]                               # [x0,x1,y0,y1] 世界范围（umaze）
+  global_res: 20.0                                   # 网格分辨率（格/单位长度）
+  inflate_particle: true                             # 占位图是否按粒子半径膨胀
+  occupancy_threshold: 0.002                         # 占位阈值
+  local_patch_size: 128                              # 局部 patch 边长（像素）
+  local_res: 20.0                                    # 局部 patch 分辨率（离线 IRIS 用）
+
+# ---------- 三张迷宫（离线 IRIS 标签生成 + mixed 构建使用）----------
+# 训练本身不遍历这里，但重生成椭圆标签(04) 和 构建 mixed 需要各迷宫几何。
+mazes:
+  - name: "umaze"                                    # 迷宫标识（写进标签/目录名）
+    raw_hdf5: "data/d4rl/maze2d-umaze-sparse-v1.hdf5"
+    processed_dir: "data/processed/maze2d_umaze"     # 该迷宫预处理目录（含 map/trajectories/normalization）
+    extent: [0, 4, 0, 4]                             # 世界坐标范围
+    global_res: 20.0                                 # 全局网格分辨率
+    local_res: 20.0                                  # 离线 IRIS 局部 patch 分辨率
+  - name: "medium"
+    raw_hdf5: "data/d4rl/maze2d-medium-sparse-v1.hdf5"
+    processed_dir: "data/processed/maze2d_medium"
+    extent: [0, 8, 0, 8]
+    global_res: 10.0   # 重采样：16x16 -> 80x80（与 umaze 相当）
+    local_res: 20.0
+  - name: "large"
+    raw_hdf5: "data/d4rl/maze2d-large-sparse-v1.hdf5"
+    processed_dir: "data/processed/maze2d_large"
+    extent: [0, 9, 0, 12]
+    global_res: 8.0    # 重采样：12x9 -> 72x96（模型自适应不同 scene 尺寸）
+    local_res: 20.0
+
+# ---------- 模型 ----------
+model:
+  horizon: 128        # 预测轨迹长度（= 扩散时间步序列长度）
+  state_dim: 6        # 状态维度：[ax, ay, x, y, vx, vy]
+  d_model: 128        # Transformer/特征维度
+  num_heads: 8        # 注意力头数
+  trajectory_encoder_layers: 2   # 轨迹编码器层数（噪声轨迹）
+  trajectory_decoder_layers: 4   # 轨迹解码器层数
+  ffn_dim: 512        # 前馈维度
+  local_window: 5     # 局部场景采样窗口（每点取多少邻域）
+  dropout: 0.1        # Dropout 比例
+
+# ---------- 扩散 ----------
+diffusion:
+  timesteps: 64           # 扩散时间步数（T）
+  prediction_type: "sample"  # 预测目标：直接预测 x0（clean sample）
+  beta_schedule: "squaredcos_cap_v2"  # 噪声调度
+  beta_start: 0.0001      # 起始噪声强度
+  beta_end: 0.02          # 终止噪声强度
+
+# ---------- 训练 ----------
+train:
+  batch_size: 32           # 批大小（混合三迷宫数据，sample 级混合）
+  epochs: 100              # 训练轮数（可被 --epochs 覆盖）
+  lr: 1.0e-4               # 学习率
+  weight_decay: 1.0e-4     # AdamW 权重衰减
+  grad_clip: 1.0           # 梯度裁剪范数（0/None 表示不裁剪）
+  num_workers: 0           # DataLoader 进程数（Windows 下建议 0）
+  save_every: 10           # 每多少轮保存一次 checkpoint
+  warmup_epochs: 3         # 前 N 轮只训练 L_diff + 小 L_smooth（热身课程）
+  ckpt_dir: "outputs/ckpt"           # 模型保存目录
+
+# ---------- 损失权重 ----------
+loss:
+  lambda_diff: 10.0       # 轨迹重建主干（L_diff）权重
+  lambda_var: 1.0         # 相邻点位移方差项（时间一致性）
+  lambda_var_vel: 2.0     # 相邻速度差分方差项
+  lambda_e: 1.0           # 椭圆子损失总权重（= param + iou + ecol + anchor）
+  lambda_col: 5.0         # 轨迹碰撞损失（SDF 采样）
+  lambda_s: 1.0           # 轨迹平滑损失（L_smooth）
+  lambda_param: 1.0       # 椭圆参数损失（center/radius/theta）
+  lambda_iou: 1.0         # 椭圆 IoU 损失
+  lambda_ecol: 0.2        # 椭圆-占位碰撞损失（归一化）
+  lambda_anchor: 1.0      # 锚点（轨迹点落入椭圆）损失
+  lambda_c: 1.0           # 椭圆中心损失
+  lambda_r: 1.0           # 椭圆半径损失
+  lambda_theta: 1.0       # 椭圆朝向（方向向量）损失
+  ellipse_valid_min_sdf: 0.0  # 标签有效性：waypoint 的 SDF 下限
+  collision_margin: 0.0   # 碰撞 SDF 安全边距
+  collision_sigma: 0.1    # 碰撞软判定 sigmoid 平滑系数
+  ellipse_margin: 1.0     # 椭圆采样网格的额外边距
+
+# ---------- 离线 IRIS（椭圆标签生成）----------
+# 仅保留离线 MVIE 求解器需要的两项；Neural-IRIS 网络相关已删除。
+iris:
+  patch_size: 128         # 局部 patch 边长（像素），离线 IRIS 在 patch 内求解
+  cache_resolution: 0.05  # 位置栅格去重粒度（世界坐标，越大缓存命中越高、越省算力）
