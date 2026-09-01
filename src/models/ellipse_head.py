@@ -8,15 +8,16 @@ class EllipseHead(nn.Module):
     def __init__(self, d_model=128, ffn_dim=256):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(d_model, ffn_dim),
+            nn.Linear(d_model * 2, ffn_dim),      # S_t + waypoint position embedding
             nn.SiLU(),
             nn.Linear(ffn_dim, ffn_dim),
             nn.SiLU(),
             nn.Linear(ffn_dim, 6),
         )
 
-    def forward(self, S_t):
-        raw = self.mlp(S_t)  # [B,H,6]
+    def forward(self, S_t, pos_emb=None):
+        x = torch.cat([S_t, pos_emb], dim=-1) if pos_emb is not None else S_t
+        raw = self.mlp(x)  # [B,N,6]
         cx = raw[..., 0]
         cy = raw[..., 1]
         rho1 = raw[..., 2]

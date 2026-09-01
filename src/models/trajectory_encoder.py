@@ -1,9 +1,17 @@
-"""Trajectory Token Encoder."""
+"""Trajectory Token Encoder.
+
+Each diffusion token is one zero-sum residual  z_k [B,N,2]  (N = H-1).
+The token only carries:
+    phi_z(z_k)  +  PE_traj(k)  +  E_diff(t)
+No velocity / acceleration / p_k position embedding.  Absolute position is
+provided by (a) the point-scene sampling branch (via the integrated p_k) and
+(b) the decoder condition memory C (start / goal / scene).
+"""
 
 import torch
 import torch.nn as nn
 
-from .position_encoding import Sinusoidal2DPositionEmbedding, SinusoidalTimestepEmbedding
+from .position_encoding import SinusoidalTimestepEmbedding
 
 
 class PreNormBlock(nn.Module):
@@ -19,34 +27,25 @@ class PreNormBlock(nn.Module):
 
 
 class TrajectoryEncoder(nn.Module):
-    def __init__(self, horizon, state_dim=6, d_model=128, num_heads=8,
-                 num_layers=2, ffn_dim=512, dropout=0.1):
+    def __init__(self, horizon, d_model=128, num_heads=8, num_layers=2,
+                 ffn_dim=512, dropout=0.1):
         super().__init__()
-        self.horizon = horizon
+        self.horizon = horizon          # H = number of positions (tokens = H-1)
         self.d_model = d_model
-        self.motion_dim = 4  # [ax,ay,vx,vy]
-        self.pos_dim = 2     # [x,y]
-        self.motion_linear = nn.Linear(self.motion_dim, d_model)
-        self.pos_embed = Sinusoidal2DPositionEmbedding(d_model)
+        self.z_linear = nn.Linear(2, d_model)
         self.index_embed = nn.Embedding(horizon, d_model)
         self.time_embed = SinusoidalTimestepEmbedding(d_model)
         self.blocks = nn.ModuleList([
             PreNormBlock(d_model, num_heads, dropout=dropout) for _ in range(num_layers)
         ])
 
-    def forward(self, x_t, t, cond=None):
-        # x_t [B,H,6], t [B].
-        # NOTE: this matches the archived Janner Diffuser / RGG reference: the
-        # denoiser is UNCONDITIONAL; start/goal conditioning is applied via
-        # endpoint inpainting (apply_endpoint_condition) during training/sampling.
-        B, H, _ = x_t.shape
-        motion = x_t[..., [0, 1, 4, 5]]  # [B,H,4]
-        pos = x_t[..., [2, 3]]           # [B,H,2]
-        h = self.motion_linear(motion) + self.pos_embed(pos)
-        idx_emb = self.index_embed(torch.arange(H, device=x_t.device))[None]  # [1,H,C]
-        h = h + idx_emb
-        t_emb = self.time_embed(t)[:, None]  # [B,1,C]
-        h = h + t_emb
+    def forward(self, z_t, t, cond=None):
+        """z_t [B,N,2], t [B] -> [B,N,C]."""
+        B, N, _ = z_t.shape
+        h = self.z_linear(z_t.float())
+        idx = torch.arange(N, device=z_t.device)
+        h = h + self.index_embed(idx)[None]
+        h = h + self.time_embed(t)[:, None]
         for blk in self.blocks:
             h = blk(h)
         return h

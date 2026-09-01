@@ -1,58 +1,53 @@
-"""Reverse-diffusion sampler with start/goal reimposition."""
+"""Deterministic zero-sum reverse sampler.
+
+All state stays in the zero-sum subspace: Z_T, Z_t, eps, Z_{t-1} are all zero-sum,
+so the integrated positions always satisfy p_0 = start and p_N = goal.
+Returns scene-frame positions [B,H,2].
+"""
 
 import torch
 
-from .conditioning import apply_endpoint_condition
-
-
-def _reimpose_conditions(x, cond, horizon):
-    # cond [B,2,2] = (start_xy_norm, goal_xy_norm).  Replace position dims 2,3.
-    return apply_endpoint_condition(x, cond, horizon, obs_start=2, obs_end=4)
+from .zerosum import zero_sum, integrate_positions, compute_base
 
 
 def sample(model, map_tensor, schedule, cond, n_samples, device="cuda",
-           steps=None, reimpose=True, return_traj=False, return_timesteps=False):
-    """Sample clean trajectories conditioned on start/goal positions.
-
-    cond: [B,2,2] normalized (start_xy, goal_xy).  steps None => full schedule.
-    Returns (x0 [B,H,6] normalized, traj_log[, t_log]).
-    When ``return_timesteps``, also returns the diffusion-time ``t`` used at
-    each recorded step (same length as ``traj_log``).
-    """
+           steps=None, return_traj=False, return_timesteps=False):
     model.eval()
     B = cond.shape[0]
-    horizon = model.horizon
+    H = model.horizon
+    N = H - 1
+    start = cond[:, 0]
+    goal = cond[:, 1]
+    g = goal - start
+    base = compute_base(g, N)
+
     if steps is None or steps >= schedule.num_timesteps:
         timesteps = list(range(schedule.num_timesteps - 1, -1, -1))
     else:
         idx = torch.linspace(0, schedule.num_timesteps - 1, steps).long().tolist()
         timesteps = list(reversed(idx))
-    x = torch.randn(B, horizon, 6, device=device, dtype=torch.float32)
+
+    z = torch.randn(B, N, 2, device=device, dtype=torch.float32)
+    z = zero_sum(z)
     traj_log = []
     t_log = []
     with torch.no_grad():
         for t in timesteps:
+            delta_t = base + z
+            pos_t = integrate_positions(start, delta_t)         # [B,H,2]
             tb = torch.full((B,), t, device=device, dtype=torch.long)
-            out = model(x, tb, map_tensor, cond=cond)
-            x0_pred = out["x0_pred"]
-            if t == 0:
-                x = x0_pred.detach().float()
-            else:
-                t_idx = torch.full((1,), t, device=device, dtype=torch.long)
-                alpha_t = schedule.alphas[t_idx][0].item()
-                sqrt_ab = schedule.sqrt_alphas_cumprod[t_idx][0].item()
-                sqrt_one_ma = schedule.sqrt_one_minus_alphas_cumprod[t_idx][0].item()
-                beta_t = schedule.betas[t_idx][0].item()
-                eps = (x.double() - sqrt_ab * x0_pred.double()) / sqrt_one_ma
-                prev = (x.double() - beta_t / sqrt_one_ma * eps) / (alpha_t ** 0.5)
-                pvar = schedule.posterior_variance[t_idx][0].item()
-                prev = prev + (pvar ** 0.5) * torch.randn_like(prev)
-                x = prev.float()
-            if reimpose:
-                x = _reimpose_conditions(x, cond, horizon)
+            out = model(z, tb, map_tensor, cond=cond)
+            z0_pred = zero_sum(out["z0_pred"])
+            t_i = torch.full((1,), t, device=device, dtype=torch.long)
+            alpha_t = float(schedule.alphas[t_i][0])
+            sqrt_ab = float(schedule.sqrt_alphas_cumprod[t_i][0])
+            sqrt_one = float(schedule.sqrt_one_minus_alphas_cumprod[t_i][0])
+            beta_t = float(schedule.betas[t_i][0])
+            eps = (z.double() - sqrt_ab * z0_pred.double()) / sqrt_one
+            z = ((z.double() - beta_t / sqrt_one * eps) / (alpha_t ** 0.5)).float()
             if return_traj:
-                traj_log.append(x.detach().clone())
+                traj_log.append(pos_t.detach().clone())
                 t_log.append(t)
     if return_timesteps:
-        return x, traj_log, t_log
-    return x, traj_log
+        return pos_t, traj_log, t_log
+    return pos_t, traj_log

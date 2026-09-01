@@ -62,6 +62,21 @@ class NoiseSchedule:
         x_t = sqrt_ab[:, None, None] * x0 + sqrt_one_ma[:, None, None] * noise
         return x_t
 
+    def q_sample_zero_sum(self, z0, t, noise=None):
+        """Forward diffusion on the zero-sum residual Z [B,N,2].
+
+        Noise is projected onto the zero-sum subspace along the N axis so the
+        diffusion state always satisfies sum_k z_k = 0.
+        """
+        z0 = z0.float()
+        if noise is None:
+            noise = torch.randn_like(z0)
+            noise = noise - noise.mean(dim=1, keepdim=True)  # project over N
+        t = t.long()
+        sqrt_ab = self.sqrt_alphas_cumprod[t][:, None, None].to(z0.dtype)
+        sqrt_one_ma = self.sqrt_one_minus_alphas_cumprod[t][:, None, None].to(z0.dtype)
+        return (sqrt_ab * z0 + sqrt_one_ma * noise).float()
+
     def predict_x0_from_eps(self, x_t, t, eps):
         sqrt_ab = self.sqrt_alphas_cumprod[t][:, None, None]
         sqrt_one_ma = self.sqrt_one_minus_alphas_cumprod[t][:, None, None]

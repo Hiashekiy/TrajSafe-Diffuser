@@ -34,3 +34,6 @@ Thumbs.db
 
 # archive
 _archive/
+
+# scene-normalized generated dataset (large)
+data/processed_scene/

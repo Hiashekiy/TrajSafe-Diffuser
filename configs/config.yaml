@@ -3,7 +3,7 @@
 #
 # 说明：
 #   - 这个文件是全部超参/路径的唯一来源，后端代码只读这里，不在代码里硬编码数值。
-#   - 默认把三张迷宫数据混合，train.py 使用 data/processed/mixed 数据集；
+#   - 默认把三张迷宫数据混合，train.py 使用 data/processed_scene 数据集；
 #     同时保留「离线 IRIS MVIE」椭圆标签生成（scripts/data/04）与 mixed 构建（scripts/data/build_mixed_dataset.py）。
 #   - 不再依赖 Neural-IRIS 网络（其模型/benchmark 已归档到 _archive/neural_iris_legacy/）。
 #
@@ -22,7 +22,7 @@ env:
   seed: 42
 
 # ---------- 数据（umaze 单场景旧默认，保留用于 sample/evaluate/单场景脚本兼容）----------
-# 注意：训练不直接用这里的 processed_dir / maze；实际训练数据是 data/processed/mixed。
+# 注意：训练不直接用这里的 processed_dir / maze；实际训练数据是 data/processed_scene。
 data:
   maze: "umaze"                                     # 迷宫名（旧单场景默认）
   raw_hdf5: "data/d4rl/maze2d-umaze-sparse-v1.hdf5" # 原始 D4RL 数据（重新准备时用）
@@ -80,12 +80,12 @@ model:
   trajectory_encoder_layers: 2   # 轨迹编码器层数（噪声轨迹）
   trajectory_decoder_layers: 4   # 轨迹解码器层数
   ffn_dim: 512        # 前馈维度
-  local_window: 5     # 局部场景采样窗口（每点取多少邻域）
+  local_window: 9     # 局部场景采样窗口（每点取多少邻域）
   dropout: 0.1        # Dropout 比例
 
 # ---------- 扩散 ----------
 diffusion:
-  timesteps: 64           # 扩散时间步数（T）
+  timesteps: 16           # 扩散时间步数（T），先 16 步，后续可升到 32/64
   prediction_type: "sample"  # 预测目标：直接预测 x0（clean sample）
   beta_schedule: "squaredcos_cap_v2"  # 噪声调度
   beta_start: 0.0001      # 起始噪声强度
@@ -93,7 +93,7 @@ diffusion:
 
 # ---------- 训练 ----------
 train:
-  batch_size: 32           # 批大小（混合三迷宫数据，sample 级混合）
+  batch_size: 16           # 批大小（混合三迷宫数据，sample 级混合）
   epochs: 100              # 训练轮数（可被 --epochs 覆盖）
   lr: 1.0e-4               # 学习率
   weight_decay: 1.0e-4     # AdamW 权重衰减
@@ -105,23 +105,28 @@ train:
 
 # ---------- 损失权重 ----------
 loss:
-  lambda_diff: 10.0       # 轨迹重建主干（L_diff）权重
-  lambda_var: 1.0         # 相邻点位移方差项（时间一致性）
-  lambda_var_vel: 2.0     # 相邻速度差分方差项
-  lambda_e: 1.0           # 椭圆子损失总权重（= param + iou + ecol + anchor）
-  lambda_col: 5.0         # 轨迹碰撞损失（SDF 采样）
-  lambda_s: 1.0           # 轨迹平滑损失（L_smooth）
-  lambda_param: 1.0       # 椭圆参数损失（center/radius/theta）
-  lambda_iou: 1.0         # 椭圆 IoU 损失
-  lambda_ecol: 0.2        # 椭圆-占位碰撞损失（归一化）
-  lambda_anchor: 1.0      # 锚点（轨迹点落入椭圆）损失
-  lambda_c: 1.0           # 椭圆中心损失
-  lambda_r: 1.0           # 椭圆半径损失
-  lambda_theta: 1.0       # 椭圆朝向（方向向量）损失
-  ellipse_valid_min_sdf: 0.0  # 标签有效性：waypoint 的 SDF 下限
-  collision_margin: 0.0   # 碰撞 SDF 安全边距
-  collision_sigma: 0.1    # 碰撞软判定 sigmoid 平滑系数
-  ellipse_margin: 1.0     # 椭圆采样网格的额外边距
+  # 损失权重：L_Z 固定锚=1；L_p/L_param/L_iou/L_smooth 用 GradNorm 自动调；L_col 用 Lagrangian；L_axis 走 ramp
+  lambda_z: 1.0           # 主扩散损失 L_Z（最重要，给最大权重）
+  lambda_p: 0.5           # 中间位置重建损失 L_p
+  lambda_smooth: 0.05     # 轨迹平滑损失 L_smooth
+  lambda_ellipse: 0.5     # 椭圆参数损失总权重 L_param
+  lambda_iou: 0.3         # 椭圆软 IoU 损失权重 L_iou
+  ellipse_margin: 1.0     # 椭圆 IoU 局部网格边距
+  lambda_c: 1.0           # 椭圆中心损失（子项）
+  lambda_r: 1.0           # 椭圆半径损失（子项）
+  lambda_theta: 1.0       # 椭圆方向（双角度向量）损失（子项）
+  # 阶段式辅助损失（相对权重）
+  lambda_axis_max: 0.3          # L_axis 上限
+  lambda_collision_max: 0.3     # L_collision 上限
+  axis_warmup_epochs: 3         # L_axis 开启轮数
+  axis_ramp_epochs: 20          # L_axis 线性爬坡轮数
+  collision_warmup_epochs: 10   # L_collision 开启轮数
+  collision_ramp_epochs: 30     # L_collision 线性爬坡轮数
+  collision_margin: 0.0         # 碰撞 SDF 安全边距（场景坐标）
+  collision_sigma: 0.1          # 碰撞软判定平滑系数
+  collision_delta: 0.0          # 目标碰撞损失上限
+  collision_eta: 0.1            # lambda_col 更新步长
+  collision_lag_init: 0.1       # lambda_col 初始值
 
 # ---------- 离线 IRIS（椭圆标签生成）----------
 # 仅保留离线 MVIE 求解器需要的两项；Neural-IRIS 网络相关已删除。
