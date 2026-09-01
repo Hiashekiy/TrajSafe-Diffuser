@@ -1,12 +1,14 @@
 """Scene Encoder: a lightweight U-Net that converts an occupancy map into
 (1) a low-resolution global scene feature (bottleneck 16x16) and
-(2) a full-resolution local scene feature (256x256).
+(2) a reduced-resolution local scene feature (local_res x local_res, default 64).
 
 Input:   [B,1,256,256] occupancy over the scene frame [-1,1]^2.
 Output:  dict with
-         "memory": [B,C,16,16]    -- bottleneck, used as the global Scene Memory
-         "local": [B,C,256,256]   -- full-res, used for local window sampling
+         "memory": [B,C,16,16]        -- bottleneck, used as the global Scene Memory
+         "local": [B,C,local_res,local_res] -- reduced-res, used for local window sampling
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -30,23 +32,36 @@ def _down(cin, cout):
 
 
 class SceneEncoder(nn.Module):
-    """U-Net encoder with bottleneck 16x16 and full-res local output."""
+    """U-Net encoder with bottleneck 16x16 and a reduced-res local output.
 
-    def __init__(self, d_model=128, enc=(32, 64, 96, 128, 128), res=256):
+    The decoder only up-samples from the res/16 bottleneck to ``local_res``
+    (16 -> 32 -> 64 for local_res=64), rather than restoring full 256.
+    """
+
+    def __init__(self, d_model=128, enc=(32, 64, 96, 128, 128), res=256, local_res=64):
         super().__init__()
         self.res = res
+        self.local_res = int(local_res)
         self.d_model = d_model
         c = list(enc)                     # encoder channels
         self.stem = _conv_block(1, c[0])
         self.downs = nn.ModuleList([_down(c[i], c[i + 1]) for i in range(len(c) - 1)])
         self.bottleneck = _conv_block(c[-1], c[-1])
 
-        # decoder: res/16 -> res/8 -> res/4 -> res/2 -> res (4 up stages)
-        self.skip_ch = [c[3], c[2], c[1], c[0]]   # matched encoder scales
-        self.up_out = [128, 96, 64, 32]           # target channels per up stage
+        # number of decoder up-stages: res/16 -> local_res
+        bottleneck_res = res // 16
+        n_up = int(round(math.log2(self.local_res / bottleneck_res)))
+        n_up = max(1, n_up)
+        self.n_up = n_up
+        # skip channels for each up-stage (encoder outputs at the matched scale)
+        # encoder skips: [stem@res, d1@res/2, d2@res/4, d3@res/8, d4@res/16]
+        # for up-stage i target res, skip = skips[-(i+2)] = c[-2-i]
+        self.skip_ch = [c[-2 - i] for i in range(n_up)]
+        up_out_all = [128, 96, 64]
+        self.up_out = up_out_all[:n_up]
         prev_in = c[-1]
         ups = []
-        for i in range(4):
+        for i in range(n_up):
             cin = prev_in + self.skip_ch[i]
             ups.append(_conv_block(cin, self.up_out[i]))
             prev_in = self.up_out[i]
@@ -62,7 +77,7 @@ class SceneEncoder(nn.Module):
             x = down(x)
             skips.append(x)
         mem = self.bottleneck(x)               # [B,c_last,res/16,res/16]
-        # decoder
+        # decoder (stop at local_res)
         u = mem
         for i, up in enumerate(self.ups):
             u = torch.nn.functional.interpolate(u, scale_factor=2, mode="bilinear",
@@ -73,6 +88,6 @@ class SceneEncoder(nn.Module):
                                                     mode="bilinear", align_corners=False)
             u = torch.cat([u, skip], dim=1)
             u = up(u)
-        local = self.out_conv(u)               # [B,d_model,res,res]
+        local = self.out_conv(u)               # [B,d_model,local_res,local_res]
         memory = self.memory_conv(mem)         # [B,d_model,res/16,res/16]
         return {"memory": memory, "local": local}

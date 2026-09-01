@@ -1,5 +1,10 @@
 """Local Scene Sampler: sample a window around each waypoint from the full-res
-scene feature, and add a learned relative position encoding per window cell.
+scene feature.
+
+Only the sampled map feature is used -- it already carries the per-cell absolute
+map-position encoding (loc_pe = local + map_pos), so no extra relative / absolute
+waypoint position embedding is added.  This keeps the data continuous and avoids
+mixing in extra positional information.
 
 Uses grid_sample with a per-batch grid (shape [B, N*w*w, 2]) so the 256x256
 feature map is NOT replicated across B*N -- this is memory-safe.
@@ -11,13 +16,11 @@ import torch.nn.functional as F
 
 
 class LocalSceneSampler(nn.Module):
-    def __init__(self, local_window=7, d_model=128, res=256):
+    def __init__(self, local_window=9, d_model=128, res=256):
         super().__init__()
         self.local_window = local_window
         self.res = res
         w = local_window
-        self.rel_pos = nn.Embedding(w * w, d_model)
-        self.abs_pos = nn.Linear(2, d_model)     # absolute waypoint position encoding
         offs = (torch.arange(w, dtype=torch.float32) - (w - 1) / 2.0) * (2.0 / res)
         self.register_buffer("offs", offs)
         ox, oy = torch.meshgrid(offs, offs, indexing="xy")
@@ -33,8 +36,4 @@ class LocalSceneSampler(nn.Module):
         sampled = F.grid_sample(scene_local_pe, grid, mode="bilinear",
                                 padding_mode="border", align_corners=False)
         sampled = sampled.squeeze(-1).transpose(1, 2)                    # [B,N*w*w,C]
-        idx = torch.arange(w * w, device=p_scene.device)
-        rel = self.rel_pos(idx)[None, None, :, :]                        # [1,1,w*w,C]
-        pos_emb = self.abs_pos(p_scene)[:, :, None, :]                   # [B,N,1,C]
-        sampled = sampled.reshape(B, N, w * w, C) + rel + pos_emb
-        return sampled
+        return sampled.reshape(B, N, w * w, C)

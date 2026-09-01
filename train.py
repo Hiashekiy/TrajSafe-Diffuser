@@ -1,4 +1,11 @@
-"""Train the zero-sum bridge diffusion planner on the scene-normalized dataset."""
+"""Train the zero-sum bridge diffusion planner on the scene-normalized dataset.
+
+Sequential three-phase curriculum:
+  --phase traj     : train trajectory only (L_traj)
+  --phase ellipse  : load a trajectory checkpoint, freeze trajectory backbone, train
+                     EllipseAggregator + EllipseHead (+ optional local-decoder micro-tune)
+  --phase joint    : unfreeze everything, total = L_traj + lambda_E*L_E + lambda_align*L_align
+"""
 import argparse, os, sys, time
 import numpy as np
 import torch
@@ -15,8 +22,6 @@ from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.zerosum import compute_z0
 from src.models.planner import Planner
 from src.losses.total_loss import total_loss
-from src.losses.gradnorm import GradNorm
-from src.losses.auto_weighting import Lagrangian
 from src.datasets.scene_dataset import make_loader
 
 
@@ -26,13 +31,15 @@ def main():
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--resume", default=None)
     ap.add_argument("--log-interval", type=int, default=10)
+    ap.add_argument("--phase", default="joint", choices=["traj", "ellipse", "joint"])
     args = ap.parse_args()
     cfg = load_config(args.config)
     env = cfg["env"]; train_cfg = cfg["train"]; loss_cfg = cfg["loss"]
     model_cfg = cfg["model"]; diff_cfg = cfg["diffusion"]
     set_seed(int(env["seed"]))
     device = "cuda" if torch.cuda.is_available() and env.get("device", "cuda") == "cuda" else "cpu"
-    print(f"[train] device={device}", flush=True)
+    phase = args.phase
+    print(f"[train] device={device} phase={phase}", flush=True)
 
     base = "data/processed_scene"
     train_loader = make_loader(os.path.join(base, "train"), train_cfg["batch_size"], True,
@@ -43,34 +50,96 @@ def main():
     schedule = NoiseSchedule(diff_cfg["timesteps"], beta_schedule=diff_cfg["beta_schedule"],
                              beta_start=diff_cfg["beta_start"], beta_end=diff_cfg["beta_end"]).to(device)
     model = Planner(model_cfg, cfg["geometry"], None).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]),
-                                  weight_decay=float(train_cfg["weight_decay"]))
-    gradnorm = GradNorm(["L_p", "L_param", "L_iou", "L_smooth"])
-    shared_params = list(model.safety_fusion.mlp.parameters())
-    lag_col = Lagrangian(delta=loss_cfg.get("collision_delta", 0.0),
-                         eta=loss_cfg.get("collision_eta", 0.05), init=loss_cfg.get("collision_lag_init", 0.1),
-                         max_lam=loss_cfg.get("lambda_collision_max", 0.3))
+
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
-    warmup_epochs = int(train_cfg.get("warmup_epochs", 0))
+
+    # ---- per-phase learning rates ----
+    traj_lr = float(train_cfg.get("traj_lr", train_cfg["lr"]))
+    ellipse_lr = float(train_cfg.get("ellipse_lr", train_cfg["lr"]))
+    local_decoder_lr = float(train_cfg.get("local_decoder_lr", 0.1 * ellipse_lr))
+
+    # ---- build optimizer + set trainable state per phase ----
+    if phase == "ellipse":
+        backbone_names = ["scene_encoder", "trajectory_encoder", "local_sampler",
+                          "point_scene_attention", "safety_fusion", "trajectory_decoder",
+                          "residual_head", "map_pos_embed", "type_embed"]
+        for name in backbone_names:
+            m = getattr(model, name)
+            for p in m.parameters():
+                p.requires_grad_(False)
+            m.eval()
+        # keep the trajectory backbone deterministic; only micro-tune the local decoder
+        # (the last up-conv blocks + out_conv) which contain no dropout.
+        ellipse_params = []
+        for p in model.ellipse_aggregator.parameters():
+            p.requires_grad_(True); ellipse_params.append(p)
+        for p in model.ellipse_head.parameters():
+            p.requires_grad_(True); ellipse_params.append(p)
+        for p in model.ellipse_pe_embed.parameters():
+            p.requires_grad_(True); ellipse_params.append(p)
+        local_decoder_params = []
+        for up in model.scene_encoder.ups[-2:]:
+            for p in up.parameters():
+                p.requires_grad_(True); local_decoder_params.append(p)
+        for p in model.scene_encoder.out_conv.parameters():
+            p.requires_grad_(True); local_decoder_params.append(p)
+        groups = [{"params": ellipse_params, "lr": ellipse_lr},
+                  {"params": local_decoder_params, "lr": local_decoder_lr}]
+        optimizer = torch.optim.AdamW(groups, lr=ellipse_lr,
+                                      weight_decay=float(train_cfg["weight_decay"]))
+        model.ellipse_enabled = True
+    else:
+        for p in model.parameters():
+            p.requires_grad_(True)
+        model.ellipse_enabled = (phase != "traj")
+        optimizer = torch.optim.AdamW(model.parameters(), lr=traj_lr,
+                                      weight_decay=float(train_cfg["weight_decay"]))
+
+    def set_train_state():
+        if phase == "ellipse":
+            # trajectory backbone stays in eval (deterministic p_hat); local decoder
+            # (no dropout) and ellipse module train.
+            model.trajectory_encoder.eval()
+            model.point_scene_attention.eval()
+            model.safety_fusion.eval()
+            model.trajectory_decoder.eval()
+            model.residual_head.eval()
+            model.scene_encoder.eval()
+            for up in model.scene_encoder.ups[-2:]:
+                up.train()
+            model.scene_encoder.out_conv.train()
+            model.ellipse_aggregator.train()
+            model.ellipse_head.train()
+            model.ellipse_pe_embed.train()
+        else:
+            model.train()
+
+    # ---- ellipse cfg (weights + joint ramp) ----
+    ellipse_cfg = dict(cfg.get("ellipse_loss", {}))
+    joint_cfg = dict(cfg.get("joint_ellipse", {}))
+    ellipse_cfg.update(joint_cfg)
+    if phase == "joint" and ellipse_cfg.get("ramp", True):
+        ratio = float(ellipse_cfg.get("ramp_ratio", 0.2))
+        ellipse_cfg["ramp_epochs"] = max(1, int(round(epochs * ratio)))
+
     ckpt_dir = train_cfg.get("ckpt_dir", "outputs/ckpt")
     os.makedirs(ckpt_dir, exist_ok=True)
     logger = Logger(os.path.join(ckpt_dir, "train.log"))
     best_val = float("inf"); best_ckpt = os.path.join(ckpt_dir, "best.pt")
     start_epoch = 0
     if args.resume and os.path.exists(args.resume):
-        d = load_checkpoint(args.resume, model, optimizer, map_location=device)
+        if phase == "ellipse":
+            # Phase 2 rebuilds a phase-specific optimizer; load weights only.
+            d = load_checkpoint(args.resume, model, map_location=device)
+        else:
+            d = load_checkpoint(args.resume, model, optimizer, map_location=device)
         start_epoch = d.get("epoch", 0) + 1
-        if "gradnorm" in d:
-            gradnorm.load_state_dict(d["gradnorm"])
-        if "lag_col" in d:
-            lag_col.load_state_dict(d["lag_col"])
         logger.info(f"resumed from {args.resume} at epoch {start_epoch}")
     n_b = len(train_loader)
     T = schedule.num_timesteps
-    H = model.horizon
     for epoch in range(start_epoch, epochs):
         t0 = time.time(); losses = []
-        model.train()
+        set_train_state()
         for bi, batch in enumerate(train_loader):
             batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
             B = batch["pos"].shape[0]
@@ -78,9 +147,8 @@ def main():
             z0_gt, _, _, _ = compute_z0(batch["pos"], batch["cond"])
             z_t = schedule.q_sample_zero_sum(z0_gt, t)
             out = model(z_t, t, batch["map_tensor"], batch["cond"])
-            loss = total_loss(out, batch, loss_cfg, device=device,
-                              warmup=(epoch < warmup_epochs), epoch=epoch,
-                              gradnorm=gradnorm, shared_params=shared_params, lag_col=lag_col)
+            loss = total_loss(out, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
+                              ellipse_cfg=ellipse_cfg)
             if not torch.isfinite(loss["total"]):
                 logger.info(f"epoch {epoch+1}/{epochs} batch {bi+1}/{n_b} non-finite total={loss['total'].item()} -- skip")
                 continue
@@ -101,21 +169,20 @@ def main():
                 z0_gt, _, _, _ = compute_z0(batch["pos"], batch["cond"])
                 z_t = schedule.q_sample_zero_sum(z0_gt, t)
                 out = model(z_t, t, batch["map_tensor"], batch["cond"])
-                loss = total_loss(out, batch, loss_cfg, device=device,
-                                  warmup=(epoch < warmup_epochs), epoch=epoch)
+                loss = total_loss(out, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
+                                  ellipse_cfg=ellipse_cfg)
                 if not torch.isfinite(loss["total"]):
                     continue
                 vls.append({k: v.item() for k, v in loss.items() if torch.is_tensor(v)})
         vmean = {k: float(np.mean([l[k] for l in vls])) for k in vls[0]} if vls else {}
         logger.info(f"val   loss={vmean}")
         if torch.cuda.is_available(): torch.cuda.empty_cache()
-        if epoch >= warmup_epochs and vmean.get("total", float("inf")) < best_val:
-            best_val = vmean["total"]; save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1,
-                                                       extra={"gradnorm": gradnorm.state_dict(), "lag_col": lag_col.state_dict()})
+        if vmean.get("total", float("inf")) < best_val:
+            best_val = vmean["total"]
+            save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1)
             logger.info(f"save best ckpt {best_ckpt} (val total {best_val:.4f})")
         if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-            save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model, optimizer, epoch=epoch + 1,
-                            extra={"gradnorm": gradnorm.state_dict(), "lag_col": lag_col.state_dict()})
+            save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model, optimizer, epoch=epoch + 1)
             logger.info(f"save ckpt epoch_{epoch+1}.pt")
         if torch.cuda.is_available(): torch.cuda.empty_cache()
 

@@ -81,6 +81,10 @@ model:
   trajectory_decoder_layers: 4   # 轨迹解码器层数
   ffn_dim: 512        # 前馈维度
   local_window: 9     # 局部场景采样窗口（每点取多少邻域）
+  local_res: 64       # 局部场景特征分辨率（SceneEncoder decoder 输出）
+  ellipse_aggregator_layers: 2   # 椭圆 set-attention 层数
+  ellipse_relative_pe: true      # 椭圆分支使用相对位置编码（仅加在 Local_2 上）
+  ellipse_relative_pe_scale: 128.0  # 相对 PE 放大系数（小偏移需高频率）
   dropout: 0.1        # Dropout 比例
 
 # ---------- 扩散 ----------
@@ -93,9 +97,12 @@ diffusion:
 
 # ---------- 训练 ----------
 train:
-  batch_size: 16           # 批大小（混合三迷宫数据，sample 级混合）
+  batch_size: 32           # 批大小（混合三迷宫数据，sample 级混合）
   epochs: 100              # 训练轮数（可被 --epochs 覆盖）
-  lr: 1.0e-4               # 学习率
+  lr: 1.0e-4               # 学习率（traj/joint 阶段默认）
+  traj_lr: 1.0e-4          # Phase1 轨迹模块学习率
+  ellipse_lr: 1.0e-4       # Phase2 椭圆模块学习率
+  local_decoder_lr: 1.0e-5 # Phase2 局部解码器微调学习率（0.1*ellipse_lr）
   weight_decay: 1.0e-4     # AdamW 权重衰减
   grad_clip: 1.0           # 梯度裁剪范数（0/None 表示不裁剪）
   num_workers: 0           # DataLoader 进程数（Windows 下建议 0）
@@ -124,9 +131,24 @@ loss:
   collision_ramp_epochs: 30     # L_collision 线性爬坡轮数
   collision_margin: 0.0         # 碰撞 SDF 安全边距（场景坐标）
   collision_sigma: 0.1          # 碰撞软判定平滑系数
-  collision_delta: 0.0          # 目标碰撞损失上限
-  collision_eta: 0.1            # lambda_col 更新步长
-  collision_lag_init: 0.1       # lambda_col 初始值
+  lambda_align: 0.1             # L_align（轨迹方向与椭圆长轴对齐）权重
+
+# ---------- 椭圆损失（Neural-IRIS 风格）----------
+ellipse_loss:
+  lambda_param: 10.0   # L_param 内权重（center/radius/angle）
+  lambda_iou: 5.0      # L_iou 内权重
+  lambda_coll: 2.0     # L_ecoll 内权重（预测椭圆与障碍重叠）
+  lambda_anchor: 5.0   # L_anchor 内权重（轨迹点位于椭圆内）
+  soft_mask_tau: 10.0  # 椭圆 soft mask 温度（sigmoid 平滑）
+  near_circle_angle_mask: true   # 近圆椭圆 mask 掉角度损失 / 对齐损失
+  near_circle_tau: 0.1           # 近圆判定阈值：|r1-r2|/(r1+r2) < tau
+  ellipse_margin: 1.0            # 椭圆 IoU/碰撞 局部网格边距（场景坐标）
+
+# ---------- 联合阶段（Phase3）椭圆 ramp ----------
+joint_ellipse:
+  ramp: true                # 是否对 lambda_E 做线性 ramp
+  ramp_ratio: 0.2           # 前 20% joint epochs 线性爬坡
+  lambda_max: 1.0           # lambda_E 上限
 
 # ---------- 离线 IRIS（椭圆标签生成）----------
 # 仅保留离线 MVIE 求解器需要的两项；Neural-IRIS 网络相关已删除。

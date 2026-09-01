@@ -25,7 +25,8 @@ for step in range(30):
     z0, _, _, _ = compute_z0(batch['pos'], batch['cond'])
     zt = sched.q_sample_zero_sum(z0, t)
     out = model(zt, t, batch['map_tensor'], batch['cond'])
-    loss = total_loss(out, batch, cfg['loss'], device=device, warmup=True, epoch=0)
+    loss = total_loss(out, batch, cfg['loss'], device=device, phase='traj', epoch=0,
+                      ellipse_cfg=cfg.get('ellipse_loss', {}))
     opt.zero_grad(); loss['total'].backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
     if (step + 1) % 5 == 0:
