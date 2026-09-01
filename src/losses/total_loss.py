@@ -63,7 +63,8 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
     lam_z = cfg_loss.get("lambda_z", 1.0)
     lam_p = cfg_loss.get("lambda_p", 0.5)
     lam_s = cfg_loss.get("lambda_smooth", 0.05)
-    lam_col = _schedule_lambda(epoch, cfg_loss, "collision")
+    lam_col = float(cfg_loss.get("lambda_collision",
+                                  cfg_loss.get("lambda_collision_max", 0.0)))
 
     # ---- ellipse objective ----
     has_ellipse = model_out.get("ellipse_center") is not None

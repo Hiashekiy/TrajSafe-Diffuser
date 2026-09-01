@@ -123,12 +123,12 @@ loss:
   lambda_r: 1.0           # 椭圆半径损失（子项）
   lambda_theta: 1.0       # 椭圆方向（双角度向量）损失（子项）
   # 阶段式辅助损失（相对权重）
-  lambda_axis_max: 0.3          # L_axis 上限
-  lambda_collision_max: 0.3     # L_collision 上限
-  axis_warmup_epochs: 3         # L_axis 开启轮数
+  lambda_collision: 0.3         # L_collision 固定权重（从第 1 个 epoch 起一直生效）
+  lambda_collision_max: 0.3     # 早期 ramp 版本的上限（现被 lambda_collision 固定值取代）
+  axis_warmup_epochs: 3         # L_axis 开启轮数（保留，备用）
   axis_ramp_epochs: 20          # L_axis 线性爬坡轮数
-  collision_warmup_epochs: 10   # L_collision 开启轮数
-  collision_ramp_epochs: 30     # L_collision 线性爬坡轮数
+  collision_warmup_epochs: 10   # 早期 ramp 版本的开启轮数（现不再用于 ramp）
+  collision_ramp_epochs: 30     # 早期 ramp 版本的爬坡轮数
   collision_margin: 0.0         # 碰撞 SDF 安全边距（场景坐标）
   collision_sigma: 0.1          # 碰撞软判定平滑系数
   lambda_align: 0.1             # L_align（轨迹方向与椭圆长轴对齐）权重
