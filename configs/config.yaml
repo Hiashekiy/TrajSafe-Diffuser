@@ -123,7 +123,7 @@ loss:
   lambda_r: 1.0           # 椭圆半径损失（子项）
   lambda_theta: 1.0       # 椭圆方向（双角度向量）损失（子项）
   # 阶段式辅助损失（相对权重）
-  lambda_collision: 0.8         # L_collision 固定权重（从第 1 个 epoch 起一直生效，已增大防碰撞）
+  lambda_collision: 0.8         # L_collision 固定权重（仅 Phase3 joint 使用，Phase1 不训练避障）
   lambda_collision_max: 0.3     # 早期 ramp 版本的上限（现被 lambda_collision 固定值取代）
   axis_warmup_epochs: 3         # L_axis 开启轮数（保留，备用）
   axis_ramp_epochs: 20          # L_axis 线性爬坡轮数

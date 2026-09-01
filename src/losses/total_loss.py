@@ -1,11 +1,12 @@
 """Total training objective following the sequential (trajectory -> ellipse) design.
 
 Three phases:
-  "traj"    : total = L_traj
+  "traj"    : total = L_z + L_p + L_smooth (no collision loss)
   "ellipse" : total = L_E
   "joint"   : total = L_traj + lambda_E * L_E + lambda_align * L_align
 
-L_traj = lam_z*L_Z + lam_p*L_p + lam_s*L_smooth + lam_col*L_collision
+L_traj = lam_z*L_Z + lam_p*L_p + lam_s*L_smooth
+Phase 3 additionally enables lam_col*L_collision.
 L_E    = lam_param*L_param + lam_iou*L_iou + lam_coll*L_ecoll + lam_anchor*L_anchor
 
 In Phase 3 the ellipse objective flows back into the trajectory network
@@ -56,9 +57,14 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
     L_Z = l_z(z0_proj, z0_gt)
     L_p = l_p(pos_pred, pos_gt)
     L_sm = l_smooth(z0_proj)
-    L_col = l_collision(pos_pred, batch["sdf_tensor"],
-                        margin=cfg_loss.get("collision_margin", 0.0),
-                        sigma=cfg_loss.get("collision_sigma", 0.1))
+    # Phase 1 intentionally learns reconstruction and smoothness only.
+    # Trajectory collision avoidance is introduced in the joint phase.
+    if phase == "joint":
+        L_col = l_collision(pos_pred, batch["sdf_tensor"],
+                            margin=cfg_loss.get("collision_margin", 0.0),
+                            sigma=cfg_loss.get("collision_sigma", 0.1))
+    else:
+        L_col = pos_pred.new_zeros(())
 
     lam_z = cfg_loss.get("lambda_z", 1.0)
     lam_p = cfg_loss.get("lambda_p", 0.5)
@@ -132,14 +138,14 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
 
     lam_align = cfg_loss.get("lambda_align", 0.1)
 
-    traj_loss = lam_z * L_Z + lam_p * L_p + lam_s * L_sm + lam_col * L_col
+    traj_loss = lam_z * L_Z + lam_p * L_p + lam_s * L_sm
 
     if phase == "traj":
         total = traj_loss
     elif phase == "ellipse":
         total = L_E
     elif phase == "joint":
-        total = traj_loss + lam_E * L_E + lam_align * L_align
+        total = traj_loss + lam_col * L_col + lam_E * L_E + lam_align * L_align
     else:
         raise ValueError(f"unknown phase {phase}")
 

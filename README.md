@@ -72,7 +72,7 @@ E:/CondaEnvData/envs/GGMPC/python.exe scripts/data/build_mixed_dataset.py --conf
 
 本项目采用**顺序式三阶段**训练：
 
-- **Phase 1 `traj`**：只训练轨迹生成 `L_traj = λ_z·L_Z + λ_p·L_p + λ_s·L_smooth + λ_col·L_collision`，跳过椭圆分支。
+- **Phase 1 `traj`**：只训练轨迹规划 `L_traj = λ_z·L_Z + λ_p·L_p + λ_s·L_smooth`（**不含避障**，跳过椭圆分支）。
 - **Phase 2 `ellipse`**：加载 Phase 1 轨迹权重，**冻结轨迹骨干**并设为 `eval()`（保证 `p̂` 确定），只训练椭圆分支（`EllipseAggregator + EllipseHead + 相对 PE`），并微调 local decoder 最后两层。
 - **Phase 3 `joint`**：全部解冻，**不 `detach(p̂)`**，联合训练 `L_traj + λ_E·L_E + λ_align·L_align`，`λ_E` 按 `joint_ellipse.ramp_ratio`（默认 0.2）线性爬坡。
 
@@ -115,7 +115,8 @@ E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --ph
 - 数据：`data/processed_scene`，三迷宫 sample 级混合，每个 batch 带各自 map/SDF。
 - 保存目录：`outputs/ckpt/{phase}/`，每个阶段独立的 `best.pt`、`epoch_N.pt`、`train.log`。
 - 由 `--phase` 决定冻结策略：Phase 1/3 全部可训练；Phase 2 冻结轨迹骨干并 `eval()`。
-- **碰撞/平滑**：`lambda_smooth`（默认 0.2）与 `lambda_collision`（默认 0.8）从第 1 个 epoch 就生效，不再走 warmup ramp。
+- **阶段损失**：Phase 1 只学 `L_Z + L_p + L_smooth`，**不含避障**；Phase 3 `joint` 才加入 `lambda_collision` 防撞项与椭圆项。
+- **平滑**：`lambda_smooth`（默认 0.2）从第 1 个 epoch 生效。
 - **验证**用固定中间噪声级别（`t = num_timesteps // 2`），训练时仍用随机 `t`。
 
 **在强机器上可调项（`configs/config.yaml` 的 `train:` 段）：**
