@@ -122,7 +122,8 @@ def main():
         ratio = float(ellipse_cfg.get("ramp_ratio", 0.2))
         ellipse_cfg["ramp_epochs"] = max(1, int(round(epochs * ratio)))
 
-    ckpt_dir = train_cfg.get("ckpt_dir", "outputs/ckpt")
+    base_ckpt = train_cfg.get("ckpt_dir", "outputs/ckpt")
+    ckpt_dir = os.path.join(base_ckpt, phase)   # 每个阶段独立目录，避免互相覆盖
     os.makedirs(ckpt_dir, exist_ok=True)
     logger = Logger(os.path.join(ckpt_dir, "train.log"))
     best_val = float("inf"); best_ckpt = os.path.join(ckpt_dir, "best.pt")

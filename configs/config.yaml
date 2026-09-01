@@ -115,7 +115,7 @@ loss:
   # 损失权重：L_Z 固定锚=1；L_p/L_param/L_iou/L_smooth 用 GradNorm 自动调；L_col 用 Lagrangian；L_axis 走 ramp
   lambda_z: 1.0           # 主扩散损失 L_Z（最重要，给最大权重）
   lambda_p: 0.5           # 中间位置重建损失 L_p
-  lambda_smooth: 0.05     # 轨迹平滑损失 L_smooth
+  lambda_smooth: 0.2      # 轨迹平滑损失 L_smooth（已增大，强调平滑性）
   lambda_ellipse: 0.5     # 椭圆参数损失总权重 L_param
   lambda_iou: 0.3         # 椭圆软 IoU 损失权重 L_iou
   ellipse_margin: 1.0     # 椭圆 IoU 局部网格边距
@@ -123,7 +123,7 @@ loss:
   lambda_r: 1.0           # 椭圆半径损失（子项）
   lambda_theta: 1.0       # 椭圆方向（双角度向量）损失（子项）
   # 阶段式辅助损失（相对权重）
-  lambda_collision: 0.3         # L_collision 固定权重（从第 1 个 epoch 起一直生效）
+  lambda_collision: 0.8         # L_collision 固定权重（从第 1 个 epoch 起一直生效，已增大防碰撞）
   lambda_collision_max: 0.3     # 早期 ramp 版本的上限（现被 lambda_collision 固定值取代）
   axis_warmup_epochs: 3         # L_axis 开启轮数（保留，备用）
   axis_ramp_epochs: 20          # L_axis 线性爬坡轮数
