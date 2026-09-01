@@ -1,8 +1,11 @@
-# Neural-IRISDiffuser — Maze2D 安全扩散规划器
+# TrajSafe-Diffuser — 顺序式「先轨迹后椭圆」安全扩散规划器
 
-本仓库实现 [`METHOD.md`](docs/METHOD.md) 描述的
-**场景—轨迹交互 + 椭圆几何监督** 的安全扩散规划框架。
-默认把三张迷宫（umaze / medium / large）数据**混合**在一起训练。
+本仓库（原名 Neural-IRISDiffuser）实现基于 **零和桥式扩散** 的安全规划框架：
+先生成轨迹，再在轨迹点附近用局部几何特征预测**安全椭圆**，并在第三阶段让
+椭圆反过来指导轨迹（`Trajectory ⇄ Safety Ellipse`）。
+
+默认混合三张迷宫（umaze / medium / large）在 `data/processed_scene` 上训练。
+网络结构和损失设计见 [`docs/顺序式网络方案.md`](docs/顺序式网络方案.md)。
 
 所有超参数/路径集中在唯一配置 `configs/config.yaml`，后端代码不硬编码数值。
 
@@ -34,7 +37,7 @@ pip install cvxpy   # 离线 IRIS MVIE 求解器用
 configs/config.yaml              # 唯一主配置（参数全部注释）
 data/d4rl/*.hdf5                 # 原始 D4RL 数据
 data/processed/maze2d_{umaze,medium,large}   # 单迷宫源（含离线 IRIS 标签）
-data/processed/mixed           # 混合三场景 [0,8]^2 数据（训练用）
+data/processed_scene           # 场景归一化([-1,1]^2)的混合三场景数据（训练用）
 scripts/data/                    # 数据准备 / 标签生成 / mixed 构建
 scripts/plot/                    # 模型采样 / 绘图
 scripts/debug/                   # 调试工具
@@ -50,7 +53,7 @@ train.py / sample.py / evaluate.py
 
 ### 1. 数据准备（如需重建单迷宫源与椭圆标签）
 
-如果 `data/processed/mixed` 已经存在，可跳过这一步直接 `train.py`。
+如果 `data/processed_scene` 已经存在，可跳过这一步直接 `train.py`。
 重新生成需要按顺序执行（都会读 `configs/config.yaml`）：
 
 ```bash
@@ -65,41 +68,55 @@ E:/CondaEnvData/envs/GGMPC/python.exe scripts/data/build_mixed_dataset.py --conf
 - `04` 只重生成某迷宫标签时可加 `--maze umaze`（默认全部）。
 - 生成标签用**离线 IRIS MVIE**（`src/geometry/iris_solver.py`），不依赖 Neural-IRIS 网络。
 
-### 2. 训练
+### 2. 训练（三阶段）
 
-**直接训练（默认 100 epochs）：**
+本项目采用**顺序式三阶段**训练：
+
+- **Phase 1 `traj`**：只训练轨迹生成 `L_traj = λ_z·L_Z + λ_p·L_p + λ_s·L_smooth + λ_col·L_collision`，跳过椭圆分支。
+- **Phase 2 `ellipse`**：加载 Phase 1 轨迹权重，**冻结轨迹骨干**并设为 `eval()`（保证 `p̂` 确定），只训练椭圆分支（`EllipseAggregator + EllipseHead + 相对 PE`），并微调 local decoder 最后两层。
+- **Phase 3 `joint`**：全部解冻，**不 `detach(p̂)`**，联合训练 `L_traj + λ_E·L_E + λ_align·L_align`，`λ_E` 按 `joint_ellipse.ramp_ratio`（默认 0.2）线性爬坡。
+
+每个阶段的 checkpoint 保存到**独立目录**，互不覆盖：
+
+| 阶段 | 输出目录 |
+|---|---|
+| traj    | `outputs/ckpt/traj/`    |
+| ellipse | `outputs/ckpt/ellipse/` |
+| joint   | `outputs/ckpt/joint/`   |
+
+**阶段一（轨迹预训练）：**
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml
+E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --phase traj --epochs 100
 ```
 
-**指定轮数 / 日志间隔：**
+**阶段二（椭圆预训练，加载阶段一 best）：**
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --epochs 200 --log-interval 10
+E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --phase ellipse --epochs 100 --resume outputs/ckpt/traj/best.pt
 ```
 
-**从已有最好模型续训：**
+**阶段三（联合训练，加载阶段二 best）：**
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --epochs 100 --resume outputs/ckpt/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --phase joint --epochs 100 --resume outputs/ckpt/ellipse/best.pt
 ```
 
 **参数说明：**
 
+- `--phase`：`traj` / `ellipse` / `joint`，默认 `joint`。
 - `--config`：配置路径，默认 `configs/config.yaml`。
 - `--epochs`：训练轮数（默认取配置里的 `train.epochs`）。
-- `--resume`：从指定 checkpoint 继续（会恢复 model + optimizer + epoch）。
+- `--resume`：**跨阶段**续训时只加载模型权重（尤其 Phase 2 不恢复 optimizer，因为各阶段参数组不同）；**同阶段**续训会同时恢复 model + optimizer + epoch。
 - `--log-interval`：每多少个 batch 打印一条日志（默认 10）。
 
 **训练行为要点：**
 
-- 数据：`data/processed/mixed`，三迷宫 sample 级混合，batch 里带各自 map/SDF。
-- 保存目录：`train.ckpt_dir`（默认 `outputs/ckpt`）。
-- **warmup**：前 `train.warmup_epochs`（默认 3）轮只训 `L_diff + L_smooth`；`best.pt` 仅在 warmup 之后按 val total 更新。
-- 每 `train.save_every` 轮保存 `epoch_N.pt`，最后一轮也会保存；最优模型存 `best.pt`。
-- 日志写入 `outputs/ckpt/train.log`。
-- **验证用固定中间噪声级别**（`t = num_timesteps // 2`）计算，避免每个 epoch 随机采样不同 `t` 导致 val total 剧烈波动；训练时仍用随机 `t`。
+- 数据：`data/processed_scene`，三迷宫 sample 级混合，每个 batch 带各自 map/SDF。
+- 保存目录：`outputs/ckpt/{phase}/`，每个阶段独立的 `best.pt`、`epoch_N.pt`、`train.log`。
+- 由 `--phase` 决定冻结策略：Phase 1/3 全部可训练；Phase 2 冻结轨迹骨干并 `eval()`。
+- **碰撞/平滑**：`lambda_smooth`（默认 0.2）与 `lambda_collision`（默认 0.8）从第 1 个 epoch 就生效，不再走 warmup ramp。
+- **验证**用固定中间噪声级别（`t = num_timesteps // 2`），训练时仍用随机 `t`。
 
 **在强机器上可调项（`configs/config.yaml` 的 `train:` 段）：**
 
@@ -109,9 +126,11 @@ train:
   num_workers: 0        # Windows 建议 0；Linux 可设 4/8
   epochs: 100           # 训练轮数
   lr: 1.0e-4            # 学习率
-  warmup_epochs: 3      # 前 N 轮只训 L_diff+L_smooth
+  traj_lr: 1.0e-4       # Phase1 轨迹模块学习率
+  ellipse_lr: 1.0e-4    # Phase2 椭圆模块学习率
+  local_decoder_lr: 1.0e-5  # Phase2 local decoder 微调学习率
   save_every: 10        # 每 N 轮保存一次
-  ckpt_dir: "outputs/ckpt"
+  ckpt_dir: "outputs/ckpt"   # 各阶段会再加 phase 子目录
 ```
 
 ---
@@ -119,11 +138,11 @@ train:
 ## 采样
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --n 4
-E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze medium --ckpt outputs/ckpt/best.pt --n 4
-E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze large --ckpt outputs/ckpt/best.pt --n 4
+E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --n 4
+E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze medium --ckpt outputs/ckpt/joint/best.pt --n 4
+E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze large --ckpt outputs/ckpt/joint/best.pt --n 4
 # 可复现：指定随机种子
-E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --n 4 --seed 42
+E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --n 4 --seed 42
 ```
 
 - `--maze`：`umaze` / `medium` / `large`。
@@ -135,11 +154,11 @@ E:/CondaEnvData/envs/GGMPC/python.exe sample.py --config configs/config.yaml --m
 ## 评估
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --n 32
-E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze medium --ckpt outputs/ckpt/best.pt --n 32
-E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze large --ckpt outputs/ckpt/best.pt --n 32
+E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --n 32
+E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze medium --ckpt outputs/ckpt/joint/best.pt --n 32
+E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze large --ckpt outputs/ckpt/joint/best.pt --n 32
 # 可复现：指定随机种子
-E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --n 32 --seed 42
+E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --n 32 --seed 42
 ```
 
 - `--n`：评估多少个测试案例。
@@ -151,15 +170,15 @@ E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml -
 ## 可视化
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_test.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --n 4
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_test_samples.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --n 4
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_test.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --n 4
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_test_samples.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --n 4
 E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_sample_visuals.py --n 6
 E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_sample_visuals.py --idxs 0,5,100,500
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --mode video
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --mode video --no-ellipses
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt --mode video --video-out outputs/rev.gif --fps 10 --video-every 2
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_training_curves.py --log outputs/ckpt/train.log --out outputs/training_curves.png
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --mode video
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --mode video --no-ellipses
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_reverse_diffusion.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt --mode video --video-out outputs/rev.gif --fps 10 --video-every 2
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_training_curves.py --log outputs/ckpt/joint/train.log --out outputs/training_curves.png
 ```
 
 - 输出：`outputs/test_{maze}.png`、`outputs/test_sample_visual.png`、`outputs/test_reverse_diffusion.png`、`outputs/training_curves.png`。
@@ -168,7 +187,7 @@ E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_training_curves.py --log
 - 轨迹绘制已改为“时间渐变线段”，底层用 `src/utils/visualization.py` 的 `draw_traj()`；可通过 `marker_every` / `arrow_every` / `lw` 调整，其中 `marker_every=0` 隐藏中间散点、`arrow_every=0` 隐藏方向箭头（当前默认两者都为 0，只画渐变线 + 起终点）。
 - `plot_reverse_diffusion.py` 的 `--mode image|video`：`--mode video` 会把每一步去噪过程录成 GIF/MP4（`--video-out`、`--fps`、`--video-every` 可调）；`--no-ellipses` 可关闭椭圆绘制。
 - `plot_test.py` / `plot_test_samples.py` / `plot_sample_visuals.py` 的子图数量按 `--n` 动态生成（默认 2 列；奇数个会隐藏最后一行空面板）。`plot_sample_visuals.py` 还可用 `--idxs 1,5,100` 指定样本索引。
-- `plot_training_curves.py` 默认读 `logs/train.log`；要看当前 100 epoch 的训练曲线，用 `--log outputs/ckpt/train.log`（还可用 `--out` 指定输出图）。
+- `plot_training_curves.py` 默认读 `logs/train.log`；要看当前 100 epoch 的训练曲线，用 `--log outputs/ckpt/joint/train.log`（还可用 `--out` 指定输出图）。
 
 ---
 
@@ -177,7 +196,7 @@ E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_training_curves.py --log
 可视化之外，新增了一个交互式程序，可以自己画障碍/迷宫、选起点/终点，再运行训练好的模型并动态展示去噪过程。
 
 ```bash
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/interactive/plan_interactive.py --config configs/config.yaml --ckpt outputs/ckpt/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/interactive/plan_interactive.py --config configs/config.yaml --ckpt outputs/ckpt/joint/best.pt
 ```
 
 用法：
@@ -209,7 +228,7 @@ E:/CondaEnvData/envs/GGMPC/python.exe scripts/interactive/plan_interactive.py --
 > 重新运行就不会再弹保存窗口了：
 > ```bash
 > E:/CondaEnvData/envs/GGMPC/python.exe scripts/interactive/plan_interactive.py \
->   --config configs/config.yaml --ckpt outputs/ckpt/best.pt
+>   --config configs/config.yaml --ckpt outputs/ckpt/joint/best.pt
 > ```
 
 可选参数：
@@ -242,7 +261,9 @@ E:/CondaEnvData/envs/GGMPC/python.exe scripts/data/01_prepare_map.py --config co
 E:/CondaEnvData/envs/GGMPC/python.exe scripts/data/02_prepare_trajectories.py --config configs/config.yaml
 E:/CondaEnvData/envs/GGMPC/python.exe scripts/data/04_generate_ellipse_labels.py --config configs/config.yaml
 E:/CondaEnvData/envs/GGMPC/python.exe scripts/data/build_mixed_dataset.py --config configs/config.yaml
-E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --epochs 100
-E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt
-E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_test.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --phase traj --epochs 100
+E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --phase ellipse --epochs 100 --resume outputs/ckpt/traj/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe train.py --config configs/config.yaml --phase joint --epochs 100 --resume outputs/ckpt/ellipse/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe evaluate.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt
+E:/CondaEnvData/envs/GGMPC/python.exe scripts/plot/plot_test.py --config configs/config.yaml --maze umaze --ckpt outputs/ckpt/joint/best.pt
 ```
