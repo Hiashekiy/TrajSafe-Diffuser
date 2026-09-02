@@ -8,7 +8,7 @@ Sequential three-phase curriculum:
                      trajectory/ellipse generators; loss =
                      lambda_smooth*L_smooth + L_E + gated AL safety + gated J_guide.
 """
-import argparse, os, sys, time
+import argparse, os, sys, time, random
 import numpy as np
 import torch
 
@@ -215,8 +215,11 @@ def main():
             # gradient correction on z0 (unrolled), and the losses are then
             # computed on the guided trajectory.
             out_eff = out
+            # Training-side unrolled guidance: only on a random fraction of steps
+            # (guidance_cfg.training_step_frac) to cut double-backward cost.
+            use_guidance_step = random.random() < float(guidance_cfg.get("training_step_frac", 0.5))                 if guidance_cfg else False
             if phase == "joint" and guidance_cfg and guidance_cfg.get("enabled", True) \
-                    and out.get("ellipse_center") is not None:
+                    and out.get("ellipse_center") is not None and use_guidance_step:
                 tt = t
                 w_G = guidance_weight(tt, T,
                                       guidance_cfg.get("start_t_ratio", 0.40),

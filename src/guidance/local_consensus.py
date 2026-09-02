@@ -47,36 +47,31 @@ def compute_consensus_geometry(center, radii, theta, window=2,
     pw = torch.tensor(pos_weights, dtype=torch.float32, device=device)
     e = eccentricity(radii[..., 0], radii[..., 1])          # [B,N]
 
-    cbar = torch.zeros_like(center)
-    r2bar = torch.zeros(B, N, device=device)
-    ebar = torch.zeros(B, N, device=device)
-    C = torch.zeros(B, N, device=device)
-    S = torch.zeros(B, N, device=device)
+    # Vectorized local window gather over all k at once.
+    W = offsets.numel()
+    base = torch.arange(N, device=device, dtype=torch.long)[:, None]   # [N,1]
+    neigh = base + offsets[None, :]                                     # [N,W]
+    valid = (neigh >= 0) & (neigh < N)                                  # [N,W]
+    idx = neigh.clamp(0, N - 1)                                         # [N,W]
 
-    for k in range(N):
-        neigh = k + offsets                                  # [W]
-        valid = (neigh >= 0) & (neigh < N)
-        idx = neigh.clamp(0, N - 1)
-        # positional weight * eccentricity of the neighbour
-        w = pw * valid.float()                               # [W]
-        e_j = e[:, idx]                                      # [B,W]
-        w = w[None, :] * e_j                                 # [B,W]
-        wsum = w.sum(dim=-1, keepdim=True) + eps             # [B,1]
+    center_g = center[:, idx]                                         # [B,N,W,2]
+    e_g = e[:, idx]                                                   # [B,N,W]
+    theta_g = theta[:, idx]                                           # [B,N,W]
+    r2_g = radii[:, idx, 1]                                           # [B,N,W]
 
-        cj = center[:, idx]                                  # [B,W,2]
-        cbar[:, k] = (w[..., None] * cj).sum(dim=1) / wsum
+    weight = pw[None, None, :] * valid.float()[None, :, :] * e_g      # [B,N,W]
+    wsum = weight.sum(-1, keepdim=True) + eps                         # [B,N,1]
 
-        t_j = theta[:, idx]                                  # [B,W]
-        cos2 = torch.cos(2.0 * t_j)
-        sin2 = torch.sin(2.0 * t_j)
-        C[:, k] = (w * cos2).sum(dim=1) / wsum.squeeze(-1)
-        S[:, k] = (w * sin2).sum(dim=1) / wsum.squeeze(-1)
+    cbar = (weight[..., None] * center_g).sum(-2) / wsum              # [B,N,2]
 
-        r2_j = radii[:, idx, 1]
-        r2bar[:, k] = (w * r2_j).sum(dim=1) / wsum.squeeze(-1)
+    cos2 = torch.cos(2.0 * theta_g)
+    sin2 = torch.sin(2.0 * theta_g)
+    C = (weight * cos2).sum(-1) / wsum.squeeze(-1)                    # [B,N]
+    S = (weight * sin2).sum(-1) / wsum.squeeze(-1)                    # [B,N]
+    r2bar = (weight * r2_g).sum(-1) / wsum.squeeze(-1)                # [B,N]
 
-        wpos = pw[None, :] * valid.float()[None, :]          # [B,W]
-        ebar[:, k] = (wpos * e_j).sum(dim=1) / wpos.sum(dim=1).clamp(min=eps)
+    wpos = pw[None, None, :] * valid.float()[None, :, :]              # [1,N,W]
+    ebar = (wpos * e_g).sum(-1) / wpos.sum(-1).clamp(min=eps)         # [B,N]
 
     theta_bar = 0.5 * torch.atan2(S, C)
     ubar_x = torch.cos(theta_bar)

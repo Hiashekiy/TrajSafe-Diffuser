@@ -205,6 +205,7 @@ consensus_guidance:
   eta_max: 0.05             # Guidance step size 上限
   detach_consensus_geometry: true
   zero_sum_after_guidance: true
+  training_step_frac: 0.5   # 训练时仅按比例随机对部分 batch 做 unrolled guidance，降低 double-backward 开销
 
 # ---------- 离线 IRIS（椭圆标签生成）----------
 # 仅保留离线 MVIE 求解器需要的两项；Neural-IRIS 网络相关已删除。
