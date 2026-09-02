@@ -166,15 +166,22 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         # drop the ellipse loss entirely (keep_ellipse_loss: false) to stop Phase-3
         # from over-fitting the ellipse branch on top of a frozen Phase-2.
         jlc = joint_loss_cfg or {}
+        # Per-term magnitude normalisation so no single loss dominates the joint
+        # objective (L_p/L_smooth_pos are ~1e-3 while L_col/L_AL are ~0.1-0.6).
+        loss_scale = jlc.get("loss_scale", {})
+
+        def _n(loss, key, default_scale, weight):
+            return _normed(weight, loss, loss_scale.get(key, default_scale))
+
         lam_sm_joint = float(jlc.get("lambda_smooth",
                                      cfg_loss.get("lambda_smooth_joint", 0.05)))
-        total = lam_sm_joint * L_sm
+        total = _n(L_sm, "L_smooth", 1e-3, lam_sm_joint)
         if bool(jlc.get("keep_ellipse_loss", True)):
             total = total + L_E
         lam_p_joint = float(jlc.get("lambda_p", 0.0))
         lp_used = lam_p_joint > 0.0
         if lp_used:
-            total = total + lam_p_joint * L_p
+            total = total + _n(L_p, "L_p", 1e-2, lam_p_joint)
         # Safety-centred: direct SDF soft-collision penalty (most reliable, and
         # independent of the ellipse head).  joint_loss.lambda_collision > 0 enables.
         lam_coll_joint = float(jlc.get("lambda_collision", 0.0))
@@ -182,7 +189,7 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
             L_col = l_collision(pos_pred, batch["sdf_tensor"],
                                 margin=float(cfg_loss.get("collision_margin", 0.0)),
                                 sigma=float(cfg_loss.get("collision_sigma", 0.1)))
-            total = total + lam_coll_joint * L_col
+            total = total + _n(L_col, "L_col", 0.3, lam_coll_joint)
         # Position-level smoothness (acceleration) -- stronger / more interpretable
         # than the tiny residual second-difference l_smooth.  Enabled by
         # joint_loss.lambda_smooth_pos > 0.
@@ -190,7 +197,7 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         sp_used = lam_smooth_pos_joint > 0.0
         if sp_used:
             L_smooth_pos = l_smooth_pos(pos_pred)
-            total = total + lam_smooth_pos_joint * L_smooth_pos
+            total = total + _n(L_smooth_pos, "L_smooth_pos", 1e-2, lam_smooth_pos_joint)
         L_AL = _zero_like(torch.zeros((), device=device))
         al_mean_V = L_AL
         al_mean_Q = L_AL
@@ -213,7 +220,7 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
             al_mean_V = out_al["mean_V"]
             al_mean_Q = out_al["mean_Q"]
             al_w_active = out_al["w_active"]
-            total = total + w_epoch * L_AL
+            total = total + _n(L_AL, "L_AL", 0.3, w_epoch)
     else:
         raise ValueError(f"unknown phase {phase}")
 
@@ -246,3 +253,10 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
 
 def _zero_like(x):
     return x
+
+
+def _normed(weight, loss, scale):
+    """weight * (loss / scale).  Divides a loss by its typical magnitude so all
+    contributions are O(weight) regardless of intrinsic scale (prevents one term
+    from dominating the joint objective)."""
+    return weight * (loss / max(float(scale), 1e-8))

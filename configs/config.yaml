@@ -169,19 +169,25 @@ joint_finetune:
 
 joint_loss:
   lambda_z: 0.0             # V5：第三阶段关闭轨迹 GT 回归
-  lambda_p: 0.1             # 轨迹锚：把预测轨迹拉向 GT 轨迹（防止绕圈/漂移；0.1~0.3）
+  lambda_p: 0.5             # 轨迹锚：拉向 GT 轨迹（防止绕圈/漂移）
   lambda_smooth: 0.05       # V5：降低平滑权重，只抑制高频变化
-  lambda_smooth_pos: 0.2    # 位置层面平滑（加速度二阶梯 Huber）：比残差平滑更强、更直观
-  lambda_collision: 0.5     # 安全中心：直接 SDF 软碰撞损失（最直接的安全信号，0.5 起步，可 1.0）
+  lambda_smooth_pos: 0.5    # 位置层面平滑（加速度 Huber）：抑制抖动
+  lambda_collision: 0.2     # 安全：SDF 软碰撞（配合 loss_scale 归一化）
   keep_ellipse_loss: false  # joint 不再微调椭圆，冻结 Phase-2 椭圆分支并去掉 L_E
   lambda_align: 0.0         # V5：关闭单椭圆对齐损失
+  loss_scale:               # 各项按典型量级归一化，避免某一项独大
+    L_smooth: 1e-3
+    L_p: 1e-2
+    L_smooth_pos: 1e-2
+    L_col: 0.3
+    L_AL: 0.3
 
 segment_safety:
   enabled: true
   safety_margin: 0.0        # 安全凸区域边界内缩（场景单位）
   softmax_beta: 15.0        # Soft Active-Set 权重集中度
-  rho: 10.0                 # AL 二次项系数（以安全为中心：5->10，可再上调到 15~20）
-  al_weight: 1.0            # AL 固定权重（不再随 epoch 线性爬坡；1.0=全程满权重）
+  rho: 5.0                  # AL 二次项系数（归一化后 5 较温和，防止 L_AL 飙升）
+  al_weight: 0.3            # AL 固定权重（配合 loss_scale 归一化，避免 AL 独大）
   dual_init: 0.1            # 全局安全 dual 变量初值
   dual_lr: 0.1              # dual 更新步长
   dual_max: 10.0            # dual 上限

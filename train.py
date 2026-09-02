@@ -291,24 +291,27 @@ def main():
                 if not torch.isfinite(loss["total"]):
                     continue
                 # Safety-centred validation metric: sample the SDF at the predicted
-                # clean trajectory interior points.  Higher mean clearance = safer;
-                # collisions drive it negative.  This is ramp-invariant (unlike the
-                # mixed total, whose AL weight w_epoch changes over epochs).
+                # clean trajectory interior points.  We prefer the worst-case
+                # clearance (p05) over the mean: a high mean can hide a few points
+                # hugging/crossing the wall.
                 d = sample_sdf_scene(batch["sdf_tensor"], out["pos_pred"][:, 1:-1])
+                d_np = d.cpu().numpy()
                 di = {k: v.item() for k, v in loss.items() if torch.is_tensor(v)}
-                di["clearance_mean"] = float(d.mean().item())
-                di["collision_rate"] = float((d <= 0.0).float().mean().item())
+                di["clearance_mean"] = float(d_np.mean())
+                di["clearance_p05"] = float(np.percentile(d_np, 5))
+                di["clearance_min"] = float(d_np.min())
+                di["collision_rate"] = float((d_np <= 0.0).mean())
                 vls.append(di)
         vmean = {k: float(np.mean([l[k] for l in vls])) for k in vls[0]} if vls else {}
         logger.info(f"val   loss={vmean}")
         if torch.cuda.is_available(): torch.cuda.empty_cache()
-        # Choose the best model by mean clearance (max), not the ramped total.
-        score = vmean.get("clearance_mean", float("-inf"))
+        # Choose the best model by worst-case clearance (p05 max), not the mean.
+        score = vmean.get("clearance_p05", float("-inf"))
         if score > best_val:
             best_val = score
             save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1,
                             extra=_ckpt_extra())
-            logger.info(f"save best ckpt {best_ckpt} (val clearance {best_val:.4f})")
+            logger.info(f"save best ckpt {best_ckpt} (val clearance_p05 {best_val:.4f})")
         if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
             save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model,
                             optimizer, epoch=epoch + 1, extra=_ckpt_extra())
