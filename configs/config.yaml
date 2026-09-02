@@ -129,8 +129,8 @@ loss:
   axis_ramp_epochs: 20          # L_axis 线性爬坡轮数
   collision_warmup_epochs: 10   # 早期 ramp 版本的开启轮数（现不再用于 ramp）
   collision_ramp_epochs: 30     # 早期 ramp 版本的爬坡轮数
-  collision_margin: 0.0         # 碰撞 SDF 安全边距（场景坐标）
-  collision_sigma: 0.1          # 碰撞软判定平滑系数
+  collision_margin: 0.0         # 碰撞 SDF 安全边距（场景单位）
+  collision_sigma: 0.05         # 碰撞软判定平滑系数（场景单位；SDF 已换算为场景单位）
   lambda_align: 0.1             # L_align（轨迹方向与椭圆长轴对齐）权重
 
 # ---------- 椭圆损失（Neural-IRIS 风格）----------

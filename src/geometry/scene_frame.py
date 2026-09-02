@@ -84,20 +84,27 @@ def build_scene_occupancy(frame, occ_orig, extent_orig, gres_orig, res=256):
 
 
 def build_scene_sdf(occ):
-    """Signed distance from a binary scene occupancy (1=wall).  free>0, wall<0."""
+    """Signed distance from a binary scene occupancy (1=wall).  free>0, wall<0.
+
+    Returns values in **scene units** (occupancy grid spans scene [-1,1]^2);
+    distance_transform_edt returns per-pixel distances, so we scale by the cell
+    size cell = 2 / W (scene [-1,1] spans W grid cells).
+    """
     import scipy.ndimage as ndimage
     wall = occ.astype(bool)
     free = ~wall
     d_free = ndimage.distance_transform_edt(free)
     d_wall = ndimage.distance_transform_edt(wall)
-    return (d_free - d_wall).astype(np.float32)
+    cell = 2.0 / float(occ.shape[1])          # scene units per grid cell
+    return ((d_free - d_wall) * cell).astype(np.float32)
 
 
 def sample_sdf_scene(sdf_map, p_scene):
     """Differentiable bilinear sample of a scene SDF map at scene points.
 
     sdf_map: [B,1,H,W] over scene [-1,1]^2.  p_scene: [B,Hp,2] in [-1,1].
-    Returns [B,Hp].  Because scene coords are already [-1,1], grid coords == scene.
+    Returns [B,Hp] **in scene units**.  The stored SDF is expected to already be
+    in scene units (see build_scene_sdf); no rescaling is done here.
     """
     grid = p_scene.unsqueeze(2)  # [B,Hp,1,2]
     out = F.grid_sample(sdf_map, grid, mode="bilinear", padding_mode="border",
