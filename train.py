@@ -30,6 +30,8 @@ def main():
     ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--resume", default=None)
+    ap.add_argument("--weights-only", action="store_true",
+                    help="load only model weights and reset optimizer/epoch")
     ap.add_argument("--log-interval", type=int, default=10)
     ap.add_argument("--phase", default="joint", choices=["traj", "ellipse", "joint"])
     args = ap.parse_args()
@@ -129,13 +131,24 @@ def main():
     best_val = float("inf"); best_ckpt = os.path.join(ckpt_dir, "best.pt")
     start_epoch = 0
     if args.resume and os.path.exists(args.resume):
-        if phase == "ellipse":
-            # Phase 2 rebuilds a phase-specific optimizer; load weights only.
+        # A checkpoint from another curriculum phase is a weight initialization,
+        # not an optimizer resume: parameter groups (and trainable parameters)
+        # differ between phases.  Checkpoint directories are phase-specific.
+        resume_phase = os.path.basename(os.path.dirname(os.path.normpath(args.resume)))
+        phase_switch = resume_phase in {"traj", "ellipse", "joint"} and resume_phase != phase
+        weights_only = args.weights_only or phase_switch or phase == "ellipse"
+        if weights_only:
             d = load_checkpoint(args.resume, model, map_location=device)
+            # A phase switch starts its own schedule and epoch counter.  The
+            # ellipse phase historically keeps the source epoch for logging,
+            # but its optimizer is still intentionally reset.
+            start_epoch = 0 if (args.weights_only or phase_switch) else d.get("epoch", 0) + 1
+            logger.info(f"loaded model weights from {args.resume}; optimizer reset, "
+                        f"starting epoch {start_epoch}")
         else:
             d = load_checkpoint(args.resume, model, optimizer, map_location=device)
-        start_epoch = d.get("epoch", 0) + 1
-        logger.info(f"resumed from {args.resume} at epoch {start_epoch}")
+            start_epoch = d.get("epoch", 0) + 1
+            logger.info(f"resumed from {args.resume} at epoch {start_epoch}")
     n_b = len(train_loader)
     T = schedule.num_timesteps
     for epoch in range(start_epoch, epochs):
