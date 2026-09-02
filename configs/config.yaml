@@ -105,6 +105,7 @@ train:
   local_decoder_lr: 1.0e-5 # Phase2 局部解码器微调学习率（0.1*ellipse_lr）
   weight_decay: 1.0e-4     # AdamW 权重衰减
   grad_clip: 1.0           # 梯度裁剪范数（0/None 表示不裁剪）
+  best_collision_weight: 3.0  # best 评分 = clearance_p05 - K*collision_rate（K 越大越看重无碰撞）
   num_workers: 0           # DataLoader 进程数（Windows 下建议 0）
   save_every: 10           # 每多少轮保存一次 checkpoint
   warmup_epochs: 3         # 前 N 轮只训练 L_diff + 小 L_smooth（热身课程）

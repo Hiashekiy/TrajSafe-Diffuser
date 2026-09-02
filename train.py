@@ -305,13 +305,19 @@ def main():
         vmean = {k: float(np.mean([l[k] for l in vls])) for k in vls[0]} if vls else {}
         logger.info(f"val   loss={vmean}")
         if torch.cuda.is_available(): torch.cuda.empty_cache()
-        # Choose the best model by worst-case clearance (p05 max), not the mean.
-        score = vmean.get("clearance_p05", float("-inf"))
+        # Choose the best model by a safety score: reward worst-case clearance
+        # (p05) but heavily penalise collisions, so a model with a few hard
+        # collisions cannot be "best" just because its p05 is high.
+        k_coll = float(train_cfg.get("best_collision_weight", 3.0))
+        score = (vmean.get("clearance_p05", float("-inf"))
+                 - k_coll * vmean.get("collision_rate", 0.0))
         if score > best_val:
             best_val = score
             save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1,
                             extra=_ckpt_extra())
-            logger.info(f"save best ckpt {best_ckpt} (val clearance_p05 {best_val:.4f})")
+            logger.info(f"save best ckpt {best_ckpt} (val score {best_val:.4f} "
+                        f"= clear_p05 {vmean.get('clearance_p05', 0.0):.4f} "
+                        f"- {k_coll}*coll {vmean.get('collision_rate', 0.0):.4f})")
         if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
             save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model,
                             optimizer, epoch=epoch + 1, extra=_ckpt_extra())
