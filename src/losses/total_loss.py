@@ -164,11 +164,28 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         al_mean_Q = L_AL
         al_w_active = 0.0
     elif phase == "joint":
-        # V5: drop L_Z/L_p/L_align/L_col (main), keep L_smooth + L_E + AL.
+        # V5: drop L_Z/L_align/L_col (main), keep L_smooth + (optional) L_E + AL.
+        # Optionally re-add a small trajectory anchor (joint_loss.lambda_p) so the
+        # trajectory generator does not drift off the data manifold, and optionally
+        # drop the ellipse loss entirely (keep_ellipse_loss: false) to stop Phase-3
+        # from over-fitting the ellipse branch on top of a frozen Phase-2.
         jlc = joint_loss_cfg or {}
         lam_sm_joint = float(jlc.get("lambda_smooth",
                                      cfg_loss.get("lambda_smooth_joint", 0.05)))
-        total = lam_sm_joint * L_sm + L_E
+        total = lam_sm_joint * L_sm
+        if bool(jlc.get("keep_ellipse_loss", True)):
+            total = total + L_E
+        lam_p_joint = float(jlc.get("lambda_p", 0.0))
+        if lam_p_joint > 0.0:
+            total = total + lam_p_joint * L_p
+        # Safety-centred: direct SDF soft-collision penalty (most reliable, and
+        # independent of the ellipse head).  joint_loss.lambda_collision > 0 enables.
+        lam_coll_joint = float(jlc.get("lambda_collision", 0.0))
+        if lam_coll_joint > 0.0:
+            L_col = l_collision(pos_pred, batch["sdf_tensor"],
+                                margin=float(cfg_loss.get("collision_margin", 0.0)),
+                                sigma=float(cfg_loss.get("collision_sigma", 0.1)))
+            total = total + lam_coll_joint * L_col
         L_AL = _zero_like(torch.zeros((), device=device))
         al_mean_V = L_AL
         al_mean_Q = L_AL
@@ -201,11 +218,11 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         "L_AL": L_AL, "al_mean_V": al_mean_V, "al_mean_Q": al_mean_Q,
         "al_w_active": al_w_active,
     }
-    # V5: joint phase does not include L_Z/L_p/L_align/L_col in the loss; they were
-    # computed only for monitoring.  Drop them from the joint log so the reported
-    # loss dict only shows the actual joint objectives (L_smooth/L_ellipse/L_AL).
+    # V5: joint phase no longer includes L_Z/L_align in the loss (monitoring only).
+    # L_p (optional anchor) and L_col (safety-centred SDF penalty) may be active,
+    # so keep them in the log.
     if phase == "joint":
-        for k in ("L_Z", "L_p", "L_col", "L_align"):
+        for k in ("L_Z", "L_align"):
             result.pop(k, None)
     return result
 

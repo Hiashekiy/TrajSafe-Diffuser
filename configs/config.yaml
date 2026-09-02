@@ -169,16 +169,17 @@ joint_finetune:
 
 joint_loss:
   lambda_z: 0.0             # V5：第三阶段关闭轨迹 GT 回归
-  lambda_p: 0.0             # V5：第三阶段关闭中间路点回归
+  lambda_p: 0.0             # 可选轨迹锚：0=关闭；若发现 joint 后轨迹漂移/变怪，可设 0.1~0.3
   lambda_smooth: 0.05       # V5：降低平滑权重，只抑制高频变化
-  keep_ellipse_loss: true   # 完整保留 Phase2 椭圆损失
+  lambda_collision: 0.5     # 安全中心：直接 SDF 软碰撞损失（最直接的安全信号，0.5 起步，可 1.0）
+  keep_ellipse_loss: false  # joint 不再微调椭圆，冻结 Phase-2 椭圆分支并去掉 L_E
   lambda_align: 0.0         # V5：关闭单椭圆对齐损失
 
 segment_safety:
   enabled: true
   safety_margin: 0.0        # 安全凸区域边界内缩（场景单位）
   softmax_beta: 15.0        # Soft Active-Set 权重集中度
-  rho: 5.0                  # AL 二次项系数
+  rho: 10.0                 # AL 二次项系数（以安全为中心：5->10，可再上调到 15~20）
   dual_init: 0.1            # 全局安全 dual 变量初值
   dual_lr: 0.1              # dual 更新步长
   dual_max: 10.0            # dual 上限
@@ -194,7 +195,7 @@ segment_safety:
   boundary_jitter: 1        # 障碍边界抖动（像素）
 
 consensus_guidance:
-  enabled: true             # 推理时启用 Consensus Guidance
+  enabled: false            # 关闭中心线引导：以安全约束为主（模型+AL 已足够；引导为自引用近无操作）
   window_radius: 2          # 邻域半径（前后各 2 个 anchor 椭圆）
   positional_weights: [1, 2, 4, 2, 1]
   huber_delta: 1.0          # J_guide 的 Huber 阈值
@@ -208,7 +209,7 @@ consensus_guidance:
   eta_max: 0.05             # Guidance step size 上限
   detach_consensus_geometry: true
   zero_sum_after_guidance: true
-  training_step_frac: 0.5   # 训练时仅按比例随机对部分 batch 做 unrolled guidance，降低 double-backward 开销
+  training_step_frac: 0.0   # 引导已关闭，训练侧不再做 unrolled guidance（省 double-backward）
 
 # ---------- 离线 IRIS（椭圆标签生成）----------
 # 仅保留离线 MVIE 求解器需要的两项；Neural-IRIS 网络相关已删除。

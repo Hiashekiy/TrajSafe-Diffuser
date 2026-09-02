@@ -96,18 +96,27 @@ def main():
         model.ellipse_enabled = True
     elif phase == "joint":
         # V5: freeze low-level encoders, only tune trajectory/ellipse generators
-        # with a small uniform LR.
+        # with a small uniform LR.  If joint_loss.keep_ellipse_loss is false, the
+        # ellipse branch is frozen too (it is already Phase-2 quality) and only the
+        # trajectory generator + AL safety are fine-tuned.
         joint_cfg = cfg.get("joint_finetune", {})
-        train_names = joint_cfg.get("train", [
+        keep_ellipse = bool(cfg.get("joint_loss", {}).get("keep_ellipse_loss", True))
+        train_names = list(joint_cfg.get("train", [
             "safety_fusion", "trajectory_decoder", "residual_head",
             "ellipse_aggregator", "ellipse_head", "ellipse_pe_embed",
-        ])
+        ]))
+        if not keep_ellipse:
+            train_names = [n for n in train_names
+                           if n not in ("ellipse_aggregator", "ellipse_head", "ellipse_pe_embed")]
         for p in model.parameters():
             p.requires_grad_(False)
         for name in train_names:
             m = getattr(model, name)
             for p in m.parameters():
                 p.requires_grad_(True)
+        if not keep_ellipse:
+            # keep the ellipse branch deterministic at Phase-2 quality
+            model.ellipse_aggregator.eval(); model.ellipse_head.eval(); model.ellipse_pe_embed.eval()
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(trainable_params, lr=joint_lr,
                                       weight_decay=float(train_cfg["weight_decay"]))
@@ -137,11 +146,17 @@ def main():
             model.ellipse_pe_embed.train()
         elif phase == "joint":
             # V5: frozen encoders stay deterministic; only generators train.
+            keep_ellipse = bool(cfg.get("joint_loss", {}).get("keep_ellipse_loss", True))
             for name in ["scene_encoder", "trajectory_encoder", "point_scene_attention"]:
                 getattr(model, name).eval()
-            for name in ["safety_fusion", "trajectory_decoder", "residual_head",
-                         "ellipse_aggregator", "ellipse_head", "ellipse_pe_embed"]:
+            for name in ["safety_fusion", "trajectory_decoder", "residual_head"]:
                 getattr(model, name).train()
+            if keep_ellipse:
+                for name in ["ellipse_aggregator", "ellipse_head", "ellipse_pe_embed"]:
+                    getattr(model, name).train()
+            else:
+                for name in ["ellipse_aggregator", "ellipse_head", "ellipse_pe_embed"]:
+                    getattr(model, name).eval()
         else:
             model.train()
 
