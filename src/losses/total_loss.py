@@ -19,7 +19,7 @@ correction on z0 in the training/sampling forward pass (see train.py / sampler).
 import torch
 
 from src.diffusion.zerosum import compute_z0, zero_sum
-from .trajectory_loss import l_z, l_p, l_smooth, l_collision
+from .trajectory_loss import l_z, l_p, l_smooth, l_smooth_pos, l_collision
 from .ellipse_loss import (ellipse_param_loss, ellipse_align_loss,
                            ellipse_iou_loss, ellipse_collision_loss,
                            ellipse_anchor_loss)
@@ -65,6 +65,7 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
     # V5: L_col is no longer a core Phase-3 loss item (the convex-region AL term is
     # the safety constraint).  Keep a zero placeholder for logging compatibility.
     L_col = pos_pred.new_zeros(())
+    L_smooth_pos = pos_pred.new_zeros(())
 
     lam_z = cfg_loss.get("lambda_z", 1.0)
     lam_p = cfg_loss.get("lambda_p", 0.5)
@@ -182,6 +183,14 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
                                 margin=float(cfg_loss.get("collision_margin", 0.0)),
                                 sigma=float(cfg_loss.get("collision_sigma", 0.1)))
             total = total + lam_coll_joint * L_col
+        # Position-level smoothness (acceleration) -- stronger / more interpretable
+        # than the tiny residual second-difference l_smooth.  Enabled by
+        # joint_loss.lambda_smooth_pos > 0.
+        lam_smooth_pos_joint = float(jlc.get("lambda_smooth_pos", 0.0))
+        sp_used = lam_smooth_pos_joint > 0.0
+        if sp_used:
+            L_smooth_pos = l_smooth_pos(pos_pred)
+            total = total + lam_smooth_pos_joint * L_smooth_pos
         L_AL = _zero_like(torch.zeros((), device=device))
         al_mean_V = L_AL
         al_mean_Q = L_AL
@@ -210,6 +219,7 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
 
     result = {
         "total": total, "L_Z": L_Z, "L_p": L_p, "L_smooth": L_sm, "L_col": L_col,
+        "L_smooth_pos": L_smooth_pos,
         "L_param": L_param, "L_iou": L_iou, "L_ecoll": L_ecoll,
         "L_anchor": L_anchor, "L_align": L_align, "L_ellipse": L_E,
         "lambda_E": lam_E, "phase": phase,

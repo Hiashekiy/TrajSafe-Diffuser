@@ -169,8 +169,9 @@ joint_finetune:
 
 joint_loss:
   lambda_z: 0.0             # V5：第三阶段关闭轨迹 GT 回归
-  lambda_p: 0.0             # 可选轨迹锚：0=关闭；若发现 joint 后轨迹漂移/变怪，可设 0.1~0.3
+  lambda_p: 0.1             # 轨迹锚：把预测轨迹拉向 GT 轨迹（防止绕圈/漂移；0.1~0.3）
   lambda_smooth: 0.05       # V5：降低平滑权重，只抑制高频变化
+  lambda_smooth_pos: 0.2    # 位置层面平滑（加速度二阶梯 Huber）：比残差平滑更强、更直观
   lambda_collision: 0.5     # 安全中心：直接 SDF 软碰撞损失（最直接的安全信号，0.5 起步，可 1.0）
   keep_ellipse_loss: false  # joint 不再微调椭圆，冻结 Phase-2 椭圆分支并去掉 L_E
   lambda_align: 0.0         # V5：关闭单椭圆对齐损失
