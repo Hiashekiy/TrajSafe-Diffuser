@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Polygon
 from src.utils.config import load_config
 from src.utils.seed import set_seed
 from src.datasets.scene_dataset import load_maze_scene
@@ -15,6 +15,7 @@ from src.models.planner import Planner
 from src.utils.checkpoint import load_checkpoint
 from src.utils.visualization import draw_traj, set_map_limits
 from src.geometry.scene_frame import sample_sdf_scene
+from src.geometry.offline_iris_wrapper import infer_convex_region_from_scene_occupancy
 
 
 def main():
@@ -25,6 +26,8 @@ def main():
     ap.add_argument("--n", type=int, default=4)
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--convex", action="store_true",
+                    help="also overlay the analytical convex safe regions")
     args = ap.parse_args()
     cfg = load_config(args.config)
     if args.seed is not None:
@@ -41,7 +44,8 @@ def main():
                              beta_start=cfg["diffusion"]["beta_start"],
                              beta_end=cfg["diffusion"]["beta_end"]).to(device)
     map_t = torch.as_tensor(occ, dtype=torch.float32).to(device)[None, None]
-    pos_scene, _ = sample(model, map_t, schedule, cond_t, args.n, device=device, steps=args.steps)
+    pos_scene, _ = sample(model, map_t, schedule, cond_t, args.n, device=device,
+                           steps=args.steps, guidance_cfg=cfg.get("consensus_guidance", {}))
     pos_np = pos_scene.cpu().numpy()  # [n,H,2] scene
 
     # predict ellipses at t=0 by reconstructing z from the sampled positions
@@ -71,11 +75,20 @@ def main():
         ax.imshow(occ, origin="lower", extent=(-1, 1, -1, 1), cmap="gray_r", alpha=0.9)
         draw_traj(ax, pos_np[i], marker_every=0, arrow_every=0)
         for j in range(0, len(pos_np[i]), 8):
-            if not np.isfinite(r1[i][j] + r2[i][j]) or r1[i][j] <= 0:
+            if not np.isfinite(c[i][j]).all() or not np.isfinite(r1[i][j] + r2[i][j]) or r1[i][j] <= 0:
                 continue
             e = Ellipse((c[i][j][0], c[i][j][1]), 2 * r1[i][j], 2 * r2[i][j],
                         angle=np.degrees(th[i][j]), fill=False, edgecolor="tab:red", lw=1.0, alpha=0.7)
             ax.add_patch(e)
+        if args.convex:
+            for j in range(0, len(pos_np[i]), 8):
+                if not np.isfinite(c[i][j]).all() or not np.isfinite(r1[i][j] + r2[i][j]) or r1[i][j] <= 0:
+                    continue
+                A, b, verts = infer_convex_region_from_scene_occupancy(
+                    occ, c[i][j], r1[i][j], r2[i][j], th[i][j])
+                if verts is not None and len(verts) >= 3:
+                    ax.add_patch(Polygon(verts, closed=True, facecolor="lightgreen",
+                                         edgecolor="green", alpha=0.35, lw=0.8, zorder=3))
         ax.set_title(f"{args.maze} #{i} coll={coll[i]:.3f}", fontsize=10)
         ax.set_aspect("equal"); set_map_limits(ax, (-1, 1, -1, 1)); ax.legend(fontsize=6)
     for k in range(args.n, len(axes)):

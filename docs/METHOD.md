@@ -1926,7 +1926,7 @@ $S_t$ 是两个任务的共享中间表示，$\bar B$ 是编码阶段一次性�
 
 ---
 
-# 14. 解析凸安全区域（注：当前实现未实现该下游凸区域构造；`convex_region.py` 已移出，属设计可选项）
+# 14. 解析凸安全区域（已实现于 src/geometry/convex_region.py：超平面生成 + 障碍点筛选 + 半空间转顶点；预测椭圆可视化可用 scripts/plot/plot_test.py --convex / plot_test_samples.py --convex）
 
 对于最终预测椭圆
 

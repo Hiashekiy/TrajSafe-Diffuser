@@ -63,7 +63,8 @@ def main():
     load_checkpoint(args.ckpt, model, map_location=device)
 
     map_t = torch.as_tensor(occ, dtype=torch.float32).to(device)[None, None]
-    pos_scene, _ = sample(model, map_t, schedule, cond_t, args.n, device=device, steps=args.steps)
+    pos_scene, _ = sample(model, map_t, schedule, cond_t, args.n, device=device,
+                           steps=args.steps, guidance_cfg=cfg.get("consensus_guidance", {}))
     pos_np = pos_scene.cpu().numpy()
 
     metrics = [scene_metrics(pos_np[i], sdf, device=device) for i in range(args.n)]

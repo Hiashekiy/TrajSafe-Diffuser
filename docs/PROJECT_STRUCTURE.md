@@ -20,7 +20,8 @@
 - ellipse_utils.py：椭圆参数/Q/掩码/网格
 - iris_solver.py：真正离线 IRIS MVIE 求解器（椭圆标签）
 - offline_iris_wrapper.py：离线 IRIS wrapper（04 用）
-- （neural_iris_adapter.py / iris_wrapper.py 已归档 _archive/neural_iris_legacy/ 与 _archive/legacy_scripts/；convex_region.py 已删除）
+- convex_region.py：椭圆+障碍地图→凸安全区域（超平面生成 / 障碍点筛选 / 半空间转顶点；世界坐标投影）
+- （neural_iris_adapter.py / iris_wrapper.py 已归档 _archive/neural_iris_legacy/ 与 _archive/legacy_scripts/；下游解析凸区域构造已重新实现于 src/geometry/convex_region.py）
 
 ## 四、src/datasets
 - normalization.py：state 归一化

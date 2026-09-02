@@ -144,11 +144,66 @@ ellipse_loss:
   near_circle_tau: 0.1           # 近圆判定阈值：|r1-r2|/(r1+r2) < tau
   ellipse_margin: 1.0            # 椭圆 IoU/碰撞 局部网格边距（场景坐标）
 
-# ---------- 联合阶段（Phase3）椭圆 ramp ----------
+# ---------- 联合阶段（Phase3）椭圆 ramp（V5 不再使用）----------
+# V5 最终公式明确保留完整 L_E；本 ramp 只在旧版 joint 中有意义，
+# 当前实现直接加 L_E，不再乘 lam_E，因此这里仅保留字段避免破坏旧配置读取。
 joint_ellipse:
-  ramp: true                # 是否对 lambda_E 做线性 ramp
-  ramp_ratio: 0.2           # 前 20% joint epochs 线性爬坡
-  lambda_max: 1.0           # lambda_E 上限
+  ramp: false               # V5：joint 直接使用完整 L_E，不启用椭圆损失 ramp
+  ramp_ratio: 0.2           # 保留字段（未使用）
+  lambda_max: 1.0           # 保留字段（未使用）
+
+# ---------- 第三阶段 Joint 安全微调（V5）----------
+joint_finetune:
+  lr: 1.0e-5                # 统一小学习率（明显小于前两阶段 1e-4）
+  freeze:                   # 冻结底层编码层
+    - scene_encoder
+    - trajectory_encoder
+    - point_scene_attention
+  train:                    # 只训练轨迹生成端 + 椭圆生成端
+    - safety_fusion
+    - trajectory_decoder
+    - residual_head
+    - ellipse_aggregator
+    - ellipse_head
+    - ellipse_pe_embed
+
+joint_loss:
+  lambda_z: 0.0             # V5：第三阶段关闭轨迹 GT 回归
+  lambda_p: 0.0             # V5：第三阶段关闭中间路点回归
+  lambda_smooth: 0.05       # V5：降低平滑权重，只抑制高频变化
+  keep_ellipse_loss: true   # 完整保留 Phase2 椭圆损失
+  lambda_align: 0.0         # V5：关闭单椭圆对齐损失
+
+segment_safety:
+  enabled: true
+  safety_margin: 0.0        # 安全凸区域边界内缩（场景单位）
+  softmax_beta: 15.0        # Soft Active-Set 权重集中度
+  rho: 5.0                  # AL 二次项系数
+  dual_init: 0.1            # 全局安全 dual 变量初值
+  dual_lr: 0.1              # dual 更新步长
+  dual_max: 10.0            # dual 上限
+  dual_update_interval: 10  # 每多少 optimizer step 更新一次 dual
+  start_t_ratio: 0.60       # AL 开始介入的 diffusion timestep 比例
+  full_t_ratio: 0.20        # AL 完全介入的 timestep 比例
+  epoch_ramp_ratio: 0.20    # 前 20% joint epochs 从 0 线性升到 1
+  window_half: 0.25         # 局部凸区域窗口半宽（场景单位）
+  include_boundary: true    # 是否加入窗口边界盒约束
+  segment_stride: 1         # 每个 segment 都做 AL（V5 完整实现；调大可提速但会漏约束）
+  dilation: 1               # 障碍膨胀（像素）
+  boundary_jitter: 1        # 障碍边界抖动（像素）
+
+consensus_guidance:
+  enabled: true             # 推理时启用 Consensus Guidance
+  window_radius: 2          # 邻域半径（前后各 2 个椭圆）
+  positional_weights: [1, 2, 4, 2, 1]
+  huber_delta: 1.0          # J_guide 的 Huber 阈值
+  normalize_by_minor_axis: true
+  # inference only
+  start_t_ratio: 0.40       # Guidance 开始介入的 timestep 比例
+  full_t_ratio: 0.10        # Guidance 完全介入的 timestep 比例
+  eta_max: 0.05             # Guidance step size 上限
+  detach_consensus_geometry: true
+  zero_sum_after_guidance: true
 
 # ---------- 离线 IRIS（椭圆标签生成）----------
 # 仅保留离线 MVIE 求解器需要的两项；Neural-IRIS 网络相关已删除。

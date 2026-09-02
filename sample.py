@@ -45,7 +45,8 @@ def main():
     load_checkpoint(args.ckpt, model, map_location=device)
 
     map_t = torch.as_tensor(occ, dtype=torch.float32).to(device)[None, None]
-    pos_scene, _ = sample(model, map_t, schedule, cond_t, args.n, device=device, steps=args.steps)
+    pos_scene, _ = sample(model, map_t, schedule, cond_t, args.n, device=device,
+                           steps=args.steps, guidance_cfg=cfg.get("consensus_guidance", {}))
     world = frame.scene_to_world_np(pos_scene.cpu().numpy())          # [n,H,2]
     conds_world = frame.scene_to_world_np(conds)                      # [n,2,2]
 

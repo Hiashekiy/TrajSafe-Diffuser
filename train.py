@@ -4,7 +4,9 @@ Sequential three-phase curriculum:
   --phase traj     : train trajectory only (L_traj)
   --phase ellipse  : load a trajectory checkpoint, freeze trajectory backbone, train
                      EllipseAggregator + EllipseHead (+ optional local-decoder micro-tune)
-  --phase joint    : unfreeze everything, total = L_traj + lambda_E*L_E + lambda_align*L_align
+  --phase joint    : V5 safety fine-tuning.  Freeze low-level encoders, only train
+                     trajectory/ellipse generators; loss =
+                     lambda_smooth*L_smooth + L_E + gated AL safety + gated J_guide.
 """
 import argparse, os, sys, time
 import numpy as np
@@ -19,9 +21,10 @@ from src.utils.seed import set_seed
 from src.utils.logger import Logger
 from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.diffusion.schedule import NoiseSchedule
-from src.diffusion.zerosum import compute_z0
+from src.diffusion.zerosum import compute_z0, compute_base
 from src.models.planner import Planner
 from src.losses.total_loss import total_loss
+from src.guidance.consensus_guidance import apply_consensus_guidance_unrolled, guidance_weight
 from src.datasets.scene_dataset import make_loader
 
 
@@ -59,6 +62,7 @@ def main():
     traj_lr = float(train_cfg.get("traj_lr", train_cfg["lr"]))
     ellipse_lr = float(train_cfg.get("ellipse_lr", train_cfg["lr"]))
     local_decoder_lr = float(train_cfg.get("local_decoder_lr", 0.1 * ellipse_lr))
+    joint_lr = float(cfg.get("joint_finetune", {}).get("lr", 1e-5))
 
     # ---- build optimizer + set trainable state per phase ----
     if phase == "ellipse":
@@ -90,6 +94,24 @@ def main():
         optimizer = torch.optim.AdamW(groups, lr=ellipse_lr,
                                       weight_decay=float(train_cfg["weight_decay"]))
         model.ellipse_enabled = True
+    elif phase == "joint":
+        # V5: freeze low-level encoders, only tune trajectory/ellipse generators
+        # with a small uniform LR.
+        joint_cfg = cfg.get("joint_finetune", {})
+        train_names = joint_cfg.get("train", [
+            "safety_fusion", "trajectory_decoder", "residual_head",
+            "ellipse_aggregator", "ellipse_head", "ellipse_pe_embed",
+        ])
+        for p in model.parameters():
+            p.requires_grad_(False)
+        for name in train_names:
+            m = getattr(model, name)
+            for p in m.parameters():
+                p.requires_grad_(True)
+        trainable_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.AdamW(trainable_params, lr=joint_lr,
+                                      weight_decay=float(train_cfg["weight_decay"]))
+        model.ellipse_enabled = True
     else:
         for p in model.parameters():
             p.requires_grad_(True)
@@ -113,6 +135,13 @@ def main():
             model.ellipse_aggregator.train()
             model.ellipse_head.train()
             model.ellipse_pe_embed.train()
+        elif phase == "joint":
+            # V5: frozen encoders stay deterministic; only generators train.
+            for name in ["scene_encoder", "trajectory_encoder", "point_scene_attention"]:
+                getattr(model, name).eval()
+            for name in ["safety_fusion", "trajectory_decoder", "residual_head",
+                         "ellipse_aggregator", "ellipse_head", "ellipse_pe_embed"]:
+                getattr(model, name).train()
         else:
             model.train()
 
@@ -123,6 +152,23 @@ def main():
     if phase == "joint" and ellipse_cfg.get("ramp", True):
         ratio = float(ellipse_cfg.get("ramp_ratio", 0.2))
         ellipse_cfg["ramp_epochs"] = max(1, int(round(epochs * ratio)))
+
+    # ---- V5 Phase 3 safety / joint cfg ----
+    al_cfg = dict(cfg.get("segment_safety", {}))
+    if phase == "joint" and al_cfg.get("enabled", True):
+        ratio = float(al_cfg.get("epoch_ramp_ratio", 0.2))
+        al_cfg["epoch_ramp_epochs"] = max(1, int(round(epochs * ratio)))
+        al_state = {"dual": float(al_cfg.get("dual_init", 0.1))}
+    else:
+        al_cfg = {}
+        al_state = None
+    joint_loss_cfg = dict(cfg.get("joint_loss", {}))
+    guidance_cfg = dict(cfg.get("consensus_guidance", {}))
+
+    def _ckpt_extra():
+        if phase == "joint" and al_state is not None:
+            return {"al_dual": float(al_state["dual"])}
+        return None
 
     base_ckpt = train_cfg.get("ckpt_dir", "outputs/ckpt")
     ckpt_dir = os.path.join(base_ckpt, phase)   # 每个阶段独立目录，避免互相覆盖
@@ -149,6 +195,9 @@ def main():
             d = load_checkpoint(args.resume, model, optimizer, map_location=device)
             start_epoch = d.get("epoch", 0) + 1
             logger.info(f"resumed from {args.resume} at epoch {start_epoch}")
+        # Restore the AL dual variable so safety penalty continuity survives resume.
+        if phase == "joint" and al_state is not None and "al_dual" in d:
+            al_state["dual"] = float(d["al_dual"])
     n_b = len(train_loader)
     T = schedule.num_timesteps
     for epoch in range(start_epoch, epochs):
@@ -161,8 +210,34 @@ def main():
             z0_gt, _, _, _ = compute_z0(batch["pos"], batch["cond"])
             z_t = schedule.q_sample_zero_sum(z0_gt, t)
             out = model(z_t, t, batch["map_tensor"], batch["cond"])
-            loss = total_loss(out, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
-                              ellipse_cfg=ellipse_cfg)
+
+            # V5: J_guide is NOT a loss.  During training it is applied as a
+            # gradient correction on z0 (unrolled), and the losses are then
+            # computed on the guided trajectory.
+            out_eff = out
+            if phase == "joint" and guidance_cfg and guidance_cfg.get("enabled", True) \
+                    and out.get("ellipse_center") is not None:
+                tt = t
+                w_G = guidance_weight(tt, T,
+                                      guidance_cfg.get("start_t_ratio", 0.40),
+                                      guidance_cfg.get("full_t_ratio", 0.10))
+                if float(w_G.max().item()) > 0.0:
+                    start = batch["cond"][:, 0]
+                    goal = batch["cond"][:, 1]
+                    N = batch["pos"].shape[1] - 1
+                    base = compute_base(goal - start, N)
+                    z0g, posg, _gs = apply_consensus_guidance_unrolled(
+                        out["z0_pred"], base, start,
+                        out["ellipse_center"], out["ellipse_radii"],
+                        out["ellipse_theta"], guidance_cfg, tt, T)
+                    out_eff = dict(out)
+                    out_eff["z0_pred"] = z0g
+                    out_eff["pos_pred"] = posg
+
+            loss = total_loss(out_eff, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
+                              ellipse_cfg=ellipse_cfg, diffusion_t=t, num_timesteps=T,
+                              al_state=al_state, al_cfg=al_cfg,
+                              joint_loss_cfg=joint_loss_cfg)
             if not torch.isfinite(loss["total"]):
                 logger.info(f"epoch {epoch+1}/{epochs} batch {bi+1}/{n_b} non-finite total={loss['total'].item()} -- skip")
                 continue
@@ -170,6 +245,15 @@ def main():
             if train_cfg.get("grad_clip"):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), float(train_cfg["grad_clip"]))
             optimizer.step()
+            if phase == "joint" and al_state is not None:
+                interval = int(al_cfg.get("dual_update_interval", 10))
+                if (bi + 1) % interval == 0 and loss.get("al_w_active", 0.0) > 0.0:
+                    mv = loss.get("al_mean_V")
+                    if mv is not None:
+                        dual = float(al_state["dual"])
+                        al_state["dual"] = float(min(
+                            float(al_cfg.get("dual_max", 10.0)),
+                            max(0.0, dual + float(al_cfg.get("dual_lr", 0.1)) * float(mv.item()))))
             losses.append({k: v.item() for k, v in loss.items() if torch.is_tensor(v) and v.requires_grad})
             if (bi + 1) % args.log_interval == 0 or bi + 1 == n_b:
                 logger.info(f"epoch {epoch+1}/{epochs} batch {bi+1}/{n_b} total={loss['total'].item():.3f} t={time.time()-t0:.1f}s")
@@ -184,7 +268,9 @@ def main():
                 z_t = schedule.q_sample_zero_sum(z0_gt, t)
                 out = model(z_t, t, batch["map_tensor"], batch["cond"])
                 loss = total_loss(out, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
-                                  ellipse_cfg=ellipse_cfg)
+                                  ellipse_cfg=ellipse_cfg, diffusion_t=t, num_timesteps=T,
+                                  al_state=None, al_cfg=al_cfg,
+                                  joint_loss_cfg=joint_loss_cfg)
                 if not torch.isfinite(loss["total"]):
                     continue
                 vls.append({k: v.item() for k, v in loss.items() if torch.is_tensor(v)})
@@ -193,10 +279,12 @@ def main():
         if torch.cuda.is_available(): torch.cuda.empty_cache()
         if vmean.get("total", float("inf")) < best_val:
             best_val = vmean["total"]
-            save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1)
+            save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1,
+                            extra=_ckpt_extra())
             logger.info(f"save best ckpt {best_ckpt} (val total {best_val:.4f})")
         if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-            save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model, optimizer, epoch=epoch + 1)
+            save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model,
+                            optimizer, epoch=epoch + 1, extra=_ckpt_extra())
             logger.info(f"save ckpt epoch_{epoch+1}.pt")
         if torch.cuda.is_available(): torch.cuda.empty_cache()
 
