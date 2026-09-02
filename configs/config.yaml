@@ -188,13 +188,14 @@ segment_safety:
   epoch_ramp_ratio: 0.20    # 前 20% joint epochs 从 0 线性升到 1
   window_half: 0.25         # 局部凸区域窗口半宽（场景单位）
   include_boundary: true    # 是否加入窗口边界盒约束
-  segment_stride: 1         # 每个 segment 都做 AL（V5 完整实现；调大可提速但会漏约束）
+  region_stride: 4          # 一个 anchor 椭圆/凸区域覆盖 4 条相邻 segment
+  maps_dir: "data/processed_scene/maps"  # 预存障碍点目录（可选）
   dilation: 1               # 障碍膨胀（像素）
   boundary_jitter: 1        # 障碍边界抖动（像素）
 
 consensus_guidance:
   enabled: true             # 推理时启用 Consensus Guidance
-  window_radius: 2          # 邻域半径（前后各 2 个椭圆）
+  window_radius: 2          # 邻域半径（前后各 2 个 anchor 椭圆）
   positional_weights: [1, 2, 4, 2, 1]
   huber_delta: 1.0          # J_guide 的 Huber 阈值
   normalize_by_minor_axis: true

@@ -9,6 +9,8 @@ gradient only flows to the predicted trajectory (p -> z0 -> trajectory head).
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,6 +19,14 @@ from src.geometry.iris_solver import extract_obstacle_constraints
 from src.geometry.convex_region import ellipse_params_to_shape, generate_convex_region
 
 EPS = 1e-8
+
+# scene maze order (matches src/datasets/scene_dataset.py MAZE_NAMES)
+_MAZE_NAMES = ["umaze", "medium", "large"]
+
+# obstacle boundary point cache, keyed by (maze_id, dilation, boundary_jitter).
+# Scene maps are fixed per maze id, so we extract obstacle points once and reuse
+# them across batches/epochs.
+_OBSTACLE_POINT_CACHE: dict = {}
 
 
 def al_timestep_weight(t, T, start_ratio=0.60, full_ratio=0.20):
@@ -29,23 +39,44 @@ def al_timestep_weight(t, T, start_ratio=0.60, full_ratio=0.20):
 
 
 def _scene_obstacle_points(occ, extent=(-1.0, 1.0, -1.0, 1.0),
-                           dilation=1, boundary_jitter=1):
-    """Obstacle boundary points of a full scene occupancy map in scene coords."""
-    occ = np.asarray(occ)
-    H, W = occ.shape
-    x0, x1, y0, y1 = extent
-    _, pts = extract_obstacle_constraints(
-        np.asarray(occ, dtype=np.uint8),
-        dilation_iters=dilation, boundary_jitter=boundary_jitter)
-    if len(pts) == 0:
-        return np.empty((0, 2), dtype=float)
-    dx = (float(x1) - float(x0)) / W
-    dy = (float(y1) - float(y0)) / H
-    gx = pts[:, 0].astype(float)
-    gy = pts[:, 1].astype(float)
-    sx = x0 + (gx + 0.5) * dx
-    sy = y0 + (gy + 0.5) * dy
-    return np.column_stack([sx, sy]).astype(float)
+                           dilation=1, boundary_jitter=1, cache_key=None,
+                           cache_path=None):
+    """Obstacle boundary points of a full scene occupancy map in scene coords.
+
+    Results are cached by cache_key (e.g. maze_id) in memory; if cache_path is
+    given and the .npy already exists it is loaded directly from the dataset.
+    """
+    if cache_key is not None:
+        key = (cache_key, int(dilation), int(boundary_jitter))
+        if key in _OBSTACLE_POINT_CACHE:
+            return _OBSTACLE_POINT_CACHE[key]
+
+    if cache_path is not None and os.path.exists(cache_path):
+        out = np.asarray(np.load(cache_path), dtype=float).reshape(-1, 2)
+    else:
+        occ = np.asarray(occ)
+        H, W = occ.shape
+        x0, x1, y0, y1 = extent
+        _, pts = extract_obstacle_constraints(
+            np.asarray(occ, dtype=np.uint8),
+            dilation_iters=dilation, boundary_jitter=boundary_jitter)
+        if len(pts) == 0:
+            out = np.empty((0, 2), dtype=float)
+        else:
+            dx = (float(x1) - float(x0)) / W
+            dy = (float(y1) - float(y0)) / H
+            gx = pts[:, 0].astype(float)
+            gy = pts[:, 1].astype(float)
+            sx = x0 + (gx + 0.5) * dx
+            sy = y0 + (gy + 0.5) * dy
+            out = np.column_stack([sx, sy]).astype(float)
+        if cache_path is not None:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            np.save(cache_path, out)
+
+    if cache_key is not None:
+        _OBSTACLE_POINT_CACHE[(cache_key, int(dilation), int(boundary_jitter))] = out
+    return out
 
 
 def _convex_region_for_ellipse(occ, center, r1, r2, theta, cfg,
@@ -111,7 +142,7 @@ def _segment_al_loss(A, b, p0, p1, beta):
 
 def al_safety_loss(pos_pred, ellipse_center, ellipse_radii, ellipse_theta,
                    map_tensor, t, cfg, device, dual, num_timesteps,
-                   segment_stride=1):
+                   region_stride=4, maze_ids=None, maps_dir=None):
     """Compute the AL safety loss over predicted ellipses + scene occupancy.
 
     Returns a dict with L_AL, mean_V, mean_Q, w_active.
@@ -142,29 +173,44 @@ def al_safety_loss(pos_pred, ellipse_center, ellipse_radii, ellipse_theta,
     sample_terms = []   # (w, V0, V1, Q0, Q1) non-detached for the loss
     for b in active:
         occ_np = map_tensor[b, 0].detach().cpu().numpy()
+        cache_key = None
+        if maze_ids is not None:
+            cache_key = int(maze_ids[b].detach().cpu().item())
+        cache_path = None
+        if maps_dir is not None and cache_key is not None:
+            cache_path = os.path.join(maps_dir, f"{_MAZE_NAMES[cache_key]}_obstacle_points.npy")
         obs_map = _scene_obstacle_points(
             occ_np, extent=(-1.0, 1.0, -1.0, 1.0),
             dilation=int(cfg.get("dilation", 1)),
-            boundary_jitter=int(cfg.get("boundary_jitter", 1)))
+            boundary_jitter=int(cfg.get("boundary_jitter", 1)),
+            cache_key=cache_key, cache_path=cache_path)
         V_b, Q_b = [], []
-        for k in range(0, Nseg, max(1, int(segment_stride))):
-            if k >= ellipse_center.shape[1]:
+        # Build one convex region at each anchor ellipse and reuse it for the
+        # next region_stride segments (avoids one region construction per segment).
+        anchor_stride = max(1, int(region_stride))
+        n_anchor = (Nseg + anchor_stride - 1) // anchor_stride
+        n_ellipse = ellipse_center.shape[1]
+        for ai in range(n_anchor):
+            a = ai * anchor_stride
+            if a >= n_ellipse:
                 break
-            center = ellipse_center[b, k].detach().cpu().numpy()
-            rad = ellipse_radii[b, k].detach().cpu().numpy()
-            theta = ellipse_theta[b, k].detach().cpu().item()
+            center = ellipse_center[b, a].detach().cpu().numpy()
+            rad = ellipse_radii[b, a].detach().cpu().numpy()
+            theta = ellipse_theta[b, a].detach().cpu().item()
             A, bnd = _convex_region_for_ellipse(occ_np, center, rad[0], rad[1],
                                                 theta, cfg, obs=obs_map)
             if A is None or bnd is None or len(A) < 3:
                 continue
-            p0 = pos_pred[b, k]
-            p1 = pos_pred[b, k + 1]
-            V0, V1, Q0, Q1 = _segment_al_loss(A, bnd, p0, p1, beta)
-            sample_terms.append((float(w_t[b].item()), V0, V1, Q0, Q1))
-            V_b.extend([V0.detach(), V1.detach()])
-            Q_b.extend([Q0.detach(), Q1.detach()])
-            V_all.extend([V0.detach(), V1.detach()])
-            Q_all.extend([Q0.detach(), Q1.detach()])
+            seg_end = min(a + anchor_stride, Nseg)
+            for s in range(a, seg_end):
+                p0 = pos_pred[b, s]
+                p1 = pos_pred[b, s + 1]
+                V0, V1, Q0, Q1 = _segment_al_loss(A, bnd, p0, p1, beta)
+                sample_terms.append((float(w_t[b].item()), V0, V1, Q0, Q1))
+                V_b.extend([V0.detach(), V1.detach()])
+                Q_b.extend([Q0.detach(), Q1.detach()])
+                V_all.extend([V0.detach(), V1.detach()])
+                Q_all.extend([Q0.detach(), Q1.detach()])
 
     if not sample_terms:
         zero = torch.zeros((), device=device, requires_grad=False)

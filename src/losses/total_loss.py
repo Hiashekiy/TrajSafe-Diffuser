@@ -182,7 +182,9 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
                 model_out["ellipse_radii"], model_out["ellipse_theta"],
                 batch["map_tensor"], diffusion_t, al_cfg, device, dual,
                 num_timesteps,
-                segment_stride=int(al_cfg.get("segment_stride", 1)))
+                region_stride=int(al_cfg.get("region_stride", 4)),
+                maze_ids=batch.get("maze_id"),
+                maps_dir=al_cfg.get("maps_dir", None))
             L_AL = out_al["L_AL"]
             al_mean_V = out_al["mean_V"]
             al_mean_Q = out_al["mean_Q"]
@@ -191,7 +193,7 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
     else:
         raise ValueError(f"unknown phase {phase}")
 
-    return {
+    result = {
         "total": total, "L_Z": L_Z, "L_p": L_p, "L_smooth": L_sm, "L_col": L_col,
         "L_param": L_param, "L_iou": L_iou, "L_ecoll": L_ecoll,
         "L_anchor": L_anchor, "L_align": L_align, "L_ellipse": L_E,
@@ -199,6 +201,13 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         "L_AL": L_AL, "al_mean_V": al_mean_V, "al_mean_Q": al_mean_Q,
         "al_w_active": al_w_active,
     }
+    # V5: joint phase does not include L_Z/L_p/L_align/L_col in the loss; they were
+    # computed only for monitoring.  Drop them from the joint log so the reported
+    # loss dict only shows the actual joint objectives (L_smooth/L_ellipse/L_AL).
+    if phase == "joint":
+        for k in ("L_Z", "L_p", "L_col", "L_align"):
+            result.pop(k, None)
+    return result
 
 
 def _zero_like(x):
