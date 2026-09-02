@@ -22,6 +22,7 @@ from src.utils.logger import Logger
 from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.zerosum import compute_z0, compute_base
+from src.geometry.scene_frame import sample_sdf_scene
 from src.models.planner import Planner
 from src.losses.total_loss import total_loss
 from src.guidance.consensus_guidance import apply_consensus_guidance_unrolled, guidance_weight
@@ -171,8 +172,6 @@ def main():
     # ---- V5 Phase 3 safety / joint cfg ----
     al_cfg = dict(cfg.get("segment_safety", {}))
     if phase == "joint" and al_cfg.get("enabled", True):
-        ratio = float(al_cfg.get("epoch_ramp_ratio", 0.2))
-        al_cfg["epoch_ramp_epochs"] = max(1, int(round(epochs * ratio)))
         al_state = {"dual": float(al_cfg.get("dual_init", 0.1))}
     else:
         al_cfg = {}
@@ -189,7 +188,7 @@ def main():
     ckpt_dir = os.path.join(base_ckpt, phase)   # 每个阶段独立目录，避免互相覆盖
     os.makedirs(ckpt_dir, exist_ok=True)
     logger = Logger(os.path.join(ckpt_dir, "train.log"))
-    best_val = float("inf"); best_ckpt = os.path.join(ckpt_dir, "best.pt")
+    best_val = float("-inf"); best_ckpt = os.path.join(ckpt_dir, "best.pt")
     start_epoch = 0
     if args.resume and os.path.exists(args.resume):
         # A checkpoint from another curriculum phase is a weight initialization,
@@ -291,15 +290,25 @@ def main():
                                   joint_loss_cfg=joint_loss_cfg)
                 if not torch.isfinite(loss["total"]):
                     continue
-                vls.append({k: v.item() for k, v in loss.items() if torch.is_tensor(v)})
+                # Safety-centred validation metric: sample the SDF at the predicted
+                # clean trajectory interior points.  Higher mean clearance = safer;
+                # collisions drive it negative.  This is ramp-invariant (unlike the
+                # mixed total, whose AL weight w_epoch changes over epochs).
+                d = sample_sdf_scene(batch["sdf_tensor"], out["pos_pred"][:, 1:-1])
+                di = {k: v.item() for k, v in loss.items() if torch.is_tensor(v)}
+                di["clearance_mean"] = float(d.mean().item())
+                di["collision_rate"] = float((d <= 0.0).float().mean().item())
+                vls.append(di)
         vmean = {k: float(np.mean([l[k] for l in vls])) for k in vls[0]} if vls else {}
         logger.info(f"val   loss={vmean}")
         if torch.cuda.is_available(): torch.cuda.empty_cache()
-        if vmean.get("total", float("inf")) < best_val:
-            best_val = vmean["total"]
+        # Choose the best model by mean clearance (max), not the ramped total.
+        score = vmean.get("clearance_mean", float("-inf"))
+        if score > best_val:
+            best_val = score
             save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1,
                             extra=_ckpt_extra())
-            logger.info(f"save best ckpt {best_ckpt} (val total {best_val:.4f})")
+            logger.info(f"save best ckpt {best_ckpt} (val clearance {best_val:.4f})")
         if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
             save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model,
                             optimizer, epoch=epoch + 1, extra=_ckpt_extra())

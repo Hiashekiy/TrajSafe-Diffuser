@@ -48,17 +48,6 @@ def _joint_ellipse_lambda(epoch, ecfg):
     return target * min(1.0, (epoch + 1) / max(1, ramp_epochs))
 
 
-def _epoch_ramp(epoch, al_cfg):
-    """w_epoch(e) = min(1, e / E_ramp), with e starting at 0.
-
-    This strictly follows the V5 formula: the first epoch (e=0) has weight 0,
-    and the weight reaches 1.0 at e = E_ramp.
-    """
-    ratio = float(al_cfg.get("epoch_ramp_ratio", 0.2))
-    ramp_epochs = int(al_cfg.get("epoch_ramp_epochs", max(1, int(round(10 * ratio)))))
-    return min(1.0, max(0, epoch) / max(1, ramp_epochs))
-
-
 def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0,
                ellipse_cfg=None, diffusion_t=None, num_timesteps=None,
                al_state=None, al_cfg=None, joint_loss_cfg=None):
@@ -197,7 +186,9 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         al_mean_V = L_AL
         al_mean_Q = L_AL
         al_w_active = 0.0
-        w_epoch = _epoch_ramp(epoch, al_cfg or {})
+        # Fixed AL weight from epoch 0 (no linear epoch ramp).  The per-timestep
+        # gate w_AL(t) still applies inside al_safety_loss via start/full_t_ratio.
+        w_epoch = float((al_cfg or {}).get("al_weight", 1.0))
 
         if w_epoch > 0.0 and al_cfg and al_cfg.get("enabled", True) and has_ellipse                 and diffusion_t is not None and num_timesteps is not None:
             dual = (al_state or {}).get("dual", float(al_cfg.get("dual_init", 0.1)))
