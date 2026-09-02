@@ -84,8 +84,14 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
                                   cfg_loss.get("lambda_collision_max", 0.0)))
 
     # ---- ellipse objective ----
+    # In joint with keep_ellipse_loss=false the ellipse branch is frozen and L_E is
+    # NOT part of the loss; skip computing the ellipse sub-losses entirely so they
+    # are neither in the optimisation nor in the logged loss dict.
+    keep_ellipse_loss = True
+    if phase == "joint":
+        keep_ellipse_loss = bool((joint_loss_cfg or {}).get("keep_ellipse_loss", True))
     has_ellipse = model_out.get("ellipse_center") is not None
-    if has_ellipse:
+    if has_ellipse and keep_ellipse_loss:
         ecfg = ellipse_cfg if ellipse_cfg is not None else cfg_loss.get("ellipse_loss", cfg_loss)
         valid = batch["ellipse_valid"]
         gt_center = batch["ellipse_params"][..., 0:2]
@@ -176,7 +182,8 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
         if bool(jlc.get("keep_ellipse_loss", True)):
             total = total + L_E
         lam_p_joint = float(jlc.get("lambda_p", 0.0))
-        if lam_p_joint > 0.0:
+        lp_used = lam_p_joint > 0.0
+        if lp_used:
             total = total + lam_p_joint * L_p
         # Safety-centred: direct SDF soft-collision penalty (most reliable, and
         # independent of the ellipse head).  joint_loss.lambda_collision > 0 enables.
@@ -224,6 +231,15 @@ def total_loss(model_out, batch, cfg_loss, device="cuda", phase="joint", epoch=0
     if phase == "joint":
         for k in ("L_Z", "L_align"):
             result.pop(k, None)
+        if not keep_ellipse_loss:
+            # The ellipse branch is frozen and its losses are not part of the
+            # objective; drop them from the log too.
+            for k in ("L_param", "L_iou", "L_ecoll", "L_anchor", "L_ellipse", "lambda_E"):
+                result.pop(k, None)
+        if not lp_used:
+            # L_p is only a trajectory anchor; when lambda_p=0 it is not in the
+            # loss, so drop it from the log too.
+            result.pop("L_p", None)
     return result
 
 
