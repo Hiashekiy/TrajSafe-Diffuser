@@ -112,31 +112,31 @@ def _convex_region_for_ellipse(occ, center, r1, r2, theta, cfg,
 
 
 def _segment_al_loss(A, b, p0, p1, beta):
-    """Soft active-set AL term for one segment with endpoints p0,p1.
+    """Soft active-set AL term for a batch of segments sharing one (A,b).
 
-    A : (M,2) detached, rows unitised; b : (M,).  p0,p1 : (2,) tensors.
-    Returns (V0, V1, Q0, Q1).
+    A : (M,2) detached; b : (M,).  p0 : (S,2), p1 : (S,2) batched endpoints
+    (S segments).  Returns (V0, V1, Q0, Q1) each shape (S,).
     """
+    # Move A,b to the segment device once; S small (region_stride).
     A = torch.as_tensor(A, dtype=torch.float32, device=p0.device)
     b = torch.as_tensor(b, dtype=torch.float32, device=p0.device)
     norms = torch.linalg.norm(A, dim=-1, keepdim=True).clamp(min=EPS)
-    A_norm = A / norms
-    b_n = b / norms.squeeze(-1)
+    A_norm = A / norms                       # (M,2)
+    b_n = b / norms.squeeze(-1)              # (M,)
 
-    r0 = (A_norm @ p0) - b_n
-    r1 = (A_norm @ p1) - b_n
+    # r = A_norm @ p - b_n, batched over S segments: (S,M) = p @ A_norm.T - b_n
+    r0 = p0 @ A_norm.T - b_n                 # (S,M)
+    r1 = p1 @ A_norm.T - b_n                 # (S,M)
 
-    logits0 = beta * r0
-    logits1 = beta * r1
-    alpha0 = torch.softmax(logits0, dim=-1)
-    alpha1 = torch.softmax(logits1, dim=-1)
+    alpha0 = torch.softmax(beta * r0, dim=-1)
+    alpha1 = torch.softmax(beta * r1, dim=-1)
 
     v0 = torch.relu(r0)
     v1 = torch.relu(r1)
-    V0 = (alpha0 * v0).sum()
-    V1 = (alpha1 * v1).sum()
-    Q0 = (alpha0 * v0.square()).sum()
-    Q1 = (alpha1 * v1.square()).sum()
+    V0 = (alpha0 * v0).sum(-1)               # (S,)
+    V1 = (alpha1 * v1).sum(-1)
+    Q0 = (alpha0 * v0.square()).sum(-1)
+    Q1 = (alpha1 * v1.square()).sum(-1)
     return V0, V1, Q0, Q1
 
 
@@ -184,7 +184,6 @@ def al_safety_loss(pos_pred, ellipse_center, ellipse_radii, ellipse_theta,
             dilation=int(cfg.get("dilation", 1)),
             boundary_jitter=int(cfg.get("boundary_jitter", 1)),
             cache_key=cache_key, cache_path=cache_path)
-        V_b, Q_b = [], []
         # Build one convex region at each anchor ellipse and reuse it for the
         # next region_stride segments (avoids one region construction per segment).
         anchor_stride = max(1, int(region_stride))
@@ -202,25 +201,24 @@ def al_safety_loss(pos_pred, ellipse_center, ellipse_radii, ellipse_theta,
             if A is None or bnd is None or len(A) < 3:
                 continue
             seg_end = min(a + anchor_stride, Nseg)
-            for s in range(a, seg_end):
-                p0 = pos_pred[b, s]
-                p1 = pos_pred[b, s + 1]
-                V0, V1, Q0, Q1 = _segment_al_loss(A, bnd, p0, p1, beta)
-                sample_terms.append((float(w_t[b].item()), V0, V1, Q0, Q1))
-                V_b.extend([V0.detach(), V1.detach()])
-                Q_b.extend([Q0.detach(), Q1.detach()])
-                V_all.extend([V0.detach(), V1.detach()])
-                Q_all.extend([Q0.detach(), Q1.detach()])
+            # Vectorise all segments in this anchor group (they share (A,b)).
+            p0 = pos_pred[b, a:seg_end]            # (S,2)
+            p1 = pos_pred[b, a + 1:seg_end + 1]    # (S,2)
+            V0, V1, Q0, Q1 = _segment_al_loss(A, bnd, p0, p1, beta)   # (S,)
+            wb = float(w_t[b].item())
+            sample_terms.append((wb, V0, V1, Q0, Q1))
+            V_all.extend([V0.detach(), V1.detach()])
+            Q_all.extend([Q0.detach(), Q1.detach()])
 
     if not sample_terms:
         zero = torch.zeros((), device=device, requires_grad=False)
         return {"L_AL": zero, "mean_V": zero, "mean_Q": zero, "w_active": 0.0}
 
-    mean_V = torch.stack(V_all).mean()
-    mean_Q = torch.stack(Q_all).mean()
+    mean_V = torch.cat(V_all).mean() if V_all else torch.zeros((), device=device)
+    mean_Q = torch.cat(Q_all).mean() if Q_all else torch.zeros((), device=device)
 
     B_total = pos_pred.shape[0]
-    L_AL = torch.stack([
+    L_AL = torch.cat([
         wb * (dual * (V0 + V1) + 0.5 * rho * (Q0 + Q1))
         for wb, V0, V1, Q0, Q1 in sample_terms
     ]).sum() / max(1, B_total)
