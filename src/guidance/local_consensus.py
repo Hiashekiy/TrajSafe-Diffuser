@@ -22,8 +22,32 @@ def eccentricity(r1, r2, eps=EPS):
     return e
 
 
+def curvature_gate(cbar, kappa=1.5, eps=EPS):
+    """Damp guidance confidence where the consensus centerline turns sharply.
+
+    cbar : [B,N,2] consensus centers.  Returns [B,N] in [0,1]: 1 on straight
+    segments, -> 0 on sharp turns.  This addresses the observation that q stays
+    ~0.99 even at corners, so gamma did not weaken where the centerline is
+    unreliable.
+    """
+    B, N, _ = cbar.shape
+    if N < 3:
+        return torch.ones(B, N, device=cbar.device, dtype=cbar.dtype)
+    v = cbar[:, 1:] - cbar[:, :-1]                     # [B,N-1,2]
+    vn = v / (v.norm(dim=-1, keepdim=True) + eps)
+    cosang = (vn[:, :-1] * vn[:, 1:]).sum(-1)          # [B,N-2]
+    ang = torch.acos(torch.clamp(cosang, -1.0, 1.0))   # radians
+    gate_inner = torch.exp(-float(kappa) * ang * ang)  # [B,N-2]
+    gate = torch.ones(B, N, device=cbar.device, dtype=cbar.dtype)
+    gate[:, 1:N - 1] = gate_inner
+    gate[:, 0] = gate_inner[:, 0]
+    gate[:, -1] = gate_inner[:, -1]
+    return gate
+
+
 def compute_consensus_geometry(center, radii, theta, window=2,
                                pos_weights=(1.0, 2.0, 4.0, 2.0, 1.0),
+                               use_curvature_gate=False, curvature_kappa=1.5,
                                eps=EPS):
     """Build per-ellipse local consensus geometry.
 
@@ -79,12 +103,17 @@ def compute_consensus_geometry(center, radii, theta, window=2,
     ubar = torch.stack([ubar_x, ubar_y], dim=-1)             # [B,N,2]
     q = torch.sqrt(C * C + S * S)                            # [B,N]
     gamma = ebar * q
+    curv_gate = None
+    if use_curvature_gate:
+        curv_gate = curvature_gate(cbar, kappa=curvature_kappa)
+        gamma = gamma * curv_gate
     # normal to the consensus direction
     nbar = torch.stack([-ubar_y, ubar_x], dim=-1)            # [B,N,2]
     return {
         "cbar": cbar, "ubar": ubar, "nbar": nbar,
         "r2bar": r2bar, "theta_bar": theta_bar,
-        "eccentricity": e, "ebar": ebar, "q": q, "gamma": gamma,
+        "eccentricity": e, "ebar": ebar, "q": q,
+        "gamma": gamma, "curv_gate": curv_gate,
     }
 
 
@@ -115,7 +144,10 @@ def consensus_guidance_cost(traj, center, radii, theta, cfg,
     radii_g = radii if not detach_geometry else radii.detach()
     theta_g = theta if not detach_geometry else theta.detach()
     geom = compute_consensus_geometry(geoms, radii_g, theta_g,
-                                      window=window, pos_weights=pw, eps=eps)
+                                      window=window, pos_weights=pw,
+                                      use_curvature_gate=bool(cfg.get("use_curvature_gate", False)),
+                                      curvature_kappa=float(cfg.get("curvature_kappa", 1.5)),
+                                      eps=eps)
 
     H = traj.shape[1]
     # interior trajectory points 1..H-2; ellipse index k=i-1
@@ -133,7 +165,11 @@ def consensus_guidance_cost(traj, center, radii, theta, cfg,
     d_perp = (nbar[..., 0] * (p[..., 0] - cbar[..., 0])
               + nbar[..., 1] * (p[..., 1] - cbar[..., 1]))
     if bool(cfg.get("normalize_by_minor_axis", True)):
-        delta = d_perp / (r2bar + eps)
+        # Floor the minor semi-axis so very thin ellipses do not over-amplify
+        # the guidance gradient (delta = d_perp / r2bar).
+        r2_floor = float(cfg.get("min_minor_axis", 0.05))
+        r2_eff = torch.clamp(r2bar, min=r2_floor)
+        delta = d_perp / (r2_eff + eps)
     else:
         delta = d_perp
 
@@ -146,4 +182,6 @@ def consensus_guidance_cost(traj, center, radii, theta, cfg,
         "delta_abs_mean": delta.abs().mean().detach(),
         "d_perp_mean": d_perp.abs().mean().detach(),
     }
+    if geom.get("curv_gate") is not None:
+        stats["curv_gate_mean"] = geom["curv_gate"][:, k].mean().detach()
     return J, stats

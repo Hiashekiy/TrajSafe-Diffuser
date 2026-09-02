@@ -40,6 +40,7 @@ def sample(model, map_tensor, schedule, cond, n_samples, device="cuda",
     traj_log = []
     t_log = []
     guidance_stats = []
+    pos_pred_final = None
     for t in timesteps:
         delta_t = base + z
         pos_t = integrate_positions(start, delta_t)         # [B,H,2]
@@ -68,6 +69,10 @@ def sample(model, map_tensor, schedule, cond, n_samples, device="cuda",
         else:
             z0_pred = zero_sum(z0_raw)
 
+        # The deliverable is the path integrated from the (possibly guided)
+        # clean residual -- guidance acts on the predicted path, not on a raw z.
+        pos_pred_final = integrate_positions(start, base + z0_pred)
+
         with torch.no_grad():
             t_i = torch.full((1,), t, device=device, dtype=torch.long)
             alpha_t = float(schedule.alphas[t_i][0])
@@ -80,10 +85,11 @@ def sample(model, map_tensor, schedule, cond, n_samples, device="cuda",
                 traj_log.append(pos_t.detach().clone())
                 t_log.append(t)
 
+    final = pos_pred_final if pos_pred_final is not None else pos_t
     if return_timesteps:
         if return_guidance:
-            return pos_t, traj_log, t_log, guidance_stats
-        return pos_t, traj_log, t_log
+            return final, traj_log, t_log, guidance_stats
+        return final, traj_log, t_log
     if return_guidance:
-        return pos_t, traj_log, guidance_stats
-    return pos_t, traj_log
+        return final, traj_log, guidance_stats
+    return final, traj_log

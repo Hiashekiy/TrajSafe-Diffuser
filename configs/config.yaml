@@ -199,6 +199,9 @@ consensus_guidance:
   positional_weights: [1, 2, 4, 2, 1]
   huber_delta: 1.0          # J_guide 的 Huber 阈值
   normalize_by_minor_axis: true
+  min_minor_axis: 0.05      # delta=d_perp/r2bar 时 r2bar 的下限，避免过细椭圆放大引导梯度
+  use_curvature_gate: true  # 用共识中心线曲率对 gamma 门控：转弯处自动减弱
+  curvature_kappa: 1.5      # 门控强度：gamma *= exp(-kappa * turn_angle^2)
   # inference only
   start_t_ratio: 0.40       # Guidance 开始介入的 timestep 比例
   full_t_ratio: 0.10        # Guidance 完全介入的 timestep 比例

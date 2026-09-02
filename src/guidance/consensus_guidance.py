@@ -1,9 +1,11 @@
 """Consensus guidance application for reverse diffusion / joint training.
 
-J_guide is a soft "stay near the local consensus centerline" potential.  During
-inference it is applied as a gradient correction to z0_pred; during Phase-3
-training it is additionally used as a differentiable objective so that the model
-learns trajectories that are already consistent with the consensus geometry.
+J_guide is a soft "stay near the local consensus centerline" potential.  It is
+defined on the *integrated path* pos = integrate(start, base + z0_proj), and the
+gradient is taken w.r.t. the path positions, then converted back to a zero-sum
+residual.  This avoids the ill-conditioning of stepping directly on the residual
+z: because pos is a cumulative sum of z, a small change in z moves every
+downstream position, so a z-space gradient step can explode the trajectory.
 """
 
 from __future__ import annotations
@@ -25,9 +27,27 @@ def guidance_weight(t, T, start_ratio=0.40, full_ratio=0.10):
     return w.clamp(0.0, 1.0)
 
 
+def _clamp_endpoints(pos, start, goal):
+    """Pin the first/last waypoint because the zero-sum bridge is hard-constrained."""
+    pos = pos.clone()
+    pos[:, 0, :] = start
+    pos[:, -1, :] = goal
+    return pos
+
+
+def _path_to_residual(pos, base):
+    """pos [B,H,2] -> zero-sum residual [B,N,2] (delta = pos diff, z = delta-base)."""
+    delta = pos[:, 1:] - pos[:, :-1]
+    return zero_sum(delta - base)
+
+
 def apply_consensus_guidance(z0_raw, base, start, center, radii, theta,
                              cfg, t, T, retain_graph=False):
-    """Differentiable guidance step on z0 (used at sampling / inference).
+    """Differentiable guidance step on the integrated path (used at sampling).
+
+    The guidance objective J_guide lives on the trajectory positions, so the
+    gradient is taken w.r.t. pos (not the residual z).  The corrected path is
+    then converted back to a zero-sum residual.
 
     Parameters
     ----------
@@ -50,24 +70,26 @@ def apply_consensus_guidance(z0_raw, base, start, center, radii, theta,
         # no guidance from this timestep; keep the normal projection
         return zero_sum(z0_raw), {"w_G": 0.0, "shift_norm": 0.0}
 
-    z = z0_raw.detach().requires_grad_(True)
-    z0_proj = zero_sum(z)
+    z0_proj = zero_sum(z0_raw.detach())
     pos = integrate_positions(start, base + z0_proj)
+    goal = pos[:, -1, :]                                    # [B,2] actual end waypoint
+    pos_r = pos.detach().requires_grad_(True)
 
-    J, stats = consensus_guidance_cost(pos, center, radii, theta, cfg,
+    J, stats = consensus_guidance_cost(pos_r, center, radii, theta, cfg,
                                        detach_geometry=True)
     if not J.requires_grad:
         return zero_sum(z0_raw), {"w_G": float(w_G.mean().item()), "shift_norm": 0.0}
 
-    grad = torch.autograd.grad(J, z, retain_graph=retain_graph,
-                               create_graph=False, allow_unused=True)[0]
-    if grad is None:
+    grad_pos = torch.autograd.grad(J, pos_r, retain_graph=retain_graph,
+                                   create_graph=False, allow_unused=True)[0]
+    if grad_pos is None:
         return zero_sum(z0_raw), {"w_G": float(w_G.mean().item()), "shift_norm": 0.0}
 
     eta = float(cfg.get("eta_max", 0.05)) * w_G              # [B]
-    z_guided = z - eta[:, None, None] * grad
-    z0_proj_guided = zero_sum(z_guided)
-    shift_norm = torch.norm(z0_proj_guided - z0_proj.detach(), dim=-1).mean().item()
+    pos_guided = _clamp_endpoints(pos_r - eta[:, None, None] * grad_pos,
+                                  start, goal)
+    z0_proj_guided = _path_to_residual(pos_guided, base)
+    shift_norm = torch.norm(pos_guided - pos.detach(), dim=-1).mean().item()
     return z0_proj_guided, {"w_G": float(w_G.mean().item()), "shift_norm": shift_norm}
 
 
@@ -75,10 +97,9 @@ def apply_consensus_guidance_unrolled(z0_raw, base, start, center, radii, theta,
                                       cfg, t, T):
     """Differentiable guidance step that keeps the graph to z0_raw (training use).
 
-    Unlike apply_consensus_guidance (inference), the source tensor is the model
-    output z0_raw itself, so gradient flows back to the network through the
-    guidance correction.  Consensus geometry is still detached (J_guide only
-    corrects the trajectory).
+    Same position-space guidance as apply_consensus_guidance, but the source
+    tensor is the model output z0_raw itself, so gradient flows back to the
+    network through the guidance correction.  Consensus geometry is detached.
 
     Returns (z0_proj_guided, pos_guided, stats).
     """
@@ -92,21 +113,23 @@ def apply_consensus_guidance_unrolled(z0_raw, base, start, center, radii, theta,
 
     z0_proj = zero_sum(z0_raw)
     pos = integrate_positions(start, base + z0_proj)
+    goal = pos[:, -1, :]                                    # [B,2] actual end waypoint
     J, stats = consensus_guidance_cost(pos, center, radii, theta, cfg,
                                        detach_geometry=True)
     if not J.requires_grad:
         return z0_proj, pos, {"w_G": float(w_G.mean().item()), "shift_norm": 0.0}
 
-    grad = torch.autograd.grad(J, z0_raw, retain_graph=True, create_graph=True,
-                               allow_unused=True)[0]
-    if grad is None:
+    grad_pos = torch.autograd.grad(J, pos, retain_graph=True, create_graph=True,
+                                   allow_unused=True)[0]
+    if grad_pos is None:
         return z0_proj, pos, stats
 
     eta = float(cfg.get("eta_max", 0.05)) * w_G              # [B]
-    z_guided = z0_raw - eta[:, None, None] * grad
-    z0_proj_guided = zero_sum(z_guided)
+    pos_guided = _clamp_endpoints(pos - eta[:, None, None] * grad_pos,
+                                  start, goal)
+    z0_proj_guided = _path_to_residual(pos_guided, base)
     pos_guided = integrate_positions(start, base + z0_proj_guided)
-    shift_norm = torch.norm(z0_proj_guided - z0_proj.detach(), dim=-1).mean().item()
+    shift_norm = torch.norm(pos_guided - pos.detach(), dim=-1).mean().item()
     return z0_proj_guided, pos_guided, {
         "w_G": float(w_G.mean().item()), "shift_norm": shift_norm,
     }
