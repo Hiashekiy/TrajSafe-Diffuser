@@ -20,7 +20,15 @@ model:
   joint_blocks: 8     # Joint Diffusion Transformer blocks
   ffn_dim: 512
   map_res: 256        # occupancy input resolution
-  mem_res: 16         # scene memory 16x16 -> 256 map tokens
+
+  # V1.1 dual scene memory: global 16x16 (kept) + fine geometry 32x32
+  global_mem_res: 16  # (legacy alias mem_res: 16)
+  geo_decode_res: 64  # fine decoder restores 16->32->64 ...
+  geo_mem_res: 32     # ... then merge (stride-2) to 32x32 = 1024 geometry tokens
+  geo_attn_every: 2   # GeometryCA only at joint blocks 2/4/6/8
+  geo_sigma: 0.25     # noise-aware spatial bias sigma (scene units)
+  geo_bias_clip: 8.0  # clamp(-8, 0) on the geometry attention bias
+
   dropout: 0.0
 
 diffusion:
@@ -44,4 +52,4 @@ train:
   save_every: 10
   eval_every: 10      # validation loss every N epochs
   val_batches: 25
-  ckpt_dir: "outputs/ckpt_v1"
+  ckpt_dir: "outputs/ckpt_v1_1"

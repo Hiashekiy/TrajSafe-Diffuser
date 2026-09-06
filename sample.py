@@ -94,7 +94,8 @@ def plot_results(maze, occ, cond, P, E5, out_png, ncols=4):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/config_v1.yaml")
-    ap.add_argument("--ckpt", default="outputs/ckpt_v1/best.pt")
+    ap.add_argument("--ckpt", default=None,
+                    help="checkpoint (default <config.train.ckpt_dir>/best.pt)")
     ap.add_argument("--split", default="test")
     ap.add_argument("--maze", default="umaze", choices=MAZE_NAMES)
     ap.add_argument("--n", type=int, default=8)
@@ -109,7 +110,8 @@ def main():
     base = cfg["data"]["base"]
 
     model = JointPlanner(cfg["model"]).to(device)
-    load_checkpoint(args.ckpt, model, map_location=device)
+    ckpt = args.ckpt or os.path.join(cfg["train"]["ckpt_dir"], "best.pt")
+    load_checkpoint(ckpt, model, map_location=device)
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get("beta_schedule",
                                                                 "squaredcos_cap_v2")).to(device)

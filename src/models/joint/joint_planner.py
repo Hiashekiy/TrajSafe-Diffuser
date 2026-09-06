@@ -40,12 +40,25 @@ class JointPlanner(nn.Module):
         self.joint_blocks = int(model_cfg.get("joint_blocks", 8))
         self.ffn_dim = int(model_cfg.get("ffn_dim", 512))
         self.map_res = int(model_cfg.get("map_res", 256))
-        self.mem_res = int(model_cfg.get("mem_res", 16))
+        # global memory res: 'global_mem_res' preferred, legacy 'mem_res' accepted
+        self.global_res = int(model_cfg.get("global_mem_res",
+                                            model_cfg.get("mem_res", 16)))
+        self.geo_mem_res = int(model_cfg.get("geo_mem_res", 32))
+        self.geo_decode_res = model_cfg.get("geo_decode_res")
+        self.geo_sigma = float(model_cfg.get("geo_sigma", 0.25))
+        self.geo_bias_clip = float(model_cfg.get("geo_bias_clip", 8.0))
+        self.geo_attn_every = int(model_cfg.get("geo_attn_every", 2))
+        # V1.1 fine-geometry memory: enabled only when a decoder res is given
+        self._geo_enabled = (self.geo_decode_res is not None
+                             and self.geo_attn_every > 0)
         dropout = float(model_cfg.get("dropout", 0.0))
         H = self.horizon
 
         self.scene_cnn = SceneCNN(d_model=self.d_model, res=self.map_res,
-                                  mem_res=self.mem_res)
+                                  global_res=self.global_res,
+                                  geo_decode_res=(int(self.geo_decode_res)
+                                                  if self.geo_decode_res else None),
+                                  geo_mem_res=self.geo_mem_res)
 
         # ---- shared spatial / planning / time embeddings ----
         self.spatial_pe = Sinusoidal2DPositionEmbedding(self.d_model)   # phi
@@ -62,9 +75,12 @@ class JointPlanner(nn.Module):
         self.mlp_e = nn.Linear(6, self.d_model)            # MLP_E: 6 -> 128
 
         # ---- joint transformer ----
+        # GeometryCrossAttention is only added at blocks 2/4/6/8 (docs #18)
         self.blocks = nn.ModuleList([
-            JointBlock(self.d_model, self.num_heads, self.ffn_dim, H, dropout)
-            for _ in range(self.joint_blocks)
+            JointBlock(self.d_model, self.num_heads, self.ffn_dim, H, dropout,
+                       use_geo=(self._geo_enabled
+                                and (i + 1) % self.geo_attn_every == 0))
+            for i in range(self.joint_blocks)
         ])
 
         # ---- output heads (x0 prediction; docs/联合扩散.md #25 allows switching
@@ -74,14 +90,34 @@ class JointPlanner(nn.Module):
         self.head_e = nn.Linear(self.d_model, 6)           # [B,H,6]  x0 of E
 
     # ------------------------------------------------------------------
-    def _map_tokens(self, occ):
-        """occ [B,1,256,256] -> map tokens [B,256,d] (feature + spatial PE)."""
-        f = self.scene_cnn(occ)                            # [B,d,16,16]
-        B = f.shape[0]
-        f = f.flatten(2).transpose(1, 2)                   # [B,256,d]
-        grid = scene_grid_centres(self.mem_res, f.device)  # [256,2]
-        pe = self.spatial_pe(grid)                         # [256,d]
-        return f + pe[None]
+    def _scene_tokens(self, occ):
+        """occ -> (global_mem, geo_mem or None).
+
+        global tokens: C_G = [S?G added later] ... here returns plain map tokens
+        [B,256,d]; geo tokens C_E [B,1024,d] (fine geometry, no S/G).
+        """
+        enc = self.scene_cnn(occ)
+        gf = enc["global"]                                 # [B,d,G,G]
+        B = gf.shape[0]
+        gf = gf.flatten(2).transpose(1, 2)                 # [B,G*G,d]
+        grid_g = scene_grid_centres(self.global_res, gf.device)
+        global_map = gf + self.spatial_pe(grid_g)[None]    # [B,256,d]
+
+        geo_mem = None
+        if enc["geometry"] is not None:
+            zf = enc["geometry"].flatten(2).transpose(1, 2)   # [B,1024,d]
+            grid_z = scene_grid_centres(self.geo_mem_res, zf.device)
+            geo_mem = zf + self.spatial_pe(grid_z)[None]      # C_E (no S/G)
+        return global_map, geo_mem
+
+    def _geometry_bias(self, p_t, ab, dev):
+        """Noise-aware spatial bias [B,1,H,G] (docs #11-#14):
+        B = -alpha_bar_t * ||p_k^t - q_j||^2 / (2 sigma^2), clamped."""
+        grid = scene_grid_centres(self.geo_mem_res, dev)   # [G,2]
+        dist2 = ((p_t[:, :, None, :] - grid[None, None, :, :]) ** 2).sum(dim=-1)
+        strength = (ab ** 2).to(p_t.dtype)[:, None, None]  # alpha_bar_t
+        bias = -strength * dist2 / (2.0 * self.geo_sigma ** 2)
+        return bias.clamp(-self.geo_bias_clip, 0.0)[:, None, :, :]   # [B,1,H,G]
 
     def forward(self, p_t, e_t, occ, cond, t, ab):
         """p_t [B,H,2] noisy waypoints; e_t [B,H,6] noisy ellipse repr;
@@ -91,15 +127,15 @@ class JointPlanner(nn.Module):
         dev = p_t.device
         start, goal = cond[:, 0], cond[:, 1]               # [B,2]
 
-        # ---- scene condition memory C_scene = [S,G,M1..M256] ----
-        map_tok = self._map_tokens(occ)                    # [B,256,d]
+        # ---- scene memories ----
+        global_map, geo_mem = self._scene_tokens(occ)      # [B,256,d], [B,1024,d]|None
         # role embeddings are per-sample [B,d]; add to the 2D PE then expand
         # to token slots so h_s/h_g stay [B,1,d] (no [B,B,d] broadcast leak)
         start_role = self.role_type(torch.zeros(B, device=dev, dtype=torch.long))
         goal_role = self.role_type(torch.ones(B, device=dev, dtype=torch.long))
         h_s = (self.spatial_pe(start) + start_role)[:, None, :]   # [B,1,d]
         h_g = (self.spatial_pe(goal) + goal_role)[:, None, :]     # [B,1,d]
-        mem = torch.cat([h_s, h_g, map_tok], dim=1)        # [B,258,d]
+        global_mem = torch.cat([h_s, h_g, global_map], dim=1)     # C_G [B,258,d]
 
         # ---- planning + time embeddings ----
         psi = self.plan_pe(self.plan_idx.to(dev))          # [H,d]
@@ -119,8 +155,11 @@ class JointPlanner(nn.Module):
         # interleave [T_1,E_1,...,T_H,E_H] -> [B,2H,d]
         z = torch.stack([T, E], dim=2).reshape(B, 2 * H, self.d_model)
 
+        # noise-aware geometry bias (once, docs #23)
+        geo_bias = self._geometry_bias(p_t, ab, dev) if self._geo_enabled else None
+
         for blk in self.blocks:
-            z = blk(z, mem, h_t)
+            z = blk(z, global_mem, h_t, geo_mem, geo_bias)
 
         # split odd/even
         z = z.view(B, H, 2, self.d_model)                  # [B,H,{T,E},d]

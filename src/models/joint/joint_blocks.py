@@ -116,20 +116,53 @@ class JointCrossAttention(_MHABase):
         return self.attend(q, k, v)
 
 
+class GeometryCrossAttention(_MHABase):
+    """Fine-geometry cross attention: Q = ellipse tokens, K/V = C_E (32x32).
+
+    An optional noise-aware spatial bias [B,1,H,G] (clamped, <=0) is added to
+    the scores and broadcasts over all heads.
+    """
+
+    def __init__(self, d_model, num_heads, dropout=0.0):
+        super().__init__(d_model, num_heads, dropout)
+        self.q = nn.Linear(d_model, d_model)
+        self.kv = nn.Linear(d_model, 2 * d_model)
+
+    def forward(self, e, geo_mem, bias=None):
+        q = self.q(e)
+        k, v = self.kv(geo_mem).chunk(2, dim=-1)
+        return self.attend(q, k, v, bias)
+
+
 class JointBlock(nn.Module):
-    def __init__(self, d_model, num_heads, ff_dim, horizon, dropout=0.0):
+    def __init__(self, d_model, num_heads, ff_dim, horizon, dropout=0.0,
+                 use_geo=False):
         super().__init__()
+        self.horizon = int(horizon)
+        self.use_geo = bool(use_geo)
         self.n1 = AdaLN(d_model, d_model)
         self.sa = JointSelfAttention(d_model, num_heads, horizon, dropout)
         self.n2 = AdaLN(d_model, d_model)
         self.ca = JointCrossAttention(d_model, num_heads, dropout)
+        if self.use_geo:
+            self.geo_norm = AdaLN(d_model, d_model)
+            self.geo_ca = GeometryCrossAttention(d_model, num_heads, dropout)
         self.n3 = AdaLN(d_model, d_model)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, ff_dim), nn.GELU(),
             nn.Linear(ff_dim, d_model), nn.Dropout(dropout))
 
-    def forward(self, x, mem, h_t):
+    def forward(self, x, global_mem, h_t, geo_mem=None, geo_bias=None):
+        """x [B,2H,d] interleaved [T1,E1,...]; global_mem [B,258,d];
+        geo_mem [B,G,d] + geo_bias [B,1,H,G] used only by ellipse tokens when
+        this block has use_geo=True."""
+        H = self.horizon
         x = x + self.sa(self.n1(x, h_t))
-        x = x + self.ca(self.n2(x, h_t), mem)
+        x = x + self.ca(self.n2(x, h_t), global_mem)
+        if self.use_geo:
+            xr = x.view(x.shape[0], H, 2, x.shape[-1])
+            T, E = xr[:, :, 0], xr[:, :, 1]
+            E = E + self.geo_ca(self.geo_norm(E, h_t), geo_mem, geo_bias)
+            x = torch.stack([T, E], dim=2).reshape(x.shape[0], 2 * H, x.shape[-1])
         x = x + self.ffn(self.n3(x, h_t))
         return x
