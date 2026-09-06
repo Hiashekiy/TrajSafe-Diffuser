@@ -37,3 +37,13 @@ _archive/
 
 # scene-normalized generated dataset (large)
 data/processed_scene/
+
+# V1 joint-diffusion generated dataset (large)
+data/processed_scene_v1/
+
+# Kaggle 2D path-planning preview downloads (external data)
+data/kaggle_2dpathplanning/
+
+# personal / non-project files
+/资正-规划与控制-27届应届毕业生.docx
+

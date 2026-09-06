@@ -1,0 +1,45 @@
+# ============================================================
+# V1: Occupancy-Conditioned Joint Trajectory–Geometry Diffusion Transformer
+# (docs/联合扩散.md).  Replaces the old zero-sum / sequential two-branch stack.
+# ============================================================
+
+env:
+  python: "E:/CondaEnvData/envs/GGMPC/python.exe"
+  device: "cuda"          # falls back to cpu when cuda unavailable
+  seed: 42
+
+data:
+  base: "data/processed_scene_v1"   # positions[N,128,2] + ellipses6[N,128,6]
+  batch_size: 16
+  num_workers: 0
+
+model:
+  horizon: 128        # H waypoints (p1=s ... p128=g)
+  d_model: 128
+  num_heads: 4        # head dim = 32
+  joint_blocks: 8     # Joint Diffusion Transformer blocks
+  ffn_dim: 512
+  map_res: 256        # occupancy input resolution
+  mem_res: 16         # scene memory 16x16 -> 256 map tokens
+  dropout: 0.0
+
+diffusion:
+  timesteps: 16       # shared schedule for P and E (sqrt-alpha-bar cosine)
+  beta_schedule: "squaredcos_cap_v2"
+  beta_start: 0.0001
+  beta_end: 0.02
+  prediction_type: "eps"   # noise prediction (heads output eps_P, eps_E)
+
+loss:
+  lambda_e: 1.0       # L = ||epsP-epsP_hat||^2 + lambda_e * ||epsE-epsE_hat||^2
+
+train:
+  epochs: 100
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  log_interval: 20
+  save_every: 10
+  eval_every: 10      # validation loss every N epochs
+  val_batches: 25
+  ckpt_dir: "outputs/ckpt_v1"

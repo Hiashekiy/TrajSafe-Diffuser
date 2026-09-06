@@ -21,7 +21,7 @@ import yaml
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.losses.al_loss import _scene_obstacle_points, _MAZE_NAMES
+from src.geometry.scene_obstacles import scene_obstacle_points, MAZE_NAMES
 
 
 def main():
@@ -36,13 +36,13 @@ def main():
         maps_dir = os.path.join(ROOT, maps_dir)
     os.makedirs(maps_dir, exist_ok=True)
 
-    for maze in _MAZE_NAMES:
+    for maze in MAZE_NAMES:
         map_path = os.path.join(maps_dir, f"{maze}.npy")
         if not os.path.exists(map_path):
             print(f"[08] missing map {map_path}")
             continue
         occ = np.load(map_path)
-        pts = _scene_obstacle_points(occ, extent=extent, dilation=dilation,
+        pts = scene_obstacle_points(occ, extent=extent, dilation=dilation,
                                      boundary_jitter=boundary_jitter,
                                      cache_key=None)
         out = os.path.join(maps_dir, f"{maze}_obstacle_points.npy")

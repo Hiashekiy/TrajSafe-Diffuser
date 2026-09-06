@@ -53,7 +53,7 @@ class Sinusoidal1DPositionEmbedding(nn.Module):
 
     def forward(self, pos):
         """pos [..., L] integers -> [..., L, d_model]."""
-        args = pos[..., :, None] * self.freqs                   # [..., L, half]
+        args = pos.float()[..., :, None] * self.freqs                    # [..., L, half]
         emb = torch.stack([torch.sin(args), torch.cos(args)], dim=-1)  # [..., L, half, 2]
         return emb.reshape(*emb.shape[:-2], -1)                 # [..., L, d_model]
 
@@ -74,8 +74,6 @@ class SinusoidalTimestepEmbedding(nn.Module):
         args = t[:, None] * self.freqs[None]
         emb = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         return self.mlp(emb)
-
-
 class Sinusoidal2DRelativePositionEmbedding(nn.Module):
     """Relative 2D sinusoidal position embedding for small scene-space offsets.
 

@@ -1,16 +1,25 @@
-"""Train the zero-sum bridge diffusion planner on the scene-normalized dataset.
+"""Train the V1 joint trajectory–ellipse diffusion transformer.
 
-Sequential three-phase curriculum:
-  --phase traj     : train trajectory only (L_traj)
-  --phase ellipse  : load a trajectory checkpoint, freeze trajectory backbone, train
-                     EllipseAggregator + EllipseHead (+ optional local-decoder micro-tune)
-  --phase joint    : V5 safety fine-tuning.  Freeze low-level encoders, only train
-                     trajectory/ellipse generators; loss =
-                     lambda_smooth*L_smooth + L_E + gated AL safety + gated J_guide.
+docs/联合扩散.md #26-#27:
+  * P and E are diffused with independent Gaussian noise but the SAME alpha_bar
+    schedule; model f(P_t,E_t,M,s,g,t) -> (eps_P_hat, eps_E_hat).
+  * Loss  L = ||eps_P - eps_P_hat||^2  +  lambda_e * ||eps_E - eps_E_hat||^2
+    (endpoint slots of P are hard-conditioned inputs, so they are excluded from
+    the P MSE; all 128 ellipse anchors are supervised -- no validity masking).
+  * Hard endpoints: after noising, P's first/last waypoint are overwritten with
+    the exact scene start/goal (matches the sampler's inpainting convention).
+
+Usage:
+  python train.py --config configs/config_v1.yaml
+  python train.py --config configs/config_v1.yaml --epochs 2 --resume outputs/ckpt_v1/epoch_10.pt
 """
-import argparse, os, sys, time, random
-import numpy as np
+import argparse
+import os
+import sys
+import time
+
 import torch
+import torch.nn.functional as F
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -18,311 +27,172 @@ sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.utils.seed import set_seed
-from src.utils.logger import Logger
 from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.diffusion.schedule import NoiseSchedule
-from src.diffusion.zerosum import compute_z0, compute_base
-from src.geometry.scene_frame import sample_sdf_scene
-from src.models.planner import Planner
-from src.losses.total_loss import total_loss
-from src.guidance.consensus_guidance import apply_consensus_guidance_unrolled, guidance_weight
-from src.datasets.scene_dataset import make_loader
+from src.models.joint import JointPlanner
+from src.datasets.joint_dataset import make_loader
+
+
+def _broadcast(x0, v):
+    """v [B] -> broadcastable over x0 [B, ...]."""
+    return v.reshape(v.shape[0], *([1] * (x0.dim() - 1)))
+
+
+def add_noise(x0, t, schedule):
+    """x_t = sqrt(ab_t) x0 + sqrt(1-ab_t) eps.  Returns (x_t float32, eps)."""
+    dev = x0.device
+    ab = schedule.sqrt_alphas_cumprod[t].to(dev).float()
+    s1 = schedule.sqrt_one_minus_alphas_cumprod[t].to(dev).float()
+    eps = torch.randn_like(x0)
+    x_t = _broadcast(x0, ab) * x0 + _broadcast(x0, s1) * eps
+    return x_t, eps
+
+
+def hard_endpoints(p_t, cond):
+    """Overwrite first/last waypoints with exact start/goal (scene)."""
+    p_t = p_t.clone()
+    p_t[:, 0] = cond[:, 0]
+    p_t[:, -1] = cond[:, 1]
+    return p_t
+
+
+def batch_losses(batch, model, schedule, lambda_e, device):
+    """One batch -> (loss_p, loss_e, total).  Endpoint slots of P are masked."""
+    p0 = batch["pos"].to(device)
+    e0 = batch["e6"].to(device)
+    cond = batch["cond"].to(device)
+    occ = batch["map_tensor"].to(device)
+    B = p0.shape[0]
+    t = torch.randint(0, schedule.num_timesteps, (B,), device=device)
+
+    p_t, _ = add_noise(p0, t, schedule)
+    p_t = hard_endpoints(p_t, cond)
+    e_t, _ = add_noise(e0, t, schedule)
+
+    ab = schedule.sqrt_alphas_cumprod[t].to(device)
+    out = model(p_t, e_t, occ, cond, t, ab)
+
+    # x0 prediction targets (docs #25): MSE against the clean values;
+    # endpoint slots of P are hard-conditioned inputs and masked out.
+    loss_p = F.mse_loss(out["x0_p"][:, 1:-1], p0[:, 1:-1])
+    loss_e = F.mse_loss(out["x0_e"], e0)
+    total = loss_p + lambda_e * loss_e
+    return loss_p, loss_e, total
+
+
+def validate(model, schedule, val_loader, lambda_e, device, max_batches):
+    model.eval()
+    s_p = s_e = n = 0.0
+    with torch.no_grad():
+        for i, batch in enumerate(val_loader):
+            if i >= max_batches:
+                break
+            lp, le, _ = batch_losses(batch, model, schedule, lambda_e, device)
+            s_p += float(lp)
+            s_e += float(le)
+            n += 1.0
+    model.train()
+    return s_p / max(n, 1.0), s_e / max(n, 1.0)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config.yaml")
+    ap.add_argument("--config", default="configs/config_v1.yaml")
     ap.add_argument("--epochs", type=int, default=None)
-    ap.add_argument("--resume", default=None)
-    ap.add_argument("--weights-only", action="store_true",
-                    help="load only model weights and reset optimizer/epoch")
-    ap.add_argument("--log-interval", type=int, default=10)
-    ap.add_argument("--phase", default="joint", choices=["traj", "ellipse", "joint"])
+    ap.add_argument("--resume", default=None, help="checkpoint to resume from")
+    ap.add_argument("--log-interval", type=int, default=None)
+    ap.add_argument("--device", default=None)
+    ap.add_argument("--max-batches", type=int, default=None,
+                    help="cap steps per epoch (smoke tests)")
     args = ap.parse_args()
     cfg = load_config(args.config)
-    env = cfg["env"]; train_cfg = cfg["train"]; loss_cfg = cfg["loss"]
-    model_cfg = cfg["model"]; diff_cfg = cfg["diffusion"]
+    env, data_cfg = cfg["env"], cfg["data"]
+    model_cfg, diff_cfg = cfg["model"], cfg["diffusion"]
+    loss_cfg, train_cfg = cfg["loss"], cfg["train"]
+
     set_seed(int(env["seed"]))
-    device = "cuda" if torch.cuda.is_available() and env.get("device", "cuda") == "cuda" else "cpu"
-    phase = args.phase
-    print(f"[train] device={device} phase={phase}", flush=True)
+    device = (args.device if args.device else
+              ("cuda" if torch.cuda.is_available() and env.get("device", "cuda") == "cuda" else "cpu"))
+    print(f"[train] device={device}", flush=True)
 
-    base = "data/processed_scene"
-    train_loader = make_loader(os.path.join(base, "train"), train_cfg["batch_size"], True,
-                               train_cfg.get("num_workers", 0))
-    val_loader = make_loader(os.path.join(base, "val"), train_cfg["batch_size"], False, 0)
-    print(f"[train] train={len(train_loader.dataset)} val={len(val_loader.dataset)}", flush=True)
+    base = data_cfg["base"]
+    train_loader, train_ds = make_loader(os.path.join(base, "train"),
+                                         data_cfg["batch_size"], True,
+                                         data_cfg.get("num_workers", 0))
+    val_loader, val_ds = make_loader(os.path.join(base, "val"),
+                                     data_cfg["batch_size"], False, 0)
+    print(f"[data] train={len(train_ds)} val={len(val_ds)} (H={model_cfg['horizon']})", flush=True)
 
-    schedule = NoiseSchedule(diff_cfg["timesteps"], beta_schedule=diff_cfg["beta_schedule"],
-                             beta_start=diff_cfg["beta_start"], beta_end=diff_cfg["beta_end"]).to(device)
-    model = Planner(model_cfg, cfg["geometry"], None).to(device)
+    schedule = NoiseSchedule(diff_cfg["timesteps"],
+                             beta_schedule=diff_cfg.get("beta_schedule", "squaredcos_cap_v2"),
+                             beta_start=diff_cfg.get("beta_start", 0.0001),
+                             beta_end=diff_cfg.get("beta_end", 0.02)).to(device)
+    model = JointPlanner(model_cfg).to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"[model] params={n_params / 1e6:.2f}M", flush=True)
 
+    lambda_e = float(loss_cfg.get("lambda_e", 1.0))
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
-
-    # ---- per-phase learning rates ----
-    traj_lr = float(train_cfg.get("traj_lr", train_cfg["lr"]))
-    ellipse_lr = float(train_cfg.get("ellipse_lr", train_cfg["lr"]))
-    local_decoder_lr = float(train_cfg.get("local_decoder_lr", 0.1 * ellipse_lr))
-    joint_lr = float(cfg.get("joint_finetune", {}).get("lr", 1e-5))
-
-    # ---- build optimizer + set trainable state per phase ----
-    if phase == "ellipse":
-        backbone_names = ["scene_encoder", "trajectory_encoder", "local_sampler",
-                          "point_scene_attention", "safety_fusion", "trajectory_decoder",
-                          "residual_head", "map_pos_embed", "type_embed"]
-        for name in backbone_names:
-            m = getattr(model, name)
-            for p in m.parameters():
-                p.requires_grad_(False)
-            m.eval()
-        # keep the trajectory backbone deterministic; only micro-tune the local decoder
-        # (the last up-conv blocks + out_conv) which contain no dropout.
-        ellipse_params = []
-        for p in model.ellipse_aggregator.parameters():
-            p.requires_grad_(True); ellipse_params.append(p)
-        for p in model.ellipse_head.parameters():
-            p.requires_grad_(True); ellipse_params.append(p)
-        for p in model.ellipse_pe_embed.parameters():
-            p.requires_grad_(True); ellipse_params.append(p)
-        local_decoder_params = []
-        for up in model.scene_encoder.ups[-2:]:
-            for p in up.parameters():
-                p.requires_grad_(True); local_decoder_params.append(p)
-        for p in model.scene_encoder.out_conv.parameters():
-            p.requires_grad_(True); local_decoder_params.append(p)
-        groups = [{"params": ellipse_params, "lr": ellipse_lr},
-                  {"params": local_decoder_params, "lr": local_decoder_lr}]
-        optimizer = torch.optim.AdamW(groups, lr=ellipse_lr,
-                                      weight_decay=float(train_cfg["weight_decay"]))
-        model.ellipse_enabled = True
-    elif phase == "joint":
-        # V5: freeze low-level encoders, only tune trajectory/ellipse generators
-        # with a small uniform LR.  If joint_loss.keep_ellipse_loss is false, the
-        # ellipse branch is frozen too (it is already Phase-2 quality) and only the
-        # trajectory generator + AL safety are fine-tuned.
-        joint_cfg = cfg.get("joint_finetune", {})
-        keep_ellipse = bool(cfg.get("joint_loss", {}).get("keep_ellipse_loss", True))
-        train_names = list(joint_cfg.get("train", [
-            "safety_fusion", "trajectory_decoder", "residual_head",
-            "ellipse_aggregator", "ellipse_head", "ellipse_pe_embed",
-        ]))
-        if not keep_ellipse:
-            train_names = [n for n in train_names
-                           if n not in ("ellipse_aggregator", "ellipse_head", "ellipse_pe_embed")]
-        for p in model.parameters():
-            p.requires_grad_(False)
-        for name in train_names:
-            m = getattr(model, name)
-            for p in m.parameters():
-                p.requires_grad_(True)
-        if not keep_ellipse:
-            # keep the ellipse branch deterministic at Phase-2 quality
-            model.ellipse_aggregator.eval(); model.ellipse_head.eval(); model.ellipse_pe_embed.eval()
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.AdamW(trainable_params, lr=joint_lr,
-                                      weight_decay=float(train_cfg["weight_decay"]))
-        model.ellipse_enabled = True
-    else:
-        for p in model.parameters():
-            p.requires_grad_(True)
-        model.ellipse_enabled = (phase != "traj")
-        optimizer = torch.optim.AdamW(model.parameters(), lr=traj_lr,
-                                      weight_decay=float(train_cfg["weight_decay"]))
-
-    def set_train_state():
-        if phase == "ellipse":
-            # trajectory backbone stays in eval (deterministic p_hat); local decoder
-            # (no dropout) and ellipse module train.
-            model.trajectory_encoder.eval()
-            model.point_scene_attention.eval()
-            model.safety_fusion.eval()
-            model.trajectory_decoder.eval()
-            model.residual_head.eval()
-            model.scene_encoder.eval()
-            for up in model.scene_encoder.ups[-2:]:
-                up.train()
-            model.scene_encoder.out_conv.train()
-            model.ellipse_aggregator.train()
-            model.ellipse_head.train()
-            model.ellipse_pe_embed.train()
-        elif phase == "joint":
-            # V5: frozen encoders stay deterministic; only generators train.
-            keep_ellipse = bool(cfg.get("joint_loss", {}).get("keep_ellipse_loss", True))
-            for name in ["scene_encoder", "trajectory_encoder", "point_scene_attention"]:
-                getattr(model, name).eval()
-            for name in ["safety_fusion", "trajectory_decoder", "residual_head"]:
-                getattr(model, name).train()
-            if keep_ellipse:
-                for name in ["ellipse_aggregator", "ellipse_head", "ellipse_pe_embed"]:
-                    getattr(model, name).train()
-            else:
-                for name in ["ellipse_aggregator", "ellipse_head", "ellipse_pe_embed"]:
-                    getattr(model, name).eval()
-        else:
-            model.train()
-
-    # ---- ellipse cfg (weights + joint ramp) ----
-    ellipse_cfg = dict(cfg.get("ellipse_loss", {}))
-    joint_cfg = dict(cfg.get("joint_ellipse", {}))
-    ellipse_cfg.update(joint_cfg)
-    if phase == "joint" and ellipse_cfg.get("ramp", True):
-        ratio = float(ellipse_cfg.get("ramp_ratio", 0.2))
-        ellipse_cfg["ramp_epochs"] = max(1, int(round(epochs * ratio)))
-
-    # ---- V5 Phase 3 safety / joint cfg ----
-    al_cfg = dict(cfg.get("segment_safety", {}))
-    if phase == "joint" and al_cfg.get("enabled", True):
-        al_state = {"dual": float(al_cfg.get("dual_init", 0.1))}
-    else:
-        al_cfg = {}
-        al_state = None
-    joint_loss_cfg = dict(cfg.get("joint_loss", {}))
-    guidance_cfg = dict(cfg.get("consensus_guidance", {}))
-
-    def _ckpt_extra():
-        if phase == "joint" and al_state is not None:
-            return {"al_dual": float(al_state["dual"])}
-        return None
-
-    base_ckpt = train_cfg.get("ckpt_dir", "outputs/ckpt")
-    ckpt_dir = os.path.join(base_ckpt, phase)   # 每个阶段独立目录，避免互相覆盖
+    log_interval = args.log_interval if args.log_interval is not None else int(train_cfg["log_interval"])
+    ckpt_dir = train_cfg["ckpt_dir"]
     os.makedirs(ckpt_dir, exist_ok=True)
-    logger = Logger(os.path.join(ckpt_dir, "train.log"))
-    best_val = float("-inf"); best_ckpt = os.path.join(ckpt_dir, "best.pt")
+
+    optim = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]),
+                              weight_decay=float(train_cfg.get("weight_decay", 0.0)))
     start_epoch = 0
-    if args.resume and os.path.exists(args.resume):
-        # A checkpoint from another curriculum phase is a weight initialization,
-        # not an optimizer resume: parameter groups (and trainable parameters)
-        # differ between phases.  Checkpoint directories are phase-specific.
-        resume_phase = os.path.basename(os.path.dirname(os.path.normpath(args.resume)))
-        phase_switch = resume_phase in {"traj", "ellipse", "joint"} and resume_phase != phase
-        weights_only = args.weights_only or phase_switch or phase == "ellipse"
-        if weights_only:
-            d = load_checkpoint(args.resume, model, map_location=device)
-            # A phase switch starts its own schedule and epoch counter.  The
-            # ellipse phase historically keeps the source epoch for logging,
-            # but its optimizer is still intentionally reset.
-            start_epoch = 0 if (args.weights_only or phase_switch) else d.get("epoch", 0) + 1
-            logger.info(f"loaded model weights from {args.resume}; optimizer reset, "
-                        f"starting epoch {start_epoch}")
-        else:
-            d = load_checkpoint(args.resume, model, optimizer, map_location=device)
-            start_epoch = d.get("epoch", 0) + 1
-            logger.info(f"resumed from {args.resume} at epoch {start_epoch}")
-        # Restore the AL dual variable so safety penalty continuity survives resume.
-        if phase == "joint" and al_state is not None and "al_dual" in d:
-            al_state["dual"] = float(d["al_dual"])
-    n_b = len(train_loader)
-    T = schedule.num_timesteps
+    if args.resume:
+        ck = load_checkpoint(args.resume, model, optim, map_location=device)
+        start_epoch = int(ck.get("epoch", 0)) + 1
+        print(f"[resume] epoch {start_epoch} from {args.resume}", flush=True)
+
+    grad_clip = float(train_cfg.get("grad_clip", 0.0)) or None
+    eval_every = int(train_cfg.get("eval_every", epochs + 1))
+    save_every = int(train_cfg.get("save_every", max(1, epochs // 10)))
+    best_val = float("inf")
+
+    t_start = time.time()
     for epoch in range(start_epoch, epochs):
-        t0 = time.time(); losses = []
-        set_train_state()
-        for bi, batch in enumerate(train_loader):
-            batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
-            B = batch["pos"].shape[0]
-            t = torch.randint(0, T, (B,), device=device)
-            z0_gt, _, _, _ = compute_z0(batch["pos"], batch["cond"])
-            z_t = schedule.q_sample_zero_sum(z0_gt, t)
-            out = model(z_t, t, batch["map_tensor"], batch["cond"])
+        model.train()
+        ep_lp = ep_le = 0.0
+        n_steps = 0
+        for step, batch in enumerate(train_loader):
+            if args.max_batches is not None and step >= args.max_batches:
+                break
+            lp, le, loss = batch_losses(batch, model, schedule, lambda_e, device)
+            optim.zero_grad()
+            loss.backward()
+            if grad_clip:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optim.step()
+            ep_lp += float(lp.detach())
+            ep_le += float(le.detach())
+            n_steps += 1
+            if (step + 1) % log_interval == 0:
+                el = time.time() - t_start
+                print(f"[e{epoch} s{step + 1}/{len(train_loader)}] "
+                      f"Lp={float(lp):.4f} Le={float(le):.4f} L={float(loss):.4f} "
+                      f"t={el:.0f}s", flush=True)
 
-            # V5: J_guide is NOT a loss.  During training it is applied as a
-            # gradient correction on z0 (unrolled), and the losses are then
-            # computed on the guided trajectory.
-            out_eff = out
-            # Training-side unrolled guidance: only on a random fraction of steps
-            # (guidance_cfg.training_step_frac) to cut double-backward cost.
-            use_guidance_step = random.random() < float(guidance_cfg.get("training_step_frac", 0.5))                 if guidance_cfg else False
-            if phase == "joint" and guidance_cfg and guidance_cfg.get("enabled", True) \
-                    and out.get("ellipse_center") is not None and use_guidance_step:
-                tt = t
-                w_G = guidance_weight(tt, T,
-                                      guidance_cfg.get("start_t_ratio", 0.40),
-                                      guidance_cfg.get("full_t_ratio", 0.10))
-                if float(w_G.max().item()) > 0.0:
-                    start = batch["cond"][:, 0]
-                    goal = batch["cond"][:, 1]
-                    N = batch["pos"].shape[1] - 1
-                    base = compute_base(goal - start, N)
-                    z0g, posg, _gs = apply_consensus_guidance_unrolled(
-                        out["z0_pred"], base, start,
-                        out["ellipse_center"], out["ellipse_radii"],
-                        out["ellipse_theta"], guidance_cfg, tt, T)
-                    out_eff = dict(out)
-                    out_eff["z0_pred"] = z0g
-                    out_eff["pos_pred"] = posg
+        avg_lp, avg_le = ep_lp / max(n_steps, 1), ep_le / max(n_steps, 1)
+        line = f"[epoch {epoch}/{epochs}] train Lp={avg_lp:.4f} Le={avg_le:.4f} " \
+               f"L={avg_lp + lambda_e * avg_le:.4f}"
+        if (epoch + 1) % eval_every == 0 or epoch == epochs - 1:
+            vp, ve = validate(model, schedule, val_loader, lambda_e, device,
+                              int(train_cfg.get("val_batches", 20)))
+            vtot = vp + lambda_e * ve
+            line += f" | val Lp={vp:.4f} Le={ve:.4f} L={vtot:.4f}"
+            if vtot < best_val:
+                best_val = vtot
+                save_checkpoint(os.path.join(ckpt_dir, "best.pt"), model,
+                                optim, epoch, cfg)
+                line += " (best)"
+        print(line, flush=True)
+        save_checkpoint(os.path.join(ckpt_dir, "latest.pt"), model, optim, epoch, cfg)
+        if (epoch + 1) % save_every == 0:
+            save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch + 1}.pt"),
+                            model, optim, epoch, cfg)
 
-            loss = total_loss(out_eff, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
-                              ellipse_cfg=ellipse_cfg, diffusion_t=t, num_timesteps=T,
-                              al_state=al_state, al_cfg=al_cfg,
-                              joint_loss_cfg=joint_loss_cfg)
-            if not torch.isfinite(loss["total"]):
-                logger.info(f"epoch {epoch+1}/{epochs} batch {bi+1}/{n_b} non-finite total={loss['total'].item()} -- skip")
-                continue
-            optimizer.zero_grad(); loss["total"].backward()
-            if train_cfg.get("grad_clip"):
-                torch.nn.utils.clip_grad_norm_(model.parameters(), float(train_cfg["grad_clip"]))
-            optimizer.step()
-            if phase == "joint" and al_state is not None:
-                interval = int(al_cfg.get("dual_update_interval", 10))
-                if (bi + 1) % interval == 0 and loss.get("al_w_active", 0.0) > 0.0:
-                    mv = loss.get("al_mean_V")
-                    if mv is not None:
-                        dual = float(al_state["dual"])
-                        al_state["dual"] = float(min(
-                            float(al_cfg.get("dual_max", 10.0)),
-                            max(0.0, dual + float(al_cfg.get("dual_lr", 0.1)) * float(mv.item()))))
-            losses.append({k: v.item() for k, v in loss.items() if torch.is_tensor(v) and v.requires_grad})
-            if (bi + 1) % args.log_interval == 0 or bi + 1 == n_b:
-                logger.info(f"epoch {epoch+1}/{epochs} batch {bi+1}/{n_b} total={loss['total'].item():.3f} t={time.time()-t0:.1f}s")
-        mean = {k: float(np.mean([l[k] for l in losses])) for k in losses[0]} if losses else {}
-        logger.info(f"epoch {epoch+1}/{epochs} loss={mean} time={time.time()-t0:.1f}s")
-        model.eval(); vls = []
-        with torch.no_grad():
-            for batch in val_loader:
-                batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
-                t = torch.full((batch["pos"].shape[0],), int(T // 2), device=device)
-                z0_gt, _, _, _ = compute_z0(batch["pos"], batch["cond"])
-                z_t = schedule.q_sample_zero_sum(z0_gt, t)
-                out = model(z_t, t, batch["map_tensor"], batch["cond"])
-                loss = total_loss(out, batch, loss_cfg, device=device, phase=phase, epoch=epoch,
-                                  ellipse_cfg=ellipse_cfg, diffusion_t=t, num_timesteps=T,
-                                  al_state=None, al_cfg=al_cfg,
-                                  joint_loss_cfg=joint_loss_cfg)
-                if not torch.isfinite(loss["total"]):
-                    continue
-                # Safety-centred validation metric: sample the SDF at the predicted
-                # clean trajectory interior points.  We prefer the worst-case
-                # clearance (p05) over the mean: a high mean can hide a few points
-                # hugging/crossing the wall.
-                d = sample_sdf_scene(batch["sdf_tensor"], out["pos_pred"][:, 1:-1])
-                d_np = d.cpu().numpy()
-                di = {k: v.item() for k, v in loss.items() if torch.is_tensor(v)}
-                di["clearance_mean"] = float(d_np.mean())
-                di["clearance_p05"] = float(np.percentile(d_np, 5))
-                di["clearance_min"] = float(d_np.min())
-                di["collision_rate"] = float((d_np <= 0.0).mean())
-                vls.append(di)
-        vmean = {k: float(np.mean([l[k] for l in vls])) for k in vls[0]} if vls else {}
-        logger.info(f"val   loss={vmean}")
-        if torch.cuda.is_available(): torch.cuda.empty_cache()
-        # Choose the best model by a safety score: reward worst-case clearance
-        # (p05) but heavily penalise collisions, so a model with a few hard
-        # collisions cannot be "best" just because its p05 is high.
-        k_coll = float(train_cfg.get("best_collision_weight", 3.0))
-        score = (vmean.get("clearance_p05", float("-inf"))
-                 - k_coll * vmean.get("collision_rate", 0.0))
-        if score > best_val:
-            best_val = score
-            save_checkpoint(best_ckpt, model, optimizer, epoch=epoch + 1,
-                            extra=_ckpt_extra())
-            logger.info(f"save best ckpt {best_ckpt} (val score {best_val:.4f} "
-                        f"= clear_p05 {vmean.get('clearance_p05', 0.0):.4f} "
-                        f"- {k_coll}*coll {vmean.get('collision_rate', 0.0):.4f})")
-        if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-            save_checkpoint(os.path.join(ckpt_dir, f"epoch_{epoch+1}.pt"), model,
-                            optimizer, epoch=epoch + 1, extra=_ckpt_extra())
-            logger.info(f"save ckpt epoch_{epoch+1}.pt")
-        if torch.cuda.is_available(): torch.cuda.empty_cache()
+    print(f"[done] {epochs} epochs, best val L={best_val:.4f}, ckpt_dir={ckpt_dir}", flush=True)
 
 
 if __name__ == "__main__":
