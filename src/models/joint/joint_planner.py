@@ -4,7 +4,7 @@ docs/联合扩散.md, sections #5-#25.  One forward, one interleaved sequence:
 
     Z_t = [T_1,E_1,...,T_128,E_128]          (256 tokens, d_model=128)
     C_scene = [S, G, M_1..M_256]             (258 tokens, cross-attn memory)
-    f(P_t, E_t, M, s, g, t) -> (eps_P_hat [B,H,2], eps_E_hat [B,H,6])
+    f(P_t, E_t, M, s, g, t) -> (x0_P_hat [B,H,2], x0_E_hat [B,H,6])
 
 Encodings (all additive):
     T_k = MLP_P(p_k^t) + psi(k) + e_traj + w_t * phi(p_k^t)
@@ -93,8 +93,12 @@ class JointPlanner(nn.Module):
 
         # ---- scene condition memory C_scene = [S,G,M1..M256] ----
         map_tok = self._map_tokens(occ)                    # [B,256,d]
-        h_s = self.spatial_pe(start) + self.role_type(torch.zeros(B, device=dev, dtype=torch.long))[:, None, :]
-        h_g = self.spatial_pe(goal) + self.role_type(torch.ones(B, device=dev, dtype=torch.long))[:, None, :]
+        # role embeddings are per-sample [B,d]; add to the 2D PE then expand
+        # to token slots so h_s/h_g stay [B,1,d] (no [B,B,d] broadcast leak)
+        start_role = self.role_type(torch.zeros(B, device=dev, dtype=torch.long))
+        goal_role = self.role_type(torch.ones(B, device=dev, dtype=torch.long))
+        h_s = (self.spatial_pe(start) + start_role)[:, None, :]   # [B,1,d]
+        h_g = (self.spatial_pe(goal) + goal_role)[:, None, :]     # [B,1,d]
         mem = torch.cat([h_s, h_g, map_tok], dim=1)        # [B,258,d]
 
         # ---- planning + time embeddings ----
@@ -106,11 +110,11 @@ class JointPlanner(nn.Module):
         w = ab[:, None, None].to(p_t.dtype)
         p_pe = self.spatial_pe(p_t) * w                    # [B,H,d]
 
-        # ---- tokens ----
-        t_idx = torch.tensor([0], device=dev)
-        ell_idx = torch.tensor([1], device=dev)
-        T = (self.mlp_p(p_t) + psi + self.traj_type(t_idx)[None, None, :] + p_pe)
-        E = (self.mlp_e(e_t) + psi + self.traj_type(ell_idx)[None, None, :] + p_pe)
+        # ---- tokens (type embeddings as [1,1,d] so no extra leading dims) ----
+        traj_type = self.traj_type.weight[0][None, None, :]   # [1,1,d]
+        ell_type = self.traj_type.weight[1][None, None, :]    # [1,1,d]
+        T = self.mlp_p(p_t) + psi + traj_type + p_pe          # [B,H,d]
+        E = self.mlp_e(e_t) + psi + ell_type + p_pe           # [B,H,d]
 
         # interleave [T_1,E_1,...,T_H,E_H] -> [B,2H,d]
         z = torch.stack([T, E], dim=2).reshape(B, 2 * H, self.d_model)

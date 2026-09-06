@@ -28,7 +28,9 @@ diffusion:
   beta_schedule: "squaredcos_cap_v2"
   beta_start: 0.0001
   beta_end: 0.02
-  prediction_type: "eps"   # noise prediction (heads output eps_P, eps_E)
+  prediction_type: "x0"   # heads predict clean P0/E0 (x0); DDIM sampler stable
+                          # with the T=16 cosine schedule (eps-pred would divide
+                          # by sqrt(alpha_bar)~0.003 and blow up)
 
 loss:
   lambda_e: 1.0       # L = ||epsP-epsP_hat||^2 + lambda_e * ||epsE-epsE_hat||^2
