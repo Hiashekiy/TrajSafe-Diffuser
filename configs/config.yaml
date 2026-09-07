@@ -61,14 +61,14 @@ mazes:
   - name: "medium"
     raw_hdf5: "data/d4rl/maze2d-medium-sparse-v1.hdf5"
     processed_dir: "data/processed/maze2d_medium"
-    extent: [0, 8, 0, 8]
-    global_res: 10.0   # 重采样：16x16 -> 80x80（与 umaze 相当）
+    extent: [0, 7, 0, 7]                             # 8x8 layout uses coordinate indices 0..7
+    global_res: 10.0   # 原始地图分辨率；scene 构建时仅取修正后的 7x7 extent
     local_res: 20.0
   - name: "large"
     raw_hdf5: "data/d4rl/maze2d-large-sparse-v1.hdf5"
     processed_dir: "data/processed/maze2d_large"
-    extent: [0, 9, 0, 12]
-    global_res: 8.0    # 重采样：12x9 -> 72x96（模型自适应不同 scene 尺寸）
+    extent: [0, 8, 0, 11]                            # 9x12 layout: x=0..8, y=0..11
+    global_res: 8.0    # 原始地图分辨率；scene 构建时仅取修正后的 8x11 extent
     local_res: 20.0
 
 # ---------- 模型 ----------

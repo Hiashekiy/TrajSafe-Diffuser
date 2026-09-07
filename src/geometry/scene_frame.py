@@ -75,7 +75,15 @@ def build_scene_occupancy(frame, occ_orig, extent_orig, gres_orig, res=256):
     cell_world = frame.scene_to_world_np(cell_scene)                  # [res*res,2]
     px = np.round((cell_world[:, 0] - x0) * gres_orig - 0.5).astype(int)
     py = np.round((cell_world[:, 1] - y0) * gres_orig - 0.5).astype(int)
-    valid = (px >= 0) & (px < nx) & (py >= 0) & (py < ny)
+    # The source raster can be larger than the requested extent (for example,
+    # after correcting a formerly oversized maze extent). Index bounds alone
+    # would then leak stale source pixels into the uniform-scaling padding.
+    # Enforce the declared world extent as the authoritative valid domain;
+    # everything outside it remains initialized as wall.
+    in_extent = ((cell_world[:, 0] >= x0) & (cell_world[:, 0] < x1) &
+                 (cell_world[:, 1] >= y0) & (cell_world[:, 1] < y1))
+    valid = (in_extent & (px >= 0) & (px < nx) &
+             (py >= 0) & (py < ny))
     out = np.ones((res * res,), dtype=np.float32)
     px_c = np.clip(px, 0, nx - 1)
     py_c = np.clip(py, 0, ny - 1)
