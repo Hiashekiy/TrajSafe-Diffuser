@@ -10,7 +10,7 @@ env:
 
 data:
   base: "data/processed_scene_v1"   # positions[N,128,2] + ellipses6[N,128,6]
-  batch_size: 32
+  batch_size: 64
   num_workers: 0
 
 model:
