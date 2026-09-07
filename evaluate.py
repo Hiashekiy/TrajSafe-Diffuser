@@ -136,8 +136,17 @@ def main():
         sdf_t = ds.sdfs[mi].to(device).expand(len(sel), -1, -1, -1).contiguous()
 
         t0 = time.time()
-        P, E6 = sample_joint(model, schedule, cond, map_t, device,
-                             steps=args.steps, seed=args.seed + mi * 101)
+        alm_enabled = bool(cfg.get("alm", {}).get("enabled", False))
+        sampled = sample_joint(
+            model, schedule, cond, map_t, device,
+            steps=args.steps, seed=args.seed + mi * 101,
+            alm_config=cfg.get("alm"), return_alm_stats=alm_enabled,
+        )
+        if alm_enabled:
+            P, E6, alm_stats = sampled
+        else:
+            P, E6 = sampled
+            alm_stats = {}
         dt = time.time() - t0
         P = P.cpu().numpy()
         E6 = E6.cpu().numpy()
@@ -195,6 +204,9 @@ def main():
              "ellipse_theta_err": round(th_err, 4),
              "ellipse_boundary_coll": round(e_coll, 4),
              "traj_smoothness": round(smooth, 4)}
+        if alm_stats:
+            m["alm"] = {key: round(value, 6) if isinstance(value, float) else value
+                        for key, value in alm_stats.items()}
         report["mazes"][maze] = m
         print(f"[{maze}] n={m['n']} dt={dt:.1f}s end_err={m['endpoint_err']:.2e} "
               f"coll={m['collision_frac']:.4f} clear_p05={m['clearance_p05']:.3f} "

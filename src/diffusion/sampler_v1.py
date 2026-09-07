@@ -26,6 +26,9 @@ Returns scene-frame P [B,H,2] and the 6D ellipse repr E6 [B,H,6].
 """
 import torch
 
+from src.diffusion.alm_guidance import alm_correct
+from src.geometry.convex_corridor import SegmentCorridorBuilder
+
 
 def _pick_times(T, steps):
     if steps is None or steps >= T:
@@ -41,7 +44,8 @@ def _pick_times(T, steps):
 
 
 def sample_joint(model, schedule, cond, map_tensor, device="cuda",
-                 steps=None, seed=None):
+                 steps=None, seed=None, alm_config=None,
+                 return_alm_stats=False):
     """cond [B,2,2] scene (start,goal); map_tensor [B,1,256,256]."""
     if seed is not None:
         torch.manual_seed(seed)
@@ -60,10 +64,42 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
     p[:, 0] = start
     p[:, -1] = goal
 
+    alm_cfg = alm_config or {}
+    alm_enabled = bool(alm_cfg.get("enabled", False))
+    corridor_builder = (SegmentCorridorBuilder(map_tensor, alm_cfg)
+                        if alm_enabled else None)
+    lam = torch.zeros(B, H - 1, device=device, dtype=torch.float32)
+    rho = float(alm_cfg.get("rho_init", 1.0))
+    rho_growth = float(alm_cfg.get("rho_growth", 1.3))
+    rho_max = float(alm_cfg.get("rho_max", 20.0))
+    alm_start_t = int(alm_cfg.get("start_t", 7))
+    collected_stats = []
+
     def endpoints(x):
         x[:, 0] = start
         x[:, -1] = goal
         return x
+
+    def guide_clean_prediction(x0_p, x0_e, t):
+        nonlocal lam, rho
+        x0_p = endpoints(x0_p)
+        if not alm_enabled or t > alm_start_t:
+            return x0_p
+        A, b, face_mask, valid = corridor_builder(x0_p, x0_e)
+        x0_p, lam, stats = alm_correct(
+            x0_p, A, b, face_mask, valid, lam, rho,
+            step_size=float(alm_cfg.get("step_size", 0.03)),
+            smooth_tau=float(alm_cfg.get("smooth_tau", 0.03)),
+            inner_steps=int(alm_cfg.get("inner_steps", 2)),
+            max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
+            max_correction_per_step=float(
+                alm_cfg.get("max_correction_per_step", 0.10)),
+            collect_stats=return_alm_stats,
+        )
+        if stats is not None:
+            collected_stats.append(stats)
+        rho = min(rho * rho_growth, rho_max)
+        return endpoints(x0_p)
 
     with torch.no_grad():
         if times is None:
@@ -73,6 +109,7 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
                 ab = torch.full((B,), float(sqrt_ab[t]), device=device, dtype=torch.float32)
                 out = model(p, e, map_tensor, cond, tb, ab)
                 x0_p, x0_e = out["x0_p"], out["x0_e"]
+                x0_p = guide_clean_prediction(x0_p, x0_e, t)
                 if t == 0:
                     p, e = x0_p, x0_e
                 else:
@@ -91,6 +128,7 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
                 ab = torch.full((B,), float(sqrt_ab[t]), device=device, dtype=torch.float32)
                 out = model(p, e, map_tensor, cond, tb, ab)
                 x0_p, x0_e = out["x0_p"], out["x0_e"]
+                x0_p = guide_clean_prediction(x0_p, x0_e, t)
                 if s == 0:
                     p, e = x0_p, x0_e
                 else:
@@ -101,4 +139,15 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
                     p = sa_s * x0_p + s1_s * eps_p
                     e = sa_s * x0_e + s1_s * eps_e
                 p = endpoints(p)
-    return p, e
+    if not return_alm_stats:
+        return p, e
+    if not collected_stats:
+        return p, e, {}
+    summary = {}
+    for key in collected_stats[0]:
+        values = torch.stack([item[key] for item in collected_stats])
+        reducer = torch.max if key.startswith("max_") else torch.mean
+        summary[key] = float(reducer(values).cpu())
+    summary["guided_reverse_steps"] = len(collected_stats)
+    summary["rho_final"] = rho
+    return p, e, summary

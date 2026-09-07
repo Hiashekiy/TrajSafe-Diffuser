@@ -1,0 +1,33 @@
+# Inference-only ALM guidance. The network/checkpoint and training losses are
+# inherited unchanged from the frozen centre-balanced V1 configuration.
+base: configs/config_v1.yaml
+
+alm:
+  enabled: true
+
+  # Apply ALM only to the final eight levels of the 16-step reverse process.
+  start_t: 7
+  inner_steps: 2
+
+  # Conservative smooth maximum over both endpoints and all corridor faces.
+  smooth_tau: 0.03
+
+  # Primal/dual update in scene [-1,1] coordinates.
+  step_size: 0.03
+  rho_init: 1.0
+  rho_growth: 1.3
+  rho_max: 20.0
+  max_grad_norm: 1.0
+  max_correction_per_step: 0.10
+
+  # Batched Neural-IRIS-style corridor construction. Four slots are scene-box
+  # faces and up to eight are greedily selected obstacle faces. A region is
+  # disabled if this cap is reached before all obstacle points are separated.
+  max_faces: 12
+  safety_margin: 0.02
+  obstacle_dilation: 0
+  corridor_chunk_size: 512
+  max_obstacle_points: 4096
+  ellipse_axis_min: 0.002
+  ellipse_axis_max: 2.0
+  dedup_eps: 1.0e-6
