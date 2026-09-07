@@ -71,8 +71,9 @@ def ellipse_safety_loss(p_pred, e_pred, occ, raster_res=64, tau=10.0,
 
     The map is conservatively max-pooled to ``raster_res`` and every ellipse is
     evaluated against the full raster. Chunking only limits peak memory; it does
-    not sample ellipse points. Gradients flow through both ``p_pred`` and every
-    ellipse parameter, including the trajectory-relative centre offset.
+    not sample ellipse points. The trajectory anchor is detached so this loss
+    only optimizes ellipse geometry; trajectory learning remains governed by
+    its regression and smoothness losses.
     """
     if occ.dim() == 3:
         occ = occ.unsqueeze(1)
@@ -83,7 +84,10 @@ def ellipse_safety_loss(p_pred, e_pred, occ, raster_res=64, tau=10.0,
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be positive, got {chunk_size}")
 
-    center = p_pred + e_pred[..., :2]
+    # Do not let ellipse collision avoidance drag the trajectory away from its
+    # supervised path. The relative centre offset and all other ellipse
+    # parameters remain differentiable.
+    center = p_pred.detach() + e_pred[..., :2]
     a = torch.exp(torch.clamp(e_pred[..., 2], -6.0, 0.7))
     b = torch.exp(torch.clamp(e_pred[..., 3], -6.0, 0.7))
     theta = 0.5 * torch.atan2(e_pred[..., 5], e_pred[..., 4])
