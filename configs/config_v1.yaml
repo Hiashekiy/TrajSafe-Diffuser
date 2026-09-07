@@ -42,7 +42,9 @@ diffusion:
 
 loss:
   lambda_e: 1.0       # ellipse x0 regression
-  lambda_smooth: 0.1  # SmoothL1 between predicted/GT trajectory second differences
+  lambda_smooth: 0.1  # overall weight for normalized acceleration + jerk regularization
+  smooth_acc_weight: 0.25   # weak curvature regularization; avoids flattening real turns
+  smooth_jerk_weight: 1.0   # strong high-frequency oscillation suppression
   lambda_safe: 1.0    # obstacle fraction inside each ellipse; trajectory anchor is detached
   ellipse_safe_res: 64    # full-map raster resolution used by the safety loss
   ellipse_mask_tau: 10.0  # soft ellipse boundary sharpness

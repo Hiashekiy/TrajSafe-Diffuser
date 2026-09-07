@@ -6,8 +6,8 @@ docs/联合扩散.md #26-#27:
   * Loss L = L_P + lambda_e L_E + lambda_smooth L_smooth
              + lambda_safe L_safe.
     Endpoint slots of P are hard-conditioned inputs, so they are excluded from
-    L_P. L_smooth matches predicted and target second differences. L_safe is
-    the occupancy ratio inside each predicted soft ellipse mask.
+    L_P. L_smooth directly regularizes normalized acceleration and jerk. L_safe
+    is the occupancy ratio inside each predicted soft ellipse mask.
   * Hard endpoints: after noising, P's first/last waypoint are overwritten with
     the exact scene start/goal (matches the sampler's inpainting convention).
 
@@ -58,11 +58,34 @@ def hard_endpoints(p_t, cond):
     return p_t
 
 
-def trajectory_smoothness_loss(p_pred, p_gt):
-    """Match trajectory second differences without flattening genuine turns."""
-    d2_pred = p_pred[:, 2:] - 2.0 * p_pred[:, 1:-1] + p_pred[:, :-2]
-    d2_gt = p_gt[:, 2:] - 2.0 * p_gt[:, 1:-1] + p_gt[:, :-2]
-    return F.smooth_l1_loss(d2_pred, d2_gt)
+def trajectory_smoothness_loss(p_pred, p_gt, acc_weight=0.25,
+                               jerk_weight=1.0, eps=1e-3):
+    """Penalize geometric acceleration and high-frequency trajectory jerk.
+
+    Unlike matching the target second difference, this does not reproduce
+    local noise in the demonstration. The target is used only to establish a
+    per-sample step-length scale, detached from autograd. A weaker acceleration
+    term promotes smooth curvature, while the stronger third-difference term
+    specifically suppresses alternating, high-frequency bends.
+    """
+    velocity = p_pred[:, 1:] - p_pred[:, :-1]
+    acceleration = velocity[:, 1:] - velocity[:, :-1]
+    jerk = acceleration[:, 1:] - acceleration[:, :-1]
+
+    gt_velocity = p_gt[:, 1:] - p_gt[:, :-1]
+    step_scale = gt_velocity.norm(dim=-1).mean(dim=1, keepdim=True)
+    step_scale = step_scale.detach().clamp_min(1e-4)[:, :, None]
+    acceleration = acceleration / step_scale
+    jerk = jerk / step_scale
+
+    # Charbonnier vector norm keeps a useful response to small zigzags without
+    # a singular derivative at zero. log1p makes the auxiliary loss robust to
+    # the very large, random x0 predictions seen early in training.
+    acc_norm = (acceleration.square().sum(dim=-1) + eps ** 2).sqrt().sub(eps)
+    jerk_norm = (jerk.square().sum(dim=-1) + eps ** 2).sqrt().sub(eps)
+    loss_acc = torch.log1p(acc_norm).mean()
+    loss_jerk = torch.log1p(jerk_norm).mean()
+    return acc_weight * loss_acc + jerk_weight * loss_jerk
 
 
 def ellipse_safety_loss(p_pred, e_pred, occ, raster_res=64, tau=10.0,
@@ -126,6 +149,7 @@ def ellipse_safety_loss(p_pred, e_pred, occ, raster_res=64, tau=10.0,
 
 
 def batch_losses(batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
+                 smooth_acc_weight, smooth_jerk_weight,
                  safe_res, safe_tau, safe_chunk, device):
     """One batch -> four component losses and their weighted total."""
     p0 = batch["pos"].to(device)
@@ -149,7 +173,10 @@ def batch_losses(batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
     p_hat = hard_endpoints(p_hat_raw, cond)
     loss_p = F.mse_loss(p_hat_raw[:, 1:-1], p0[:, 1:-1])
     loss_e = F.mse_loss(e_hat, e0)
-    loss_smooth = trajectory_smoothness_loss(p_hat, p0)
+    loss_smooth = trajectory_smoothness_loss(
+        p_hat, p0, acc_weight=smooth_acc_weight,
+        jerk_weight=smooth_jerk_weight,
+    )
     loss_safe = ellipse_safety_loss(
         p_hat, e_hat, occ, raster_res=safe_res, tau=safe_tau,
         chunk_size=safe_chunk,
@@ -160,6 +187,7 @@ def batch_losses(batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
 
 
 def validate(model, schedule, val_loader, lambda_e, lambda_smooth, lambda_safe,
+             smooth_acc_weight, smooth_jerk_weight,
              safe_res, safe_tau, safe_chunk, device, max_batches):
     model.eval()
     s_p = s_e = s_smooth = s_safe = n = 0.0
@@ -169,7 +197,8 @@ def validate(model, schedule, val_loader, lambda_e, lambda_smooth, lambda_safe,
                 break
             lp, le, ls, lsafe, _ = batch_losses(
                 batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
-                safe_res, safe_tau, safe_chunk, device,
+                smooth_acc_weight, smooth_jerk_weight, safe_res, safe_tau,
+                safe_chunk, device,
             )
             s_p += float(lp)
             s_e += float(le)
@@ -220,6 +249,8 @@ def main():
     lambda_e = float(loss_cfg.get("lambda_e", 1.0))
     lambda_smooth = float(loss_cfg.get("lambda_smooth", 0.1))
     lambda_safe = float(loss_cfg.get("lambda_safe", 1.0))
+    smooth_acc_weight = float(loss_cfg.get("smooth_acc_weight", 0.25))
+    smooth_jerk_weight = float(loss_cfg.get("smooth_jerk_weight", 1.0))
     safe_res = int(loss_cfg.get("ellipse_safe_res", 64))
     safe_tau = float(loss_cfg.get("ellipse_mask_tau", 10.0))
     safe_chunk = int(loss_cfg.get("ellipse_safe_chunk", 32))
@@ -251,7 +282,8 @@ def main():
                 break
             lp, le, ls, lsafe, loss = batch_losses(
                 batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
-                safe_res, safe_tau, safe_chunk, device,
+                smooth_acc_weight, smooth_jerk_weight, safe_res, safe_tau,
+                safe_chunk, device,
             )
             optim.zero_grad()
             loss.backward()
@@ -290,7 +322,8 @@ def main():
         if (epoch + 1) % eval_every == 0 or epoch == epochs - 1:
             vp, ve, vs, vsafe = validate(
                 model, schedule, val_loader, lambda_e, lambda_smooth,
-                lambda_safe, safe_res, safe_tau, safe_chunk, device,
+                lambda_safe, smooth_acc_weight, smooth_jerk_weight,
+                safe_res, safe_tau, safe_chunk, device,
                 int(train_cfg.get("val_batches", 20)),
             )
             vtot = (vp + lambda_e * ve
