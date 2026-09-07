@@ -41,12 +41,14 @@ diffusion:
                           # by sqrt(alpha_bar)~0.003 and blow up)
 
 loss:
-  lambda_e: 1.0       # ellipse x0 regression
+  lambda_e: 1.0       # absolute ellipse centre + remaining E6 x0 regression
   lambda_smooth: 0.1  # overall weight for normalized acceleration + jerk regularization
   smooth_acc_weight: 0.25   # weak curvature regularization; avoids flattening real turns
   smooth_jerk_weight: 1.0   # strong high-frequency oscillation suppression
-  lambda_iou: 0.5     # soft IoU against the precomputed GT ellipse mask
-  lambda_safe: 0.2    # full ellipse area not covered by valid free-space raster
+  lambda_iou: 0.25    # centre-aligned soft IoU; calibrated by shared-gradient norm
+  lambda_safe: 0.1    # CVaR keeps the effective safety pressure above the old mean-only loss
+  safe_cvar_fraction: 0.2  # worst 20% anchors independently within each trajectory
+  safe_cvar_weight: 1.0    # Lsafe = mean(all anchors) + weight * mean(worst tail)
   ellipse_safe_res: 64    # full-map raster resolution used by the safety loss
   ellipse_mask_tau: 10.0  # soft ellipse boundary sharpness
   ellipse_safe_chunk: 32  # ellipse anchors rasterized per chunk (memory control)
@@ -60,4 +62,4 @@ train:
   save_every: 10
   eval_every: 10      # validation loss every N epochs
   val_batches: 25
-  ckpt_dir: "outputs/ckpt_v1_smooth_iou_free"
+  ckpt_dir: "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced"
