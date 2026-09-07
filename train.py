@@ -3,9 +3,11 @@
 docs/联合扩散.md #26-#27:
   * P and E are diffused with independent Gaussian noise but the SAME alpha_bar
     schedule; model f(P_t,E_t,M,s,g,t) -> (eps_P_hat, eps_E_hat).
-  * Loss  L = ||eps_P - eps_P_hat||^2  +  lambda_e * ||eps_E - eps_E_hat||^2
-    (endpoint slots of P are hard-conditioned inputs, so they are excluded from
-    the P MSE; all 128 ellipse anchors are supervised -- no validity masking).
+  * Loss L = L_P + lambda_e L_E + lambda_smooth L_smooth
+             + lambda_safe L_safe.
+    Endpoint slots of P are hard-conditioned inputs, so they are excluded from
+    L_P. L_smooth matches predicted and target second differences. L_safe is
+    the occupancy ratio inside each predicted soft ellipse mask.
   * Hard endpoints: after noising, P's first/last waypoint are overwritten with
     the exact scene start/goal (matches the sampler's inpainting convention).
 
@@ -56,8 +58,72 @@ def hard_endpoints(p_t, cond):
     return p_t
 
 
-def batch_losses(batch, model, schedule, lambda_e, device):
-    """One batch -> (loss_p, loss_e, total).  Endpoint slots of P are masked."""
+def trajectory_smoothness_loss(p_pred, p_gt):
+    """Match trajectory second differences without flattening genuine turns."""
+    d2_pred = p_pred[:, 2:] - 2.0 * p_pred[:, 1:-1] + p_pred[:, :-2]
+    d2_gt = p_gt[:, 2:] - 2.0 * p_gt[:, 1:-1] + p_gt[:, :-2]
+    return F.smooth_l1_loss(d2_pred, d2_gt)
+
+
+def ellipse_safety_loss(p_pred, e_pred, occ, raster_res=64, tau=10.0,
+                        chunk_size=32, eps=1e-6):
+    """Mean obstacle-overlap ratio of differentiable predicted ellipse masks.
+
+    The map is conservatively max-pooled to ``raster_res`` and every ellipse is
+    evaluated against the full raster. Chunking only limits peak memory; it does
+    not sample ellipse points. Gradients flow through both ``p_pred`` and every
+    ellipse parameter, including the trajectory-relative centre offset.
+    """
+    if occ.dim() == 3:
+        occ = occ.unsqueeze(1)
+    if occ.dim() != 4 or occ.shape[1] != 1:
+        raise ValueError(f"occ must have shape [B,1,H,W] or [B,H,W], got {tuple(occ.shape)}")
+    if raster_res <= 0:
+        raise ValueError(f"raster_res must be positive, got {raster_res}")
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    center = p_pred + e_pred[..., :2]
+    a = torch.exp(torch.clamp(e_pred[..., 2], -6.0, 0.7))
+    b = torch.exp(torch.clamp(e_pred[..., 3], -6.0, 0.7))
+    theta = 0.5 * torch.atan2(e_pred[..., 5], e_pred[..., 4])
+
+    occ_r = F.adaptive_max_pool2d(occ, output_size=(raster_res, raster_res))
+    coord = ((torch.arange(raster_res, device=occ.device, dtype=occ.dtype) + 0.5)
+             * (2.0 / raster_res) - 1.0)
+    gy, gx = torch.meshgrid(coord, coord, indexing="ij")
+    gx = gx[None, None]
+    gy = gy[None, None]
+    obstacle = occ_r[:, 0, None]
+
+    ratio_sum = p_pred.new_zeros(())
+    horizon = p_pred.shape[1]
+    for start in range(0, horizon, chunk_size):
+        end = min(start + chunk_size, horizon)
+        cx = center[:, start:end, 0, None, None]
+        cy = center[:, start:end, 1, None, None]
+        dx = gx - cx
+        dy = gy - cy
+
+        ct = torch.cos(theta[:, start:end])[:, :, None, None]
+        st = torch.sin(theta[:, start:end])[:, :, None, None]
+        xr = ct * dx + st * dy
+        yr = -st * dx + ct * dy
+        ac = a[:, start:end, None, None]
+        bc = b[:, start:end, None, None]
+        q = (xr / ac).square() + (yr / bc).square()
+        mask = torch.sigmoid(tau * (1.0 - q))
+
+        intersection = (mask * obstacle).sum(dim=(-1, -2))
+        ellipse_area = mask.sum(dim=(-1, -2))
+        ratio_sum = ratio_sum + (intersection / (ellipse_area + eps)).sum()
+
+    return ratio_sum / (p_pred.shape[0] * horizon)
+
+
+def batch_losses(batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
+                 safe_res, safe_tau, safe_chunk, device):
+    """One batch -> four component losses and their weighted total."""
     p0 = batch["pos"].to(device)
     e0 = batch["e6"].to(device)
     cond = batch["cond"].to(device)
@@ -72,27 +138,43 @@ def batch_losses(batch, model, schedule, lambda_e, device):
     ab = schedule.sqrt_alphas_cumprod[t].to(device)
     out = model(p_t, e_t, occ, cond, t, ab)
 
-    # x0 prediction targets (docs #25): MSE against the clean values;
-    # endpoint slots of P are hard-conditioned inputs and masked out.
-    loss_p = F.mse_loss(out["x0_p"][:, 1:-1], p0[:, 1:-1])
-    loss_e = F.mse_loss(out["x0_e"], e0)
-    total = loss_p + lambda_e * loss_e
-    return loss_p, loss_e, total
+    # Preserve the original regression losses exactly. Only the auxiliary
+    # losses use the trajectory as it will actually appear during sampling.
+    p_hat_raw = out["x0_p"]
+    e_hat = out["x0_e"]
+    p_hat = hard_endpoints(p_hat_raw, cond)
+    loss_p = F.mse_loss(p_hat_raw[:, 1:-1], p0[:, 1:-1])
+    loss_e = F.mse_loss(e_hat, e0)
+    loss_smooth = trajectory_smoothness_loss(p_hat, p0)
+    loss_safe = ellipse_safety_loss(
+        p_hat, e_hat, occ, raster_res=safe_res, tau=safe_tau,
+        chunk_size=safe_chunk,
+    )
+    total = (loss_p + lambda_e * loss_e
+             + lambda_smooth * loss_smooth + lambda_safe * loss_safe)
+    return loss_p, loss_e, loss_smooth, loss_safe, total
 
 
-def validate(model, schedule, val_loader, lambda_e, device, max_batches):
+def validate(model, schedule, val_loader, lambda_e, lambda_smooth, lambda_safe,
+             safe_res, safe_tau, safe_chunk, device, max_batches):
     model.eval()
-    s_p = s_e = n = 0.0
+    s_p = s_e = s_smooth = s_safe = n = 0.0
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             if i >= max_batches:
                 break
-            lp, le, _ = batch_losses(batch, model, schedule, lambda_e, device)
+            lp, le, ls, lsafe, _ = batch_losses(
+                batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
+                safe_res, safe_tau, safe_chunk, device,
+            )
             s_p += float(lp)
             s_e += float(le)
+            s_smooth += float(ls)
+            s_safe += float(lsafe)
             n += 1.0
     model.train()
-    return s_p / max(n, 1.0), s_e / max(n, 1.0)
+    denom = max(n, 1.0)
+    return s_p / denom, s_e / denom, s_smooth / denom, s_safe / denom
 
 
 def main():
@@ -132,6 +214,11 @@ def main():
     print(f"[model] params={n_params / 1e6:.2f}M", flush=True)
 
     lambda_e = float(loss_cfg.get("lambda_e", 1.0))
+    lambda_smooth = float(loss_cfg.get("lambda_smooth", 0.1))
+    lambda_safe = float(loss_cfg.get("lambda_safe", 1.0))
+    safe_res = int(loss_cfg.get("ellipse_safe_res", 64))
+    safe_tau = float(loss_cfg.get("ellipse_mask_tau", 10.0))
+    safe_chunk = int(loss_cfg.get("ellipse_safe_chunk", 32))
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
     log_interval = args.log_interval if args.log_interval is not None else int(train_cfg["log_interval"])
     ckpt_dir = train_cfg["ckpt_dir"]
@@ -153,12 +240,15 @@ def main():
     t_start = time.time()
     for epoch in range(start_epoch, epochs):
         model.train()
-        ep_lp = ep_le = 0.0
+        ep_lp = ep_le = ep_ls = ep_lsafe = 0.0
         n_steps = 0
         for step, batch in enumerate(train_loader):
             if args.max_batches is not None and step >= args.max_batches:
                 break
-            lp, le, loss = batch_losses(batch, model, schedule, lambda_e, device)
+            lp, le, ls, lsafe, loss = batch_losses(
+                batch, model, schedule, lambda_e, lambda_smooth, lambda_safe,
+                safe_res, safe_tau, safe_chunk, device,
+            )
             optim.zero_grad()
             loss.backward()
             if grad_clip:
@@ -166,21 +256,44 @@ def main():
             optim.step()
             ep_lp += float(lp.detach())
             ep_le += float(le.detach())
+            ep_ls += float(ls.detach())
+            ep_lsafe += float(lsafe.detach())
             n_steps += 1
             if (step + 1) % log_interval == 0:
                 el = time.time() - t_start
+                lp_value = float(lp.detach())
+                le_value = float(le.detach())
+                ls_value = float(ls.detach())
+                lsafe_value = float(lsafe.detach())
+                loss_value = float(loss.detach())
                 print(f"[e{epoch} s{step + 1}/{len(train_loader)}] "
-                      f"Lp={float(lp):.4f} Le={float(le):.4f} L={float(loss):.4f} "
+                      f"Lp={lp_value:.4f} Le={le_value:.4f} "
+                      f"Ls={ls_value:.4f} Lsafe={lsafe_value:.4f} "
+                      f"wLs={lambda_smooth * ls_value:.4f} "
+                      f"wLsafe={lambda_safe * lsafe_value:.4f} "
+                      f"L={loss_value:.4f} "
                       f"t={el:.0f}s", flush=True)
 
-        avg_lp, avg_le = ep_lp / max(n_steps, 1), ep_le / max(n_steps, 1)
-        line = f"[epoch {epoch}/{epochs}] train Lp={avg_lp:.4f} Le={avg_le:.4f} " \
-               f"L={avg_lp + lambda_e * avg_le:.4f}"
+        denom = max(n_steps, 1)
+        avg_lp, avg_le = ep_lp / denom, ep_le / denom
+        avg_ls, avg_lsafe = ep_ls / denom, ep_lsafe / denom
+        avg_total = (avg_lp + lambda_e * avg_le
+                     + lambda_smooth * avg_ls + lambda_safe * avg_lsafe)
+        line = (f"[epoch {epoch}/{epochs}] train Lp={avg_lp:.4f} Le={avg_le:.4f} "
+                f"Ls={avg_ls:.4f} Lsafe={avg_lsafe:.4f} "
+                f"wLs={lambda_smooth * avg_ls:.4f} "
+                f"wLsafe={lambda_safe * avg_lsafe:.4f} L={avg_total:.4f}")
         if (epoch + 1) % eval_every == 0 or epoch == epochs - 1:
-            vp, ve = validate(model, schedule, val_loader, lambda_e, device,
-                              int(train_cfg.get("val_batches", 20)))
-            vtot = vp + lambda_e * ve
-            line += f" | val Lp={vp:.4f} Le={ve:.4f} L={vtot:.4f}"
+            vp, ve, vs, vsafe = validate(
+                model, schedule, val_loader, lambda_e, lambda_smooth,
+                lambda_safe, safe_res, safe_tau, safe_chunk, device,
+                int(train_cfg.get("val_batches", 20)),
+            )
+            vtot = (vp + lambda_e * ve
+                    + lambda_smooth * vs + lambda_safe * vsafe)
+            line += (f" | val Lp={vp:.4f} Le={ve:.4f} Ls={vs:.4f} "
+                     f"Lsafe={vsafe:.4f} wLs={lambda_smooth * vs:.4f} "
+                     f"wLsafe={lambda_safe * vsafe:.4f} L={vtot:.4f}")
             if vtot < best_val:
                 best_val = vtot
                 save_checkpoint(os.path.join(ckpt_dir, "best.pt"), model,

@@ -41,7 +41,12 @@ diffusion:
                           # by sqrt(alpha_bar)~0.003 and blow up)
 
 loss:
-  lambda_e: 1.0       # L = ||epsP-epsP_hat||^2 + lambda_e * ||epsE-epsE_hat||^2
+  lambda_e: 1.0       # ellipse x0 regression
+  lambda_smooth: 0.1  # SmoothL1 between predicted/GT trajectory second differences
+  lambda_safe: 1.0    # obstacle fraction inside each predicted soft ellipse
+  ellipse_safe_res: 64    # full-map raster resolution used by the safety loss
+  ellipse_mask_tau: 10.0  # soft ellipse boundary sharpness
+  ellipse_safe_chunk: 32  # ellipse anchors rasterized per chunk (memory control)
 
 train:
   epochs: 100
@@ -52,4 +57,4 @@ train:
   save_every: 10
   eval_every: 10      # validation loss every N epochs
   val_batches: 25
-  ckpt_dir: "outputs/ckpt_v1_1"
+  ckpt_dir: "outputs/ckpt_v1_smooth_safe"
