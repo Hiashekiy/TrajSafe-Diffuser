@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Polygon
 
 from src.utils.config import load_config
 from src.utils.seed import set_seed
@@ -33,6 +33,8 @@ from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.sampler_v1 import sample_joint
 from src.models.joint import JointPlanner
 from src.datasets.joint_dataset import JointDataset
+from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.convex_region import halfspaces_to_vertices
 
 MAZE_NAMES = ["umaze", "medium", "large"]
 
@@ -55,8 +57,41 @@ def pick_conditions(ds, maze, n, rng):
     return sel[idx]
 
 
+def build_region_polygons(P, E6, map_tensor, alm_cfg, stride=8):
+    """Build sparse polygon overlays from the final predicted ellipses."""
+    device = map_tensor.device
+    p_t = torch.as_tensor(P, dtype=torch.float32, device=device)
+    e_t = torch.as_tensor(E6, dtype=torch.float32, device=device)
+    with torch.no_grad():
+        A, b, mask, valid = EllipseRegionBuilder(map_tensor, alm_cfg)(p_t, e_t)
+    A, b = A.cpu().numpy(), b.cpu().numpy()
+    mask, valid = mask.cpu().numpy(), valid.cpu().numpy()
+    centers = P + E6[..., :2]
+    overlays = [[] for _ in range(len(P))]
+    for i in range(len(P)):
+        for k in range(0, P.shape[1], max(1, int(stride))):
+            if not valid[i, k]:
+                continue
+            keep = mask[i, k]
+            vertices = halfspaces_to_vertices(
+                A[i, k, keep], b[i, k, keep], centers[i, k])
+            if vertices is not None:
+                overlays[i].append((k, vertices))
+    return overlays
+
+
+def _draw_regions(ax, regions):
+    if not regions:
+        return
+    for _, vertices in regions:
+        ax.add_patch(Polygon(
+            vertices, closed=True, facecolor="tab:cyan", edgecolor="cyan",
+            linewidth=0.8, alpha=0.14, zorder=2,
+        ))
+
+
 def plot_results(maze, occ, cond, P, E5, out_png, ncols=4,
-                 draw_ellipses=True):
+                 draw_ellipses=True, regions=None):
     occ = np.asarray(occ)
     n = len(P)
     nrows = int(np.ceil(n / ncols))
@@ -65,6 +100,7 @@ def plot_results(maze, occ, cond, P, E5, out_png, ncols=4,
     for i in range(n):
         ax = axes[i]
         ax.imshow(occ, origin="lower", extent=(-1, 1, -1, 1), cmap="gray_r")
+        _draw_regions(ax, None if regions is None else regions[i])
         p = P[i]
         ax.plot(p[:, 0], p[:, 1], "-", color="tab:blue", lw=1.3, zorder=5)
         ax.scatter(*cond[i, 0], marker="o", s=30, color="lime", zorder=6)
@@ -94,7 +130,8 @@ def plot_results(maze, occ, cond, P, E5, out_png, ncols=4,
 
 
 def plot_comparison(maze, occ, cond, p_base, e5_base, p_alm, e5_alm,
-                    out_png, pairs_per_row=2, draw_ellipses=True):
+                    out_png, pairs_per_row=2, draw_ellipses=True,
+                    regions_base=None, regions_alm=None):
     """Plot matched baseline/ALM samples side by side.
 
     Each pair uses the same condition and initial Gaussian noise.  Baseline
@@ -108,8 +145,10 @@ def plot_comparison(maze, occ, cond, p_base, e5_base, p_alm, e5_alm,
                              figsize=(3.4 * ncols, 3.4 * nrows))
     axes = np.asarray(axes).reshape(nrows, ncols)
 
-    def draw(ax, p, e5, index, label, color, shift=None, reference=None):
+    def draw(ax, p, e5, index, label, color, shift=None, reference=None,
+             regions=None):
         ax.imshow(occ, origin="lower", extent=(-1, 1, -1, 1), cmap="gray_r")
+        _draw_regions(ax, regions)
         if draw_ellipses:
             for cx, cy, a, b, th in e5:
                 if not np.isfinite(a + b) or a <= 0 or b <= 0:
@@ -141,9 +180,11 @@ def plot_comparison(maze, occ, cond, p_base, e5_base, p_alm, e5_alm,
         pair = i % pairs_per_row
         displacement = float(np.linalg.norm(p_alm[i] - p_base[i], axis=-1).mean())
         draw(axes[row, 2 * pair], p_base[i], e5_base[i], i,
-             "Baseline", "tab:blue")
+             "Baseline", "tab:blue",
+             regions=None if regions_base is None else regions_base[i])
         draw(axes[row, 2 * pair + 1], p_alm[i], e5_alm[i], i,
-             "+ ALM", "tab:green", displacement, reference=p_base[i])
+             "+ ALM", "tab:green", displacement, reference=p_base[i],
+             regions=None if regions_alm is None else regions_alm[i])
 
     for flat_index in range(n * 2, nrows * ncols):
         axes.reshape(-1)[flat_index].axis("off")
@@ -172,6 +213,10 @@ def main():
                     help="draw matched baseline vs ALM samples using the same noise")
     ap.add_argument("--no-ellipses", action="store_true",
                     help="hide predicted ellipses in PNG plots")
+    ap.add_argument("--draw-convex-regions", action="store_true",
+                    help="overlay per-ellipse convex safe-region polygons")
+    ap.add_argument("--convex-stride", type=int, default=8,
+                    help="draw one convex region every N waypoints (default 8)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -222,6 +267,12 @@ def main():
     occ_full = np.load(os.path.join(base, "maps", f"{args.maze}.npy"))
     if args.compare_alm:
         e5_base = e6_to_ellipse5(p_base, e6_base)
+        regions_base = regions_alm = None
+        if args.draw_convex_regions:
+            regions_base = build_region_polygons(
+                p_base, e6_base, map_t, cfg.get("alm", {}), args.convex_stride)
+            regions_alm = build_region_polygons(
+                P, E6, map_t, cfg.get("alm", {}), args.convex_stride)
         np.savez_compressed(
             args.out + ".npz",
             P_baseline=p_base, E6_baseline=e6_base, E5_baseline=e5_base,
@@ -230,13 +281,18 @@ def main():
         )
         plot_comparison(args.maze, occ_full, ds.cond[sel],
                         p_base, e5_base, P, E5, args.out + ".png",
-                        draw_ellipses=not args.no_ellipses)
+                        draw_ellipses=not args.no_ellipses,
+                        regions_base=regions_base, regions_alm=regions_alm)
     else:
         np.savez_compressed(args.out + ".npz", P=P, E6=E6, E5=E5,
                             cond=ds.cond[sel], ids=np.asarray(sel),
                             maze=np.asarray(args.maze))
+        regions = (build_region_polygons(
+            P, E6, map_t, cfg.get("alm", {}), args.convex_stride)
+            if args.draw_convex_regions else None)
         plot_results(args.maze, occ_full, ds.cond[sel], P, E5,
-                     args.out + ".png", draw_ellipses=not args.no_ellipses)
+                     args.out + ".png", draw_ellipses=not args.no_ellipses,
+                     regions=regions)
     print("saved:", os.path.abspath(args.out + ".npz"),
           os.path.abspath(args.out + ".png"))
 

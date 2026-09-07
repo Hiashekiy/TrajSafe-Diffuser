@@ -144,6 +144,21 @@ def main():
         )
         if alm_enabled:
             P, E6, alm_stats = sampled
+            if cfg.get("alm", {}).get("log_per_step", False):
+                for step_stats in alm_stats.get("per_step", []):
+                    print(
+                        f"[{maze}][ALM t={step_stats['t']}] "
+                        f"valid={step_stats['corridor_valid_rate']:.3f} "
+                        f"physical={step_stats['physical_guidance_rate']:.3f} "
+                        f"active={step_stats['raw_max_positive_rate']:.3f} "
+                        f"lambda={step_stats['lambda_mean']:.4f}/"
+                        f"{step_stats['lambda_max']:.4f} "
+                        f"corr={step_stats['mean_correction']:.5f}/"
+                        f"{step_stats['max_correction']:.5f} "
+                        f"smooth={step_stats['smoothness_before']:.5f}->"
+                        f"{step_stats['smoothness_after']:.5f}",
+                        flush=True,
+                    )
         else:
             P, E6 = sampled
             alm_stats = {}
