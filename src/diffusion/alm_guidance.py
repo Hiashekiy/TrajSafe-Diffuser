@@ -55,15 +55,15 @@ def _correction_smoother(horizon, step_size, weight, reference):
 def alm_correct(p0, A, b, face_mask, valid, lam, rho,
                 step_size=0.03, inner_steps=4,
                 max_grad_norm=1.0, max_correction_per_step=0.10,
-                proximity_weight=1.0, correction_smooth_weight=4.0,
+                correction_smooth_weight=4.0,
                 enforce_mask=None, collect_stats=False):
     """Correct ``p0`` while holding one set of segment corridors fixed.
 
-    The primal objective combines the inequality augmented Lagrangian with a
-    proximal term and smoothness of the correction field. The latter avoids
-    isolated waypoint spikes without smoothing or moving a fully feasible raw
-    diffusion trajectory. ``lam`` belongs only to this fixed corridor set; the
-    sampler resets it whenever corridors are rebuilt.
+    The primal objective combines the inequality augmented Lagrangian with
+    smoothness of the correction field. This avoids isolated waypoint spikes
+    without pulling the corrected path back towards the raw diffusion output.
+    ``lam`` belongs only to this fixed corridor set; the sampler resets it
+    whenever corridors are rebuilt.
     """
     if rho <= 0:
         raise ValueError("rho must be positive")
@@ -86,7 +86,7 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
         omega = torch.where(enforced, omega, torch.zeros_like(omega))
 
         correction = p - p0
-        grad = float(proximity_weight) * correction
+        grad = torch.zeros_like(p)
         grad[:, :-1] += omega[..., None] * grad_left
         grad[:, 1:] += omega[..., None] * grad_right
         grad[:, 0] = 0.0
@@ -95,9 +95,9 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
             norm = grad.norm(dim=-1, keepdim=True)
             grad = grad * (float(max_grad_norm) / norm.clamp_min(1e-8)).clamp(max=1.0)
 
-        # Proximal-gradient update: take the ALM/proximity step, then solve the
-        # correction smoothness term exactly. This avoids the unstable explicit
-        # D2^T D2 step that created alternating waypoint spikes.
+        # Take the ALM step, then solve the correction smoothness term exactly.
+        # This avoids the unstable explicit D2^T D2 step that created
+        # alternating waypoint spikes.
         target_correction = correction - float(step_size) * grad
         target_correction[:, 0] = 0.0
         target_correction[:, -1] = 0.0

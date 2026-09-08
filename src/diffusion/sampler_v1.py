@@ -28,6 +28,10 @@ import torch
 
 from src.diffusion.alm_guidance import alm_correct
 from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.ellipse_center_repair import (
+    EllipseCenterRepair,
+    reencode_ellipse_centers,
+)
 
 
 def _pick_times(T, steps):
@@ -68,6 +72,10 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
     alm_enabled = bool(alm_cfg.get("enabled", False))
     corridor_builder = (EllipseRegionBuilder(map_tensor, alm_cfg)
                         if alm_enabled else None)
+    center_repair_enabled = alm_enabled and bool(
+        alm_cfg.get("center_repair", True))
+    center_repairer = (EllipseCenterRepair(corridor_builder)
+                       if center_repair_enabled else None)
     rho = float(alm_cfg.get("rho", alm_cfg.get("rho_init", 5.0)))
     alm_start_t = int(alm_cfg.get("start_t", 7))
     collected_stats = []
@@ -81,8 +89,19 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
         x0_p = endpoints(x0_p)
         if not alm_enabled or t > alm_start_t:
             return x0_p, x0_e
-        raw_p = x0_p.clone()
-        point_A, point_b, point_mask, point_valid = corridor_builder(x0_p, x0_e)
+        center_stats = {}
+        if center_repair_enabled:
+            repair = center_repairer(x0_p, x0_e, start)
+            x0_e = repair.ellipse
+            physical_centers = repair.centers
+            point_A, point_b = repair.A, repair.b
+            point_mask, point_valid = repair.face_mask, repair.valid
+            center_stats = repair.stats
+        else:
+            clean_e = torch.nan_to_num(x0_e, nan=0.0, posinf=0.0, neginf=0.0)
+            physical_centers = x0_p + clean_e[..., :2]
+            point_A, point_b, point_mask, point_valid = corridor_builder(
+                x0_p, clean_e)
         # Region C_i (from ellipse i) constrains the incoming segment
         # [p_{i-1}, p_i]. C_0 is unused because p_0 is the fixed start.
         A, b = point_A[:, 1:], point_b[:, 1:]
@@ -98,19 +117,17 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
             max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
             max_correction_per_step=float(
                 alm_cfg.get("max_correction_per_step", 0.10)),
-            proximity_weight=float(alm_cfg.get("proximity_weight", 1.0)),
             correction_smooth_weight=float(
                 alm_cfg.get("correction_smooth_weight", 4.0)),
             enforce_mask=enforce_mask,
             collect_stats=return_alm_stats,
         )
         if stats is not None:
-            collected_stats.append((t, stats))
+            collected_stats.append((t, {**center_stats, **stats}))
 
         # E stores centre offsets (c = p + delta_c). Preserve the physical
         # ellipse centres after moving P so the joint P/E state stays coherent.
-        x0_e = x0_e.clone()
-        x0_e[..., :2] += raw_p - x0_p
+        x0_e = reencode_ellipse_centers(x0_e, physical_centers, x0_p)
         return endpoints(x0_p), x0_e
 
     with torch.no_grad():
@@ -158,7 +175,8 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
     summary = {}
     for key in collected_stats[0][1]:
         values = torch.stack([item[key] for _, item in collected_stats])
-        reducer = torch.max if key.startswith("max_") else torch.mean
+        reducer = (torch.max if key.startswith("max_") or key.endswith("_max")
+                   else torch.mean)
         summary[key] = float(reducer(values).cpu())
     summary["guided_reverse_steps"] = len(collected_stats)
     summary["rho"] = rho

@@ -38,6 +38,53 @@ def _obstacle_boundary_points(occ: torch.Tensor, dilation: int = 0) -> torch.Ten
     return torch.stack((x, y), dim=-1)
 
 
+def _halfspace_intersection_nonempty(
+    A: torch.Tensor,
+    b: torch.Tensor,
+    mask: torch.Tensor,
+    chunk_size: int = 512,
+    tol: float = 1e-5,
+) -> torch.Tensor:
+    """Check whether each bounded 2-D halfspace intersection is non-empty.
+
+    The local query-box faces make every candidate region bounded, so a
+    non-empty region has at least one vertex formed by a pair of non-parallel
+    active faces. Work in chunks to avoid materialising all pair/face tests for
+    every waypoint at once.
+    """
+    shape = A.shape[:-2]
+    face_count = A.shape[-2]
+    flat_A = A.reshape(-1, face_count, 2)
+    flat_b = b.reshape(-1, face_count)
+    flat_mask = mask.reshape(-1, face_count)
+    pair_i, pair_j = torch.triu_indices(
+        face_count, face_count, offset=1, device=A.device)
+    feasible = torch.zeros(len(flat_A), dtype=torch.bool, device=A.device)
+
+    for begin in range(0, len(flat_A), max(1, int(chunk_size))):
+        end = min(begin + max(1, int(chunk_size)), len(flat_A))
+        local_A = flat_A[begin:end]
+        local_b = flat_b[begin:end]
+        local_mask = flat_mask[begin:end]
+        ai = local_A[:, pair_i]
+        aj = local_A[:, pair_j]
+        bi = local_b[:, pair_i]
+        bj = local_b[:, pair_j]
+        det = ai[..., 0] * aj[..., 1] - ai[..., 1] * aj[..., 0]
+        pair_valid = (local_mask[:, pair_i] & local_mask[:, pair_j] &
+                      torch.isfinite(det) & (det.abs() > 1e-7))
+        safe_det = torch.where(pair_valid, det, torch.ones_like(det))
+        vertices = torch.stack((
+            (bi * aj[..., 1] - ai[..., 1] * bj) / safe_det,
+            (ai[..., 0] * bj - bi * aj[..., 0]) / safe_det,
+        ), dim=-1)
+        violation = torch.einsum("spd,sfd->spf", vertices, local_A) - local_b[:, None]
+        inside = (violation <= tol) | ~local_mask[:, None]
+        feasible[begin:end] = (pair_valid & inside.all(dim=-1)).any(dim=-1)
+
+    return feasible.reshape(shape)
+
+
 class EllipseRegionBuilder:
     """Return one padded ``A x <= b`` safe region for every predicted ellipse.
 
@@ -84,6 +131,10 @@ class EllipseRegionBuilder:
         )[:, 0, :, 0]
         outside = (p.abs() > 1.0).any(dim=-1)
         return (occupancy > self.guidance_threshold) | outside
+
+    def points_are_free(self, p: torch.Tensor) -> torch.Tensor:
+        """Return whether scene points pass the configured clearance gate."""
+        return ~self.waypoint_needs_guidance(p)
 
     def segment_needs_guidance(self, p: torch.Tensor) -> torch.Tensor:
         """Collision/clearance gate for incoming segments ``[p[i-1],p[i]]``."""
@@ -137,8 +188,19 @@ class EllipseRegionBuilder:
             raise ValueError("p0 must have shape [B,H,2]")
         if e0.shape[:2] != p0.shape[:2] or e0.shape[-1] < 6:
             raise ValueError("e0 must have shape [B,H,6]")
-        batch, horizon, _ = p0.shape
-        dtype, device = p0.dtype, p0.device
+        clean_e = torch.nan_to_num(e0, nan=0.0, posinf=0.0, neginf=0.0)
+        return self.build_from_centers(p0 + clean_e[..., :2], clean_e)
+
+    def build_from_centers(self, center_all: torch.Tensor, e0: torch.Tensor):
+        """Build regions from explicit physical centres and ellipse shapes."""
+        if center_all.ndim != 3 or center_all.shape[-1] != 2:
+            raise ValueError("center_all must have shape [B,H,2]")
+        if e0.shape[:2] != center_all.shape[:2] or e0.shape[-1] < 6:
+            raise ValueError("e0 must have shape [B,H,6]")
+        if center_all.shape[0] != self.maps.shape[0]:
+            raise ValueError("center batch must match map batch")
+        batch, horizon, _ = center_all.shape
+        dtype, device = center_all.dtype, center_all.device
         A = torch.zeros(batch, horizon, self.max_faces, 2,
                         dtype=dtype, device=device)
         b = torch.zeros(batch, horizon, self.max_faces,
@@ -148,7 +210,6 @@ class EllipseRegionBuilder:
         region_complete = torch.ones(batch, horizon, dtype=torch.bool, device=device)
 
         clean_e = torch.nan_to_num(e0, nan=0.0, posinf=0.0, neginf=0.0)
-        center_all = p0 + clean_e[..., :2]
         axes = clean_e[..., 2:4].clamp(-6.0, 0.7).exp()
         axes = axes.clamp(self.axis_min, self.axis_max)
         theta = 0.5 * torch.atan2(clean_e[..., 5], clean_e[..., 4])
@@ -166,8 +227,8 @@ class EllipseRegionBuilder:
         xmax = (center_all[..., 0] + self.window_half).clamp_max(1.0 - self.margin)
         ymin = (center_all[..., 1] - self.window_half).clamp_min(-1.0 + self.margin)
         ymax = (center_all[..., 1] + self.window_half).clamp_max(1.0 - self.margin)
-        box_A = p0.new_tensor(((1.0, 0.0), (-1.0, 0.0),
-                              (0.0, 1.0), (0.0, -1.0)))
+        box_A = center_all.new_tensor(((1.0, 0.0), (-1.0, 0.0),
+                                      (0.0, 1.0), (0.0, -1.0)))
         A[:, :, :4] = box_A
         b[:, :, 0] = xmax
         b[:, :, 1] = -xmin
@@ -233,13 +294,12 @@ class EllipseRegionBuilder:
 
         finite_faces = torch.isfinite(A).all(dim=-1) & torch.isfinite(b)
         face_mask &= finite_faces
-        center_violation = (A * center_all[:, :, None]).sum(dim=-1) - b
-        center_inside = (center_violation.masked_fill(~face_mask, -torch.inf)
-                         .max(dim=-1).values <= 1e-5)
+        region_nonempty = _halfspace_intersection_nonempty(
+            A, b, face_mask, chunk_size=self.chunk_size)
         valid = (torch.isfinite(center_all).all(dim=-1) &
                  torch.isfinite(quadratic_all).all(dim=(-1, -2)) &
-                 region_complete & center_inside &
-                 (face_mask.sum(dim=-1) >= 4))
+                 region_complete & region_nonempty &
+                 (face_mask.sum(dim=-1) >= 3))
         return A, b, face_mask, valid
 
 

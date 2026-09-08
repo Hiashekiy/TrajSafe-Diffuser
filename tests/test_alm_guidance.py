@@ -1,7 +1,10 @@
 import torch
 
 from src.diffusion.alm_guidance import alm_correct
-from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.convex_corridor import (
+    EllipseRegionBuilder,
+    _halfspace_intersection_nonempty,
+)
 
 
 def test_alm_reduces_box_violation_and_preserves_endpoints():
@@ -32,7 +35,7 @@ def test_feasible_trajectory_is_an_exact_fixed_point():
 
     corrected, lam, stats = alm_correct(
         p, A, b, mask, valid, torch.zeros(1, 3), rho=5.0,
-        step_size=0.03, inner_steps=4, proximity_weight=1.0,
+        step_size=0.03, inner_steps=4,
         correction_smooth_weight=4.0, collect_stats=True,
     )
 
@@ -107,3 +110,14 @@ def test_region_is_keyed_by_its_own_physical_ellipse():
     assert torch.equal(m1[:, 1], m2[:, 1])
     assert torch.allclose(A1[:, 1], A2[:, 1])
     assert torch.allclose(b1[:, 1], b2[:, 1])
+
+
+def test_region_validity_uses_nonempty_intersection_not_seed_containment():
+    # This triangle is non-empty, although the arbitrary seed (2, 2) is not
+    # inside it. Region validity must describe the halfspace intersection,
+    # rather than impose an extra seed-containment constraint.
+    A = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]]])
+    b = torch.tensor([[1.0, 1.0, 0.0]])
+    mask = torch.ones(1, 3, dtype=torch.bool)
+
+    assert _halfspace_intersection_nonempty(A, b, mask).item()
