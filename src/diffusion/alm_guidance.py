@@ -33,7 +33,8 @@ def _constraint_state(p, A, b, face_mask, valid):
 def alm_correct(p0, A, b, face_mask, valid, lam, rho,
                 step_size=0.03, inner_steps=4,
                 max_grad_norm=1.0, max_correction_per_step=0.10,
-                enforce_mask=None, collect_stats=False):
+                collision_fn=None, collect_stats=False,
+                trace_callback=None):
     """Correct ``p0`` while holding one set of segment corridors fixed.
 
     Only the inequality augmented-Lagrangian force is applied. ``lam`` belongs
@@ -45,13 +46,24 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
     p = p0.clone()
     start, goal = p0[:, :1].clone(), p0[:, -1:].clone()
     lam = lam.clone()
-    collision_mask = (torch.ones_like(valid) if enforce_mask is None
-                      else enforce_mask.bool())
-    enforced = valid & collision_mask
+
+    def current_collision(trajectory):
+        collision = (torch.ones_like(valid) if collision_fn is None
+                     else collision_fn(trajectory).bool())
+        if collision.shape != valid.shape:
+            raise ValueError("collision_fn must return shape [B,H-1]")
+        return collision
+
+    initial_collision = current_collision(p)
+    if trace_callback is not None:
+        trace_callback(0, p)
 
     g_before, _, _ = _constraint_state(p, A, b, face_mask, valid)
 
     for _ in range(max(0, int(inner_steps))):
+        collision_mask = current_collision(p)
+        enforced = valid & collision_mask
+        lam = torch.where(enforced, lam, torch.zeros_like(lam))
         g, grad_left, grad_right = _constraint_state(p, A, b, face_mask, valid)
 
         # Inequality ALM after eliminating the non-negative slack. A feasible
@@ -76,28 +88,42 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
         p = p + delta
         p[:, :1] = start
         p[:, -1:] = goal
+        if trace_callback is not None:
+            trace_callback(_ + 1, p)
 
+        collision_after = current_collision(p)
+        enforced_after = valid & collision_after
         g_new, _, _ = _constraint_state(p, A, b, face_mask, valid)
         lam = torch.relu(lam + float(rho) * g_new)
-        lam = torch.where(enforced, lam, torch.zeros_like(lam))
+        lam = torch.where(enforced_after, lam, torch.zeros_like(lam))
 
     stats = None
     if collect_stats:
+        final_collision = current_collision(p)
         g_after, _, _ = _constraint_state(p, A, b, face_mask, valid)
         correction = (p - p0).norm(dim=-1)
         valid_float = valid.float()
         valid_count = valid_float.sum().clamp_min(1.0)
         positive_before = (g_before > 0) & valid
         positive_after = (g_after > 0) & valid
-        collision_count = collision_mask.float().sum().clamp_min(1.0)
+        collision_count = initial_collision.float().sum().clamp_min(1.0)
+        initially_enforced = valid & initial_collision
         stats = {
             "corridor_valid_rate": valid_float.mean(),
-            "physical_guidance_rate": enforced.float().mean(),
-            "physical_collision_rate": collision_mask.float().mean(),
+            "physical_guidance_rate": initially_enforced.float().mean(),
+            "physical_collision_rate": initial_collision.float().mean(),
+            "physical_collision_rate_before": initial_collision.float().mean(),
+            "physical_collision_rate_after": final_collision.float().mean(),
+            "new_physical_collision_rate": (
+                final_collision & ~initial_collision).float().mean(),
+            "resolved_physical_collision_rate": (
+                initial_collision & ~final_collision).float().mean(),
             "collision_but_invalid_rate": (
-                collision_mask & ~valid).float().mean(),
+                initial_collision & ~valid).float().mean(),
             "collision_covered_rate": (
-                (collision_mask & valid).float().sum() / collision_count),
+                initially_enforced.float().sum() / collision_count),
+            "collision_inside_region_rate": (
+                final_collision & valid & (g_after <= 0)).float().mean(),
             "raw_max_positive_rate": positive_before.sum() / valid_count,
             "segment_endpoint_pair_inside_rate": (
                 ((g_before <= 0) & valid).sum() / valid_count),

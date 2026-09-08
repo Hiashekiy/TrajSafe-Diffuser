@@ -16,6 +16,7 @@ from src.diffusion.schedule import NoiseSchedule
 from src.models.joint import JointPlanner
 from src.utils.checkpoint import load_checkpoint
 from src.utils.config import load_config
+from sample_selection import MAZES, SAMPLE_IDS
 
 
 MODEL_SOURCES = {
@@ -23,10 +24,6 @@ MODEL_SOURCES = {
     "continue100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue100/best.pt",
     "continue200": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue200/best.pt",
 }
-SAMPLE_IDS = [9, 18, 368, 376, 668, 676]
-MAZES = ("umaze", "medium", "large")
-
-
 def rounded(array: np.ndarray, decimals: int = 5):
     return np.round(array.astype(np.float64), decimals).tolist()
 

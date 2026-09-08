@@ -30,6 +30,27 @@ class _BoxBuilder:
         return A, b, mask, valid
 
 
+class _CenteredBoxBuilder(_BoxBuilder):
+    """Every raw center has a valid local box, even outside the prior box."""
+
+    def points_are_free(self, points):
+        return (points.abs() <= 1.0).all(dim=-1)
+
+    def build_from_centers(self, centers, ellipse):
+        batch, horizon = centers.shape[:2]
+        face = centers.new_tensor(((1.0, 0.0), (-1.0, 0.0),
+                                   (0.0, 1.0), (0.0, -1.0)))
+        A = face.view(1, 1, 4, 2).expand(batch, horizon, -1, -1).clone()
+        half = 0.25
+        b = torch.stack((centers[..., 0] + half,
+                         -centers[..., 0] + half,
+                         centers[..., 1] + half,
+                         -centers[..., 1] + half), dim=-1)
+        mask = torch.ones(batch, horizon, 4, dtype=torch.bool)
+        valid = torch.ones(batch, horizon, dtype=torch.bool)
+        return A, b, mask, valid
+
+
 def _inputs(center_x, invalid_index=None):
     center_x = torch.tensor(center_x, dtype=torch.float32)
     trajectory = torch.zeros(1, len(center_x), 2)
@@ -72,6 +93,26 @@ def test_wall_center_is_projected_and_multiple_bad_centers_continue():
     violation = ((result.A * result.centers[:, :, None]).sum(dim=-1) - result.b)
     assert (violation.masked_fill(~result.face_mask, -torch.inf)[result.valid]
             <= 1e-6).all()
+
+
+def test_free_valid_raw_center_outside_propagation_region_is_still_projected():
+    trajectory, ellipse = _inputs([0.0, 0.8])
+    builder = _CenteredBoxBuilder()
+    raw_A, raw_b, raw_mask, raw_valid = builder.build_from_centers(
+        ellipse[..., :2], ellipse)
+    assert builder.points_are_free(ellipse[..., :2]).all()
+    assert raw_valid.all()
+
+    result = EllipseCenterRepair(builder)(
+        trajectory, ellipse, torch.tensor([[0.0, 0.0]]))
+
+    assert not torch.equal(result.centers[0, 1], ellipse[0, 1, :2])
+    assert torch.allclose(result.centers[0, 1], torch.tensor([0.25, 0.0]))
+    assert result.valid[0, 1]
+    assert result.stats["adjacent_region_overlap_rate"] == 1
+    # The raw region really was valid; it was not used to bypass propagation.
+    assert ((raw_A[:, 1] * ellipse[:, 1, None, :2]).sum(dim=-1)
+            <= raw_b[:, 1] + 1e-6).all()
 
 
 def test_failed_rebuild_stays_invalid_but_propagation_region_is_reused():

@@ -106,7 +106,6 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
         # [p_{i-1}, p_i]. C_0 is unused because p_0 is the fixed start.
         A, b = point_A[:, 1:], point_b[:, 1:]
         face_mask, valid = point_mask[:, 1:], point_valid[:, 1:]
-        enforce_mask = corridor_builder.segment_needs_guidance(x0_p)
         # Corridors change at every reverse level, so their dual variables must
         # not inherit pressure from geometrically different old constraints.
         step_lam = torch.zeros(B, H - 1, device=device, dtype=x0_p.dtype)
@@ -117,15 +116,10 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
             max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
             max_correction_per_step=float(
                 alm_cfg.get("max_correction_per_step", 0.10)),
-            enforce_mask=enforce_mask,
+            collision_fn=corridor_builder.segment_needs_guidance,
             collect_stats=return_alm_stats,
         )
         if stats is not None:
-            post_collision_mask = corridor_builder.segment_needs_guidance(x0_p)
-            stats["physical_collision_rate_after"] = (
-                post_collision_mask.float().mean())
-            stats["new_physical_collision_rate"] = (
-                post_collision_mask & ~enforce_mask).float().mean()
             collected_stats.append((t, {**center_stats, **stats}))
 
         # E stores centre offsets (c = p + delta_c). Preserve the physical

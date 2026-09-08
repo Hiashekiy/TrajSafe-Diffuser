@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ALMPanel, ViewTabs, type LensView } from './alm-panel';
 import rawCatalog from '@/lib/dashboard-catalog.json';
 
 type Vec = [number, number];
@@ -35,6 +36,7 @@ const points = (path: Vec[]) => path.map((point) => xy(point).join(',')).join(' 
 const pathLength = (path: Vec[]) => path.slice(1).reduce((sum, p, i) => sum + Math.hypot(p[0] - path[i][0], p[1] - path[i][1]), 0);
 
 export default function Home() {
+  const [viewTab, setViewTab] = useState<LensView>('diffusion');
   const [sampleKey, setSampleKey] = useState(data.samples[0].key);
   const [modelId, setModelId] = useState(models[0].id);
   const [seed, setSeed] = useState(43);
@@ -95,8 +97,14 @@ export default function Home() {
   const rmse = current && finalState ? Math.sqrt(current.P.reduce((sum,p,i)=>sum+(p[0]-finalState.P[i][0])**2+(p[1]-finalState.P[i][1])**2,0)/256) : null;
   const ellipseItems = useMemo(() => !current ? [] : current.E6.map((e,i)=>{ const center:Vec=[current.P[i][0]+e[0],current.P[i][1]+e[1]]; return {center:xy(center),a:Math.min(.42,Math.exp(Math.max(-5,Math.min(-.35,e[2]))))*128,b:Math.min(.42,Math.exp(Math.max(-5,Math.min(-.35,e[3]))))*128,angle:-.5*Math.atan2(e[5],e[4])*180/Math.PI}; }), [current]);
 
+  if (viewTab === 'alm') return <ALMPanel
+    onViewChange={setViewTab} history={history} sampleKey={sampleKey}
+    sampleName={mazeNames[sample.maze]} datasetId={sample.datasetId}
+    modelName={model.name} map={map} condition={condition}
+    obstacles={obstacles} backendReady={backendReady}/>;
+
   return <main className="min-h-screen bg-background text-foreground">
-    <header className="topbar"><div className="brand-mark"><Sparkles size={18}/></div><div><h1>Diffusion Lens</h1><p>Joint P / E reverse process viewer</p></div><div className={`status-pill ${backendReady?'online':'offline'}`}><span/> {backendReady?'GPU SERVICE READY':'SERVICE OFFLINE'}</div></header>
+    <header className="topbar"><div className="brand-mark"><Sparkles size={18}/></div><div><h1>Diffusion Lens</h1><p>Joint P / E reverse process viewer</p></div><ViewTabs value="diffusion" onChange={setViewTab}/><div className={`status-pill ${backendReady?'online':'offline'}`}><span/> {backendReady?'GPU SERVICE READY':'SERVICE OFFLINE'}</div></header>
     <div className="workspace">
       <aside className="left-rail">
         <section><div className="section-label"><Database size={14}/> 数据源</div><div className="source-card"><strong>processed_scene_v1</strong><span>test · 256×256 · H=128</span></div></section>

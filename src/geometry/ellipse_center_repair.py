@@ -115,22 +115,21 @@ class EllipseCenterRepair:
             first_valid[:, None], first_mask[:, 0], fallback_mask)
         propagation_valid = first_valid | use_fallback
 
-        projected_flags = torch.zeros_like(raw_valid)
+        actually_moved = torch.zeros_like(raw_valid)
         projection_distance = trajectory.new_zeros((batch, horizon))
         propagation_reuse = torch.zeros_like(raw_valid)
+        overlap_eligible = torch.zeros_like(raw_valid)
+        common_seed_valid = torch.zeros_like(raw_valid)
 
         for k in range(1, horizon):
-            raw_ok = raw_free[:, k] & raw_valid[:, k]
-            need_repair = ~raw_ok
             projected, projection_ok = project_point_to_polytope_2d(
                 raw_centers[:, k], propagation_A, propagation_b,
                 propagation_mask, propagation_valid,
                 feasibility_tol=self.feasibility_tol,
             )
-            repair_attempt_ok = need_repair & projection_ok
             candidate_centers = torch.where(
-                repair_attempt_ok[:, None], projected, raw_centers[:, k])
-            if bool(repair_attempt_ok.any()):
+                projection_ok[:, None], projected, raw_centers[:, k])
+            if bool(projection_ok.any()):
                 rebuilt_A, rebuilt_b, rebuilt_mask, rebuilt_valid = (
                     self.builder.build_from_centers(
                         candidate_centers[:, None], clean_e[:, k:k + 1]))
@@ -139,25 +138,40 @@ class EllipseCenterRepair:
                 rebuilt_b = raw_b[:, k:k + 1]
                 rebuilt_mask = raw_mask[:, k:k + 1]
                 rebuilt_valid = torch.zeros_like(raw_valid[:, k:k + 1])
-            repaired_ok = (repair_attempt_ok & rebuilt_valid[:, 0] &
-                           self.builder.points_are_free(
-                               candidate_centers[:, None])[:, 0])
-            current_valid = raw_ok | repaired_ok
+            center_free = self.builder.points_are_free(
+                candidate_centers[:, None])[:, 0]
+            current_valid = projection_ok & rebuilt_valid[:, 0] & center_free
             centers[:, k] = candidate_centers
-            projected_flags[:, k] = repair_attempt_ok
+            distance = (projected - raw_centers[:, k]).norm(dim=-1)
             projection_distance[:, k] = torch.where(
-                repair_attempt_ok,
-                (projected - raw_centers[:, k]).norm(dim=-1),
+                projection_ok, distance,
                 projection_distance[:, k],
             )
+            actually_moved[:, k] = projection_ok & (distance > 1e-6)
 
-            chosen_A = torch.where(
-                raw_ok[:, None, None], raw_A[:, k], rebuilt_A[:, 0])
-            chosen_b = torch.where(raw_ok[:, None], raw_b[:, k], rebuilt_b[:, 0])
-            chosen_mask = torch.where(
-                raw_ok[:, None], raw_mask[:, k], rebuilt_mask[:, 0])
-            A[:, k] = torch.where(current_valid[:, None, None], chosen_A, A[:, k])
-            b[:, k] = torch.where(current_valid[:, None], chosen_b, b[:, k])
+            previous_violation = (
+                torch.einsum("bfd,bd->bf", propagation_A, candidate_centers) -
+                propagation_b)
+            inside_previous = (
+                previous_violation.masked_fill(~propagation_mask, -torch.inf)
+                .max(dim=-1).values <= self.feasibility_tol)
+            current_violation = (
+                torch.einsum("bfd,bd->bf", rebuilt_A[:, 0], candidate_centers) -
+                rebuilt_b[:, 0])
+            inside_current = (
+                current_violation.masked_fill(~rebuilt_mask[:, 0], -torch.inf)
+                .max(dim=-1).values <= self.feasibility_tol)
+            overlap_eligible[:, k] = current_valid
+            common_seed_valid[:, k] = (
+                current_valid & inside_previous & inside_current)
+
+            chosen_A = rebuilt_A[:, 0]
+            chosen_b = rebuilt_b[:, 0]
+            chosen_mask = rebuilt_mask[:, 0]
+            A[:, k] = torch.where(
+                current_valid[:, None, None], chosen_A, A[:, k])
+            b[:, k] = torch.where(
+                current_valid[:, None], chosen_b, b[:, k])
             face_mask[:, k] = torch.where(
                 current_valid[:, None], chosen_mask, face_mask[:, k])
             valid[:, k] = current_valid
@@ -173,14 +187,16 @@ class EllipseCenterRepair:
 
         repaired_e = reencode_ellipse_centers(clean_e, centers, trajectory)
         post_free = self.builder.points_are_free(centers)
-        projected_count = projected_flags.sum()
-        safe_count = projected_count.clamp_min(1)
+        moved_count = actually_moved.sum().clamp_min(1)
+        overlap_count = overlap_eligible[:, 1:].sum().clamp_min(1)
         stats = {
             "center_raw_unsafe_rate": (~raw_free).float().mean(),
-            "center_repair_rate": projected_flags.float().mean(),
-            "center_projection_mean": projection_distance.sum() / safe_count,
+            "center_repair_rate": actually_moved.float().mean(),
+            "center_projection_mean": projection_distance.sum() / moved_count,
             "center_projection_max": projection_distance.max(),
             "center_post_unsafe_rate": (~post_free).float().mean(),
+            "adjacent_region_overlap_rate": (
+                common_seed_valid[:, 1:].sum() / overlap_count),
             "region_build_failure_rate": (~valid).float().mean(),
             "propagation_reuse_rate": (
                 propagation_reuse[:, 1:].float().mean()

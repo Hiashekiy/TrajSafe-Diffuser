@@ -18,6 +18,9 @@ ROOT = os.path.abspath(os.path.join(SITE_ROOT, ".."))
 sys.path.insert(0, ROOT)
 
 from src.diffusion.schedule import NoiseSchedule
+from src.diffusion.alm_guidance import alm_correct
+from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.ellipse_center_repair import EllipseCenterRepair
 from src.models.joint import JointPlanner
 from src.utils.checkpoint import load_checkpoint
 from src.utils.config import load_config
@@ -33,6 +36,7 @@ CACHE_DIR = os.path.join(SITE_ROOT, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 cfg = load_config(os.path.join(ROOT, "configs", "config_v1_continue.yaml"))
+alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml"))["alm"]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 test_dir = os.path.join(ROOT, "data", "processed_scene_v1", "test")
 conditions = np.load(os.path.join(test_dir, "conditions.npy"))
@@ -58,6 +62,100 @@ def get_model(model_id: str):
 
 def rounded(tensor: torch.Tensor):
     return np.round(tensor.detach().cpu().numpy().astype(np.float64), 5).tolist()
+
+
+def polygon_vertices(A, b, mask, tol=1e-5):
+    """Return ordered vertices of a bounded 2-D halfspace intersection."""
+    A, b = np.asarray(A)[mask], np.asarray(b)[mask]
+    candidates = []
+    for i in range(len(A)):
+        for j in range(i + 1, len(A)):
+            matrix = np.stack((A[i], A[j]))
+            det = np.linalg.det(matrix)
+            if abs(det) <= 1e-8:
+                continue
+            point = np.linalg.solve(matrix, np.asarray((b[i], b[j])))
+            if np.all(A @ point <= b + tol):
+                candidates.append(point)
+    if len(candidates) < 3:
+        return []
+    vertices = np.unique(np.round(np.asarray(candidates), 7), axis=0)
+    center = vertices.mean(axis=0)
+    angle = np.arctan2(vertices[:, 1] - center[1], vertices[:, 0] - center[0])
+    return np.round(vertices[np.argsort(angle)], 5).tolist()
+
+
+@torch.no_grad()
+def generate_alm_trace(request):
+    sample_key = request.get("sampleKey")
+    if sample_key not in sample_lookup:
+        raise ValueError("未知样本")
+    raw_p = np.asarray(request.get("rawP"), dtype=np.float32)
+    raw_e = np.asarray(request.get("rawE6"), dtype=np.float32)
+    if raw_p.shape != (128, 2) or raw_e.shape != (128, 6):
+        raise ValueError("ALM trace 需要 [128,2] 的 P 和 [128,6] 的 E6")
+    if not np.isfinite(raw_p).all() or not np.isfinite(raw_e).all():
+        raise ValueError("ALM trace 输入包含非有限值")
+
+    sample = sample_lookup[sample_key]
+    dataset_id = int(sample["datasetId"])
+    condition = np.asarray(request.get("condition") or conditions[dataset_id], dtype=np.float32)
+    maze = MAZES[int(maze_ids[dataset_id])]
+    occupancy = maps[maze].copy()
+    for obstacle in request.get("obstacles") or []:
+        ox, oy, radius = map(float, obstacle)
+        cx, cy, pr = (ox + 1) * 127.5, (oy + 1) * 127.5, radius * 127.5
+        yy, xx = np.ogrid[:256, :256]
+        occupancy[(xx - cx) ** 2 + (yy - cy) ** 2 <= pr ** 2] = 1.0
+
+    p = torch.as_tensor(raw_p[None], dtype=torch.float32, device=device)
+    e = torch.as_tensor(raw_e[None], dtype=torch.float32, device=device)
+    cond = torch.as_tensor(condition[None], dtype=torch.float32, device=device)
+    p[:, 0], p[:, -1] = cond[:, 0], cond[:, 1]
+    map_tensor = torch.as_tensor(
+        occupancy, dtype=torch.float32, device=device)[None, None]
+    builder = EllipseRegionBuilder(map_tensor, alm_cfg)
+    repair = EllipseCenterRepair(builder)(p, e, cond[:, 0])
+
+    trace = []
+    A, b = repair.A[:, 1:], repair.b[:, 1:]
+    face_mask, valid = repair.face_mask[:, 1:], repair.valid[:, 1:]
+    alm_p, _, stats = alm_correct(
+        p, A, b, face_mask, valid,
+        torch.zeros(1, p.shape[1] - 1, dtype=p.dtype, device=device),
+        float(alm_cfg.get("rho", 5.0)),
+        step_size=float(alm_cfg.get("step_size", 0.03)),
+        inner_steps=int(alm_cfg.get("inner_steps", 4)),
+        max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
+        max_correction_per_step=float(alm_cfg.get("max_correction_per_step", 0.10)),
+        collision_fn=builder.segment_needs_guidance,
+        collect_stats=True,
+        trace_callback=lambda inner, value: trace.append({
+            "inner": inner, "P": rounded(value[0])}),
+    )
+
+    cpu_A = repair.A[0].cpu().numpy()
+    cpu_b = repair.b[0].cpu().numpy()
+    cpu_mask = repair.face_mask[0].cpu().numpy()
+    cpu_valid = repair.valid[0].cpu().numpy()
+    regions = [
+        polygon_vertices(cpu_A[k], cpu_b[k], cpu_mask[k]) if cpu_valid[k] else []
+        for k in range(len(cpu_valid))
+    ]
+    scalar_stats = {key: float(value.cpu()) for key, value in {
+        **repair.stats, **stats}.items()}
+    return {
+        "sampleKey": sample_key,
+        "rawTrajectory": rounded(p[0]),
+        "finalTrajectory": rounded(alm_p[0]),
+        "rawCenters": rounded(p[0] + e[0, :, :2]),
+        "repairedCenters": rounded(repair.centers[0]),
+        "ellipseShape": rounded(e[0, :, 2:]),
+        "regionValid": cpu_valid.tolist(),
+        "regions": regions,
+        "trajectoryFrames": trace,
+        "stats": scalar_stats,
+    }
 
 
 @torch.no_grad()
@@ -143,10 +241,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/generate": return self.send_json(404, {"error": "not found"})
+        route = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if route not in ("/generate", "/alm-trace"):
+            return self.send_json(404, {"error": "not found"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
+            if route == "/alm-trace":
+                with inference_lock:
+                    result = generate_alm_trace(request)
+                return self.send_json(200, result)
             sample_key, model_id, seed = request.get("sampleKey"), request.get("modelId"), int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
