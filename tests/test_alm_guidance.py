@@ -4,6 +4,7 @@ from src.diffusion.alm_guidance import alm_correct
 from src.geometry.convex_corridor import (
     EllipseRegionBuilder,
     _halfspace_intersection_nonempty,
+    _points_inside_halfspaces,
 )
 
 
@@ -35,8 +36,7 @@ def test_feasible_trajectory_is_an_exact_fixed_point():
 
     corrected, lam, stats = alm_correct(
         p, A, b, mask, valid, torch.zeros(1, 3), rho=5.0,
-        step_size=0.03, inner_steps=4,
-        correction_smooth_weight=4.0, collect_stats=True,
+        step_size=0.03, inner_steps=4, collect_stats=True,
     )
 
     assert torch.equal(corrected, p)
@@ -112,12 +112,32 @@ def test_region_is_keyed_by_its_own_physical_ellipse():
     assert torch.allclose(b1[:, 1], b2[:, 1])
 
 
-def test_region_validity_uses_nonempty_intersection_not_seed_containment():
-    # This triangle is non-empty, although the arbitrary seed (2, 2) is not
-    # inside it. Region validity must describe the halfspace intersection,
-    # rather than impose an extra seed-containment constraint.
+def test_region_validity_requires_seed_containment():
+    # The triangle is non-empty, but a region built from a seed outside it is
+    # invalid for recursive centre propagation.
     A = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]]])
     b = torch.tensor([[1.0, 1.0, 0.0]])
     mask = torch.ones(1, 3, dtype=torch.bool)
 
     assert _halfspace_intersection_nonempty(A, b, mask).item()
+    assert _points_inside_halfspaces(
+        torch.tensor([[0.5, 0.5]]), A, b, mask).item()
+    assert not _points_inside_halfspaces(
+        torch.tensor([[2.0, 2.0]]), A, b, mask).item()
+
+
+def test_collision_coverage_stats_separate_physics_from_region_validity():
+    p = torch.zeros(1, 4, 2)
+    A = torch.tensor([[[[1.0, 0.0]]] * 3])
+    b = torch.ones(1, 3, 1)
+    mask = torch.ones(1, 3, 1, dtype=torch.bool)
+    valid = torch.tensor([[True, False, True]])
+    collision = torch.tensor([[True, True, False]])
+
+    _, _, stats = alm_correct(
+        p, A, b, mask, valid, torch.zeros(1, 3), rho=5.0,
+        enforce_mask=collision, collect_stats=True)
+
+    assert torch.isclose(stats["physical_collision_rate"], torch.tensor(2 / 3))
+    assert torch.isclose(stats["collision_but_invalid_rate"], torch.tensor(1 / 3))
+    assert torch.isclose(stats["collision_covered_rate"], torch.tensor(0.5))

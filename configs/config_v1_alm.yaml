@@ -15,10 +15,8 @@ alm:
   # positive tau*log(N) bias of an unnormalised smooth maximum.
 
   # Each reverse step rebuilds corridors and starts fresh dual variables.
-  # Smooth the correction field without pulling it back towards raw P0.
   step_size: 0.03
   rho: 5.0
-  correction_smooth_weight: 20.0
   max_grad_norm: 1.0
   max_correction_per_step: 0.10
 

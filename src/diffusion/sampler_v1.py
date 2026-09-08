@@ -117,12 +117,15 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
             max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
             max_correction_per_step=float(
                 alm_cfg.get("max_correction_per_step", 0.10)),
-            correction_smooth_weight=float(
-                alm_cfg.get("correction_smooth_weight", 4.0)),
             enforce_mask=enforce_mask,
             collect_stats=return_alm_stats,
         )
         if stats is not None:
+            post_collision_mask = corridor_builder.segment_needs_guidance(x0_p)
+            stats["physical_collision_rate_after"] = (
+                post_collision_mask.float().mean())
+            stats["new_physical_collision_rate"] = (
+                post_collision_mask & ~enforce_mask).float().mean()
             collected_stats.append((t, {**center_stats, **stats}))
 
         # E stores centre offsets (c = p + delta_c). Preserve the physical

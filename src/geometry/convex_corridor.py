@@ -85,6 +85,18 @@ def _halfspace_intersection_nonempty(
     return feasible.reshape(shape)
 
 
+def _points_inside_halfspaces(
+    points: torch.Tensor,
+    A: torch.Tensor,
+    b: torch.Tensor,
+    mask: torch.Tensor,
+    tol: float = 1e-5,
+) -> torch.Tensor:
+    """Check that each seed point belongs to its corresponding region."""
+    violation = torch.einsum("...fd,...d->...f", A, points) - b
+    return (violation.masked_fill(~mask, -torch.inf).max(dim=-1).values <= tol)
+
+
 class EllipseRegionBuilder:
     """Return one padded ``A x <= b`` safe region for every predicted ellipse.
 
@@ -296,9 +308,11 @@ class EllipseRegionBuilder:
         face_mask &= finite_faces
         region_nonempty = _halfspace_intersection_nonempty(
             A, b, face_mask, chunk_size=self.chunk_size)
+        center_inside = _points_inside_halfspaces(
+            center_all, A, b, face_mask)
         valid = (torch.isfinite(center_all).all(dim=-1) &
                  torch.isfinite(quadratic_all).all(dim=(-1, -2)) &
-                 region_complete & region_nonempty &
+                 region_complete & region_nonempty & center_inside &
                  (face_mask.sum(dim=-1) >= 3))
         return A, b, face_mask, valid
 
