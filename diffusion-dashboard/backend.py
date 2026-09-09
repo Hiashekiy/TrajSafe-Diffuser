@@ -36,6 +36,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 cfg = load_config(os.path.join(ROOT, "configs", "config_v1_continue.yaml"))
 alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml")).get("alm") or {}
+center_absolute = cfg.get("data", {}).get("ellipse_center_mode", "offset") == "absolute"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 test_dir = os.path.join(ROOT, "data", "processed_scene_v1", "test")
 conditions = np.load(os.path.join(test_dir, "conditions.npy"))
@@ -121,7 +122,9 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
         alm_enabled = bool(alm_enabled)
     alm_start_t = int(alm_cfg.get("start_t", 7))
     alm_rho = float(alm_cfg.get("rho", 5.0))
-    corridor_builder = EllipseRegionBuilder(map_tensor, alm_cfg) if alm_enabled else None
+    corridor_builder = EllipseRegionBuilder(
+        map_tensor, {**alm_cfg, "center_absolute": center_absolute},
+    ) if alm_enabled else None
     horizon = int(model.horizon)
     p_history, e_history, x0_p_history, x0_e_history, labels = [], [], [], [], []
     alm_frames: list[dict | None] = []
@@ -154,10 +157,13 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
                 enforce_mask=enforce_mask,
                 collect_stats=True,
             )
-            # E stores centre offsets (c = p + delta_c): preserve the physical
-            # ellipse centres after moving P so P/E stay coherent (as sampler).
-            x0_e = x0_e.clone()
-            x0_e[..., :2] += raw_p - corrected
+            # E stores centres either as offsets (c = p + delta_c) or as
+            # absolute scene coordinates. In offset mode preserve the physical
+            # centres after moving P so P/E stay coherent (as sampler); in the
+            # absolute mode the E centres are independent of the corrected P.
+            if not center_absolute:
+                x0_e = x0_e.clone()
+                x0_e[..., :2] += raw_p - corrected
             # Convex regions actually used at this guided level: decimate to
             # every 8th waypoint (same rhythm as the ellipse overlay) plus the
             # region of each segment the physical gate asked to correct.
@@ -212,6 +218,7 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
         "PHistory": p_history, "E6History": e_history,
         "X0PHistory": x0_p_history, "X0E6History": x0_e_history,
     }
+    result["ellipseCenterMode"] = "absolute" if center_absolute else "offset"
     if alm_enabled:
         result["alm"] = {"enabled": True, "startT": alm_start_t, "frames": alm_frames}
     else:

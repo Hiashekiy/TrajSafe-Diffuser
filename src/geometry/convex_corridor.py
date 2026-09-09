@@ -65,6 +65,7 @@ class EllipseRegionBuilder:
         self.guidance_threshold = float(cfg.get("guidance_occupancy_threshold", 1e-3))
         self.segment_collision_samples = max(
             2, int(cfg.get("segment_collision_samples", 8)))
+        self.center_absolute = bool(cfg.get("center_absolute", False))
         if self.guidance_dilation > 0:
             k = 2 * self.guidance_dilation + 1
             self.guidance_maps = F.max_pool2d(
@@ -148,7 +149,8 @@ class EllipseRegionBuilder:
         region_complete = torch.ones(batch, horizon, dtype=torch.bool, device=device)
 
         clean_e = torch.nan_to_num(e0, nan=0.0, posinf=0.0, neginf=0.0)
-        center_all = p0 + clean_e[..., :2]
+        center_all = (clean_e[..., :2] if self.center_absolute
+                      else p0 + clean_e[..., :2])
         axes = clean_e[..., 2:4].clamp(-6.0, 0.7).exp()
         axes = axes.clamp(self.axis_min, self.axis_max)
         theta = 0.5 * torch.atan2(clean_e[..., 5], clean_e[..., 4])

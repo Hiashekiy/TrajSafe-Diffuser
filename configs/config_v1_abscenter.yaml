@@ -1,0 +1,29 @@
+# Fresh V1 training with ABSOLUTE ellipse centres.
+#
+# E6[:2] now stores the scene centre directly (e6 = [cx, cy, log a, log b,
+# cos2t, sin2t]) instead of the offset c - p.  It is a breaking representation
+# change: existing center-balanced checkpoints use the offset form and must NOT
+# be resumed here.
+#
+# To use this config you must first build an absolute-centre dataset:
+#   python scripts/data/build_scene_dataset_v1.py \
+#       --config configs/config.yaml \
+#       --dest data/processed_scene_v1_abscenter \
+#       --absolute-center
+#   # maps/ are scene-identical; copy from the existing dataset if absent:
+#   mkdir -p data/processed_scene_v1_abscenter && \
+#   cp -r data/processed_scene_v1/maps data/processed_scene_v1_abscenter/maps
+#   python scripts/data/09_precompute_gt_ellipse_masks.py \
+#       --config configs/config_v1_abscenter.yaml --absolute-center
+#
+# The default config_v1.yaml and all frozen center-balanced checkpoints keep
+# the offset (center = p + e6[:2]) representation untouched.
+
+base: configs/config_v1.yaml
+
+data:
+  base: "data/processed_scene_v1_abscenter"   # absolute-centre dataset
+  ellipse_center_mode: "absolute"
+
+train:
+  ckpt_dir: "outputs/ckpt_v1_abscenter"

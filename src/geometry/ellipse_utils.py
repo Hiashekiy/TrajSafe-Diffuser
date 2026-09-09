@@ -13,3 +13,20 @@ def patch_Q_to_world(Q_pix, local_res):
     quadratic form scales by local_res^2.
     """
     return (float(local_res) ** 2) * np.asarray(Q_pix, dtype=np.float64)
+
+
+def physical_ellipse_center(p, e6, absolute=False):
+    """Return the physical ellipse centre from a trajectory anchor ``p``.
+
+    ``e6`` stores the centre either as an offset from ``p`` (default,
+    ``ellipse_center_mode == 'offset'``) or as an absolute scene coordinate
+    (``ellipse_center_mode == 'absolute'``).  Works with torch and numpy.
+    """
+    if absolute:
+        return e6[..., :2]
+    return p + e6[..., :2]
+
+
+def center_to_offset(center, p):
+    """Offset representation ``center - p`` (used when generating E6 data)."""
+    return center - p

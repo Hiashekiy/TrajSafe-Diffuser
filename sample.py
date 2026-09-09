@@ -34,14 +34,15 @@ from src.diffusion.sampler_v1 import sample_joint
 from src.models.joint import JointPlanner
 from src.datasets.joint_dataset import JointDataset
 from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.ellipse_utils import physical_ellipse_center
 from src.geometry.convex_region import halfspaces_to_vertices
 
 MAZE_NAMES = ["umaze", "medium", "large"]
 
 
-def e6_to_ellipse5(p, e6):
+def e6_to_ellipse5(p, e6, absolute=False):
     """scene P [H,2] + e6 [H,6] -> [H,5] (cx,cy,a,b,theta)."""
-    c = p + e6[..., :2]
+    c = physical_ellipse_center(p, e6, absolute)
     a = np.exp(np.clip(e6[..., 2], -20, 20))
     b = np.exp(np.clip(e6[..., 3], -20, 20))
     th = 0.5 * np.arctan2(e6[..., 5], e6[..., 4])
@@ -57,16 +58,17 @@ def pick_conditions(ds, maze, n, rng):
     return sel[idx]
 
 
-def build_region_polygons(P, E6, map_tensor, alm_cfg, stride=8):
+def build_region_polygons(P, E6, map_tensor, alm_cfg, stride=8, absolute=False):
     """Build sparse polygon overlays from the final predicted ellipses."""
     device = map_tensor.device
     p_t = torch.as_tensor(P, dtype=torch.float32, device=device)
     e_t = torch.as_tensor(E6, dtype=torch.float32, device=device)
     with torch.no_grad():
-        A, b, mask, valid = EllipseRegionBuilder(map_tensor, alm_cfg)(p_t, e_t)
+        A, b, mask, valid = EllipseRegionBuilder(
+            map_tensor, {**alm_cfg, "center_absolute": absolute})(p_t, e_t)
     A, b = A.cpu().numpy(), b.cpu().numpy()
     mask, valid = mask.cpu().numpy(), valid.cpu().numpy()
-    centers = P + E6[..., :2]
+    centers = physical_ellipse_center(P, E6, absolute)
     overlays = [[] for _ in range(len(P))]
     for i in range(len(P)):
         for k in range(0, P.shape[1], max(1, int(stride))):
@@ -241,6 +243,7 @@ def main():
     mi = MAZE_NAMES.index(args.maze)
     occ_map = ds.maps[mi].to(device)                # [1,1,256,256]
     map_t = occ_map.expand(len(sel), -1, -1, -1).contiguous()
+    center_absolute = cfg.get("data", {}).get("ellipse_center_mode", "offset") == "absolute"
 
     if args.compare_alm:
         if not bool(cfg.get("alm", {}).get("enabled", False)):
@@ -248,31 +251,35 @@ def main():
         p_base, e6_base = sample_joint(
             model, schedule, cond, map_t, device,
             steps=args.steps, seed=args.seed, alm_config=None,
+            center_absolute=center_absolute,
         )
         P, E6 = sample_joint(
             model, schedule, cond, map_t, device,
             steps=args.steps, seed=args.seed, alm_config=cfg.get("alm"),
+            center_absolute=center_absolute,
         )
         p_base = p_base.cpu().numpy()
         e6_base = e6_base.cpu().numpy()
     else:
         P, E6 = sample_joint(model, schedule, cond, map_t, device,
                              steps=args.steps, seed=args.seed,
-                             alm_config=cfg.get("alm"))
+                             alm_config=cfg.get("alm"), center_absolute=center_absolute)
     P = P.cpu().numpy()
     E6 = E6.cpu().numpy()
-    E5 = e6_to_ellipse5(P, E6)
+    E5 = e6_to_ellipse5(P, E6, center_absolute)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     occ_full = np.load(os.path.join(base, "maps", f"{args.maze}.npy"))
     if args.compare_alm:
-        e5_base = e6_to_ellipse5(p_base, e6_base)
+        e5_base = e6_to_ellipse5(p_base, e6_base, center_absolute)
         regions_base = regions_alm = None
         if args.draw_convex_regions:
             regions_base = build_region_polygons(
-                p_base, e6_base, map_t, cfg.get("alm", {}), args.convex_stride)
+                p_base, e6_base, map_t, cfg.get("alm", {}), args.convex_stride,
+                absolute=center_absolute)
             regions_alm = build_region_polygons(
-                P, E6, map_t, cfg.get("alm", {}), args.convex_stride)
+                P, E6, map_t, cfg.get("alm", {}), args.convex_stride,
+                absolute=center_absolute)
         np.savez_compressed(
             args.out + ".npz",
             P_baseline=p_base, E6_baseline=e6_base, E5_baseline=e5_base,
@@ -288,7 +295,8 @@ def main():
                             cond=ds.cond[sel], ids=np.asarray(sel),
                             maze=np.asarray(args.maze))
         regions = (build_region_polygons(
-            P, E6, map_t, cfg.get("alm", {}), args.convex_stride)
+            P, E6, map_t, cfg.get("alm", {}), args.convex_stride,
+            absolute=center_absolute)
             if args.draw_convex_regions else None)
         plot_results(args.maze, occ_full, ds.cond[sel], P, E5,
                      args.out + ".png", draw_ellipses=not args.no_ellipses,

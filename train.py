@@ -35,6 +35,7 @@ from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.diffusion.schedule import NoiseSchedule
 from src.models.joint import JointPlanner
 from src.datasets.joint_dataset import make_loader
+from src.geometry.ellipse_utils import physical_ellipse_center
 
 
 def _broadcast(x0, v):
@@ -90,18 +91,20 @@ def trajectory_smoothness_loss(p_pred, p_gt, acc_weight=0.25,
     return acc_weight * loss_acc + jerk_weight * loss_jerk
 
 
-def ellipse_regression_loss(p_pred, p_gt, e_pred, e_gt):
+def ellipse_regression_loss(p_pred, p_gt, e_pred, e_gt, absolute=False):
     """Regress the physical ellipse centre and the remaining E6 parameters.
 
-    E6 stores the centre as an offset from its trajectory anchor.  Regressing
-    that offset directly conflicts with mask supervision whenever ``p_pred``
-    differs from ``p_gt``: the same offset then represents a different physical
-    centre.  Compare absolute centres instead, using the detached predicted
-    trajectory anchor exactly as the mask losses do.  The 2/6 and 4/6 weights
-    preserve the scale of the former six-component mean squared error.
+    E6 stores the centre either as an offset from its trajectory anchor
+    (default) or as an absolute scene coordinate (``absolute=True``).  In the
+    offset form, regressing that offset directly conflicts with mask
+    supervision whenever ``p_pred`` differs from ``p_gt``; compare absolute
+    centres instead, using the detached predicted trajectory anchor exactly as
+    the mask losses do.  In the absolute form the physical centre is simply
+    ``e6[..., :2]``.  The 2/6 and 4/6 weights preserve the scale of the former
+    six-component mean squared error.
     """
-    center_pred = p_pred.detach() + e_pred[..., :2]
-    center_gt = p_gt + e_gt[..., :2]
+    center_pred = physical_ellipse_center(p_pred.detach(), e_pred, absolute)
+    center_gt = physical_ellipse_center(p_gt, e_gt, absolute)
     loss_center = F.mse_loss(center_pred, center_gt)
     loss_shape = F.mse_loss(e_pred[..., 2:], e_gt[..., 2:])
     return (2.0 * loss_center + 4.0 * loss_shape) / 6.0
@@ -109,7 +112,7 @@ def ellipse_regression_loss(p_pred, p_gt, e_pred, e_gt):
 
 def ellipse_mask_losses(p_pred, e_pred, occ, gt_mask, raster_res=64,
                         tau=10.0, chunk_size=32, safe_cvar_fraction=0.2,
-                        safe_cvar_weight=1.0, eps=1e-6):
+                        safe_cvar_weight=1.0, eps=1e-6, absolute=False):
     """Return IoU and mean-plus-CVaR full-ellipse safety losses.
 
     The map is conservatively max-pooled to ``raster_res`` and every ellipse is
@@ -151,9 +154,9 @@ def ellipse_mask_losses(p_pred, e_pred, occ, gt_mask, raster_res=64,
         )
 
     # Do not let ellipse collision avoidance drag the trajectory away from its
-    # supervised path. The relative centre offset and all other ellipse
-    # parameters remain differentiable.
-    center = p_pred.detach() + e_pred[..., :2]
+    # supervised path. The relative centre offset (or the absolute centre) and
+    # all other ellipse parameters remain differentiable.
+    center = physical_ellipse_center(p_pred.detach(), e_pred, absolute)
     a = torch.exp(torch.clamp(e_pred[..., 2], -6.0, 0.7))
     b = torch.exp(torch.clamp(e_pred[..., 3], -6.0, 0.7))
     theta = 0.5 * torch.atan2(e_pred[..., 5], e_pred[..., 4])
@@ -228,7 +231,7 @@ def batch_losses(batch, model, schedule, lambda_e, lambda_smooth,
                  lambda_iou, lambda_safe,
                  smooth_acc_weight, smooth_jerk_weight,
                  safe_res, safe_tau, safe_chunk, safe_cvar_fraction,
-                 safe_cvar_weight, device):
+                 safe_cvar_weight, device, absolute=False):
     """One batch -> component losses and their weighted total."""
     p0 = batch["pos"].to(device)
     e0 = batch["e6"].to(device)
@@ -251,7 +254,7 @@ def batch_losses(batch, model, schedule, lambda_e, lambda_smooth,
     e_hat = out["x0_e"]
     p_hat = hard_endpoints(p_hat_raw, cond)
     loss_p = F.mse_loss(p_hat_raw[:, 1:-1], p0[:, 1:-1])
-    loss_e = ellipse_regression_loss(p_hat, p0, e_hat, e0)
+    loss_e = ellipse_regression_loss(p_hat, p0, e_hat, e0, absolute=absolute)
     loss_smooth = trajectory_smoothness_loss(
         p_hat, p0, acc_weight=smooth_acc_weight,
         jerk_weight=smooth_jerk_weight,
@@ -259,7 +262,7 @@ def batch_losses(batch, model, schedule, lambda_e, lambda_smooth,
     loss_iou, loss_safe, loss_safe_mean, loss_safe_cvar = ellipse_mask_losses(
         p_hat, e_hat, occ, gt_mask, raster_res=safe_res, tau=safe_tau,
         chunk_size=safe_chunk, safe_cvar_fraction=safe_cvar_fraction,
-        safe_cvar_weight=safe_cvar_weight,
+        safe_cvar_weight=safe_cvar_weight, absolute=absolute,
     )
     total = (loss_p + lambda_e * loss_e
              + lambda_smooth * loss_smooth + lambda_iou * loss_iou
@@ -272,7 +275,7 @@ def validate(model, schedule, val_loader, lambda_e, lambda_smooth,
              lambda_iou, lambda_safe,
              smooth_acc_weight, smooth_jerk_weight,
              safe_res, safe_tau, safe_chunk, safe_cvar_fraction,
-             safe_cvar_weight, device, max_batches):
+             safe_cvar_weight, device, max_batches, absolute=False):
     model.eval()
     s_p = s_e = s_smooth = s_iou = 0.0
     s_safe = s_safe_mean = s_safe_cvar = n = 0.0
@@ -284,7 +287,7 @@ def validate(model, schedule, val_loader, lambda_e, lambda_smooth,
                 batch, model, schedule, lambda_e, lambda_smooth,
                 lambda_iou, lambda_safe, smooth_acc_weight,
                 smooth_jerk_weight, safe_res, safe_tau, safe_chunk,
-                safe_cvar_fraction, safe_cvar_weight, device,
+                safe_cvar_fraction, safe_cvar_weight, device, absolute,
             )
             s_p += float(lp)
             s_e += float(le)
@@ -313,6 +316,7 @@ def main():
     args = ap.parse_args()
     cfg = load_config(args.config)
     env, data_cfg = cfg["env"], cfg["data"]
+    center_absolute = data_cfg.get("ellipse_center_mode", "offset") == "absolute"
     model_cfg, diff_cfg = cfg["model"], cfg["diffusion"]
     loss_cfg, train_cfg = cfg["loss"], cfg["train"]
 
@@ -387,7 +391,7 @@ def main():
                 batch, model, schedule, lambda_e, lambda_smooth,
                 lambda_iou, lambda_safe, smooth_acc_weight,
                 smooth_jerk_weight, safe_res, safe_tau, safe_chunk,
-                safe_cvar_fraction, safe_cvar_weight, device,
+                safe_cvar_fraction, safe_cvar_weight, device, center_absolute,
             )
             optim.zero_grad()
             loss.backward()
@@ -450,7 +454,7 @@ def main():
                 model, schedule, val_loader, lambda_e, lambda_smooth,
                 lambda_iou, lambda_safe, smooth_acc_weight,
                 smooth_jerk_weight, safe_res, safe_tau, safe_chunk,
-                safe_cvar_fraction, safe_cvar_weight, device,
+                safe_cvar_fraction, safe_cvar_weight, device, center_absolute,
                 int(train_cfg.get("val_batches", 20)),
             )
             vtot = (vp + lambda_e * ve

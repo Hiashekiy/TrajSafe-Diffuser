@@ -45,7 +45,7 @@ def _pick_times(T, steps):
 
 def sample_joint(model, schedule, cond, map_tensor, device="cuda",
                  steps=None, seed=None, alm_config=None,
-                 return_alm_stats=False):
+                 return_alm_stats=False, center_absolute=False):
     """cond [B,2,2] scene (start,goal); map_tensor [B,1,256,256]."""
     if seed is not None:
         torch.manual_seed(seed)
@@ -66,8 +66,9 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
 
     alm_cfg = alm_config or {}
     alm_enabled = bool(alm_cfg.get("enabled", False))
-    corridor_builder = (EllipseRegionBuilder(map_tensor, alm_cfg)
-                        if alm_enabled else None)
+    corridor_builder = (EllipseRegionBuilder(
+        map_tensor, {**alm_cfg, "center_absolute": center_absolute},
+    ) if alm_enabled else None)
     rho = float(alm_cfg.get("rho", alm_cfg.get("rho_init", 5.0)))
     alm_start_t = int(alm_cfg.get("start_t", 7))
     collected_stats = []
@@ -107,10 +108,14 @@ def sample_joint(model, schedule, cond, map_tensor, device="cuda",
         if stats is not None:
             collected_stats.append((t, stats))
 
-        # E stores centre offsets (c = p + delta_c). Preserve the physical
-        # ellipse centres after moving P so the joint P/E state stays coherent.
-        x0_e = x0_e.clone()
-        x0_e[..., :2] += raw_p - x0_p
+        # E stores centres either as offsets (c = p + delta_c) or as absolute
+        # scene coordinates. In offset mode, preserve the physical ellipse
+        # centres after moving P so the joint P/E state stays coherent. In the
+        # absolute mode the E centres are already scene coordinates, so they are
+        # independent of the corrected P and must not be re-encoded.
+        if not center_absolute:
+            x0_e = x0_e.clone()
+            x0_e[..., :2] += raw_p - x0_p
         return endpoints(x0_p), x0_e
 
     with torch.no_grad():

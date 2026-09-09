@@ -47,9 +47,14 @@ def load_norm(path):
     return LimitsNormalizer.from_dict(d["state"])
 
 
-def to_e6(p_scene, ep_scene):
-    """p_scene [H,2] (scene), ep_scene [H,5] (cx,cy,a,b,theta scene) -> [H,6]."""
-    d = ep_scene[:, 0:2] - p_scene                    # [H,2] delta center
+def to_e6(p_scene, ep_scene, absolute=False):
+    """p_scene [H,2] (scene), ep_scene [H,5] (cx,cy,a,b,theta scene) -> [H,6].
+
+    absolute=True stores the scene centre directly; the default stores the
+    offset c - p.
+    """
+    d = (ep_scene[:, 0:2] if absolute
+         else ep_scene[:, 0:2] - p_scene)
     r1 = ep_scene[:, 2]
     r2 = ep_scene[:, 3]
     th = ep_scene[:, 4]
@@ -66,7 +71,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--dest", default=DEST)
+    ap.add_argument("--absolute-center", action="store_true",
+                    help="store absolute ellipse centre instead of offset c-p")
     args = ap.parse_args()
+    abs_center = bool(args.absolute_center)
     cfg = load_config(args.config)
     dest = args.dest
 
@@ -117,7 +125,7 @@ def main():
             e6 = np.zeros((n, H, 6), dtype=np.float32)
             n_fb = 0
             for i in range(n):
-                e6[i], fb = to_e6(pos_scene[i], ep_scene[i])
+                e6[i], fb = to_e6(pos_scene[i], ep_scene[i], abs_center)
                 n_fb += fb
             accum[split].append({
                 "pos": pos_scene,

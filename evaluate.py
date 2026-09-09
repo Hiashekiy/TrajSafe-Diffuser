@@ -35,6 +35,7 @@ from src.diffusion.sampler_v1 import sample_joint
 from src.models.joint import JointPlanner
 from src.datasets.joint_dataset import JointDataset
 from src.geometry.scene_frame import sample_sdf_scene
+from src.geometry.ellipse_utils import physical_ellipse_center
 
 MAZE_NAMES = ["umaze", "medium", "large"]
 RES = 256
@@ -49,8 +50,8 @@ def pick_conditions(ds, maze, n, rng):
     return sel[idx]
 
 
-def e6_to_ellipse5(p, e6):
-    c = p + e6[..., :2]
+def e6_to_ellipse5(p, e6, absolute=False):
+    c = physical_ellipse_center(p, e6, absolute)
     a = np.exp(np.clip(e6[..., 2], -20, 20))
     b = np.exp(np.clip(e6[..., 3], -20, 20))
     th = 0.5 * np.arctan2(e6[..., 5], e6[..., 4])
@@ -137,10 +138,12 @@ def main():
 
         t0 = time.time()
         alm_enabled = bool(cfg.get("alm", {}).get("enabled", False))
+        center_absolute = cfg.get("data", {}).get("ellipse_center_mode", "offset") == "absolute"
         sampled = sample_joint(
             model, schedule, cond, map_t, device,
             steps=args.steps, seed=args.seed + mi * 101,
             alm_config=cfg.get("alm"), return_alm_stats=alm_enabled,
+            center_absolute=center_absolute,
         )
         if alm_enabled:
             P, E6, alm_stats = sampled
@@ -177,7 +180,7 @@ def main():
         clear_p05 = float(np.percentile(sdf_vals, 5))
 
         # ellipse sanity
-        E5 = e6_to_ellipse5(P, E6)
+        E5 = e6_to_ellipse5(P, E6, center_absolute)
         a, b = E5[..., 2], E5[..., 3]
         sane = float((np.isfinite(a) & (a > 0) & (a <= 2.0) &
                       np.isfinite(b) & (b > 0) & (b <= 2.0)).mean())

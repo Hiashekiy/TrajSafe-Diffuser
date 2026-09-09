@@ -14,7 +14,7 @@ type Sample = { key: string; maze: string; datasetId: number; condition: Vec[]; 
 type Catalog = { provenance: { dataset: string; checkpoints: Record<string, string>; horizon: number; timesteps: number }; maps: Record<string, { resolution: number; wallRuns: number[][] }>; samples: Sample[] };
 type AlmRegion = { i: number; polygon: Vec[] };
 type AlmFrame = { t: number; rawP: Vec[]; enforced: number[]; regions: AlmRegion[]; stats: Record<string, number> };
-type Generation = { sampleKey: string; modelId: string; seed: number; cacheHit: boolean; elapsedMs: number; stateLabels: string[]; schedule: { sqrtAlphaBar: number[]; sqrtOneMinusAlphaBar: number[] }; PHistory: Vec[][]; E6History: number[][][]; X0PHistory: Vec[][]; X0E6History: number[][][]; alm: { enabled: boolean; startT: number; frames: (AlmFrame | null)[] } | null; error?: string };
+type Generation = { sampleKey: string; modelId: string; seed: number; cacheHit: boolean; elapsedMs: number; stateLabels: string[]; schedule: { sqrtAlphaBar: number[]; sqrtOneMinusAlphaBar: number[] }; PHistory: Vec[][]; E6History: number[][][]; X0PHistory: Vec[][]; X0E6History: number[][][]; alm: { enabled: boolean; startT: number; frames: (AlmFrame | null)[] } | null; ellipseCenterMode?: 'offset' | 'absolute'; error?: string };
 type EditMode = 'none' | 'start' | 'goal' | 'obstacle' | 'erase';
 type DisplayMode = 'state' | 'prediction' | 'compare';
 type CustomObstacle = { x: number; y: number; r: number };
@@ -108,7 +108,8 @@ export default function Home() {
   const resetEdits=()=>{setCondition([sample.condition[0],sample.condition[1]] as [Vec,Vec]);setObstacles([]);setEditMode('none');invalidate();};
   const collisionCount = current ? current.P.filter((p) => { const [px,py]=xy(p); if(px<0||px>=256||py<0||py>=256)return true; const x=Math.floor(px),y=Math.floor(py); return map.wallRuns.some(([rx,ry,w])=>ry===y&&x>=rx&&x<rx+w); }).length : null;
   const rmse = current && finalState ? Math.sqrt(current.P.reduce((sum,p,i)=>sum+(p[0]-finalState.P[i][0])**2+(p[1]-finalState.P[i][1])**2,0)/256) : null;
-  const ellipseItems = useMemo(() => !current ? [] : current.E6.map((e,i)=>{ const center:Vec=[current.P[i][0]+e[0],current.P[i][1]+e[1]]; return {idx:i,center:xy(center),a:Math.min(.42,Math.exp(Math.max(-5,Math.min(-.35,e[2]))))*128,b:Math.min(.42,Math.exp(Math.max(-5,Math.min(-.35,e[3]))))*128,angle:-.5*Math.atan2(e[5],e[4])*180/Math.PI}; }), [current]);
+  const centerAbsolute = history?.ellipseCenterMode === 'absolute';
+  const ellipseItems = useMemo(() => !current ? [] : current.E6.map((e,i)=>{ const center:Vec = centerAbsolute ? [e[0], e[1]] : [current.P[i][0]+e[0], current.P[i][1]+e[1]]; return {idx:i,center:xy(center),a:Math.min(.42,Math.exp(Math.max(-5,Math.min(-.35,e[2]))))*128,b:Math.min(.42,Math.exp(Math.max(-5,Math.min(-.35,e[3]))))*128,angle:-.5*Math.atan2(e[5],e[4])*180/Math.PI}; }), [current, centerAbsolute]);
 
   return <main className="min-h-screen bg-background text-foreground">
     <header className="topbar"><div className="brand-mark"><Sparkles size={18}/></div><div><h1>Diffusion Lens</h1><p>Joint P / E reverse process viewer</p></div><div className={`status-pill ${backendReady?'online':'offline'}`}><span/> {backendReady?'GPU SERVICE READY':'SERVICE OFFLINE'}</div></header>

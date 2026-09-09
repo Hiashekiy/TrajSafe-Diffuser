@@ -20,12 +20,13 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
+from src.geometry.ellipse_utils import physical_ellipse_center
 
 
 @torch.no_grad()
-def rasterize_batch(p, e, raster_res, tau, anchor_chunk):
+def rasterize_batch(p, e, raster_res, tau, anchor_chunk, absolute=False):
     """Return quantized soft masks [B,H,R,R] on CPU."""
-    center = p + e[..., :2]
+    center = physical_ellipse_center(p, e, absolute)
     a = torch.exp(torch.clamp(e[..., 2], -6.0, 0.7))
     b = torch.exp(torch.clamp(e[..., 3], -6.0, 0.7))
     theta = 0.5 * torch.atan2(e[..., 5], e[..., 4])
@@ -87,6 +88,7 @@ def process_split(split_dir, raster_res, tau, batch_size, anchor_chunk, device):
             e = torch.tensor(np.asarray(e6[start:end]), device=device)
             masks[start:end] = rasterize_batch(
                 p, e, raster_res, tau, anchor_chunk,
+                absolute=absolute_center,
             )
             if end == n or end % max(batch_size * 20, 1) == 0:
                 print(f"[{os.path.basename(split_dir)}] {end}/{n}", flush=True)
@@ -103,7 +105,10 @@ def main():
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--anchor-chunk", type=int, default=16)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--absolute-center", action="store_true",
+                    help="treat e6[:2] as absolute centre rather than offset c-p")
     args = ap.parse_args()
+    absolute_center = bool(args.absolute_center)
 
     cfg = load_config(args.config)
     loss_cfg = cfg["loss"]
