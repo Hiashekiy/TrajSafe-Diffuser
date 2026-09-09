@@ -17,10 +17,9 @@ SITE_ROOT = os.path.abspath(os.path.dirname(__file__))
 ROOT = os.path.abspath(os.path.join(SITE_ROOT, ".."))
 sys.path.insert(0, ROOT)
 
-from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.alm_guidance import alm_correct
+from src.diffusion.schedule import NoiseSchedule
 from src.geometry.convex_corridor import EllipseRegionBuilder
-from src.geometry.ellipse_center_repair import EllipseCenterRepair
 from src.models.joint import JointPlanner
 from src.utils.checkpoint import load_checkpoint
 from src.utils.config import load_config
@@ -36,7 +35,7 @@ CACHE_DIR = os.path.join(SITE_ROOT, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 cfg = load_config(os.path.join(ROOT, "configs", "config_v1_continue.yaml"))
-alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml"))["alm"]
+alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml")).get("alm") or {}
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 test_dir = os.path.join(ROOT, "data", "processed_scene_v1", "test")
 conditions = np.load(os.path.join(test_dir, "conditions.npy"))
@@ -65,7 +64,11 @@ def rounded(tensor: torch.Tensor):
 
 
 def polygon_vertices(A, b, mask, tol=1e-5):
-    """Return ordered vertices of a bounded 2-D halfspace intersection."""
+    """Ordered vertices of a bounded 2-D halfspace intersection (scene frame).
+
+    ``A/b/mask`` are the per-region face matrix / rhs / active-face mask of one
+    ellipse region.  Returns [] when fewer than three feasible vertices exist.
+    """
     A, b = np.asarray(A)[mask], np.asarray(b)[mask]
     candidates = []
     for i in range(len(A)):
@@ -86,80 +89,8 @@ def polygon_vertices(A, b, mask, tol=1e-5):
 
 
 @torch.no_grad()
-def generate_alm_trace(request):
-    sample_key = request.get("sampleKey")
-    if sample_key not in sample_lookup:
-        raise ValueError("未知样本")
-    raw_p = np.asarray(request.get("rawP"), dtype=np.float32)
-    raw_e = np.asarray(request.get("rawE6"), dtype=np.float32)
-    if raw_p.shape != (128, 2) or raw_e.shape != (128, 6):
-        raise ValueError("ALM trace 需要 [128,2] 的 P 和 [128,6] 的 E6")
-    if not np.isfinite(raw_p).all() or not np.isfinite(raw_e).all():
-        raise ValueError("ALM trace 输入包含非有限值")
-
-    sample = sample_lookup[sample_key]
-    dataset_id = int(sample["datasetId"])
-    condition = np.asarray(request.get("condition") or conditions[dataset_id], dtype=np.float32)
-    maze = MAZES[int(maze_ids[dataset_id])]
-    occupancy = maps[maze].copy()
-    for obstacle in request.get("obstacles") or []:
-        ox, oy, radius = map(float, obstacle)
-        cx, cy, pr = (ox + 1) * 127.5, (oy + 1) * 127.5, radius * 127.5
-        yy, xx = np.ogrid[:256, :256]
-        occupancy[(xx - cx) ** 2 + (yy - cy) ** 2 <= pr ** 2] = 1.0
-
-    p = torch.as_tensor(raw_p[None], dtype=torch.float32, device=device)
-    e = torch.as_tensor(raw_e[None], dtype=torch.float32, device=device)
-    cond = torch.as_tensor(condition[None], dtype=torch.float32, device=device)
-    p[:, 0], p[:, -1] = cond[:, 0], cond[:, 1]
-    map_tensor = torch.as_tensor(
-        occupancy, dtype=torch.float32, device=device)[None, None]
-    builder = EllipseRegionBuilder(map_tensor, alm_cfg)
-    repair = EllipseCenterRepair(builder)(p, e, cond[:, 0])
-
-    trace = []
-    A, b = repair.A[:, 1:], repair.b[:, 1:]
-    face_mask, valid = repair.face_mask[:, 1:], repair.valid[:, 1:]
-    alm_p, _, stats = alm_correct(
-        p, A, b, face_mask, valid,
-        torch.zeros(1, p.shape[1] - 1, dtype=p.dtype, device=device),
-        float(alm_cfg.get("rho", 5.0)),
-        step_size=float(alm_cfg.get("step_size", 0.03)),
-        inner_steps=int(alm_cfg.get("inner_steps", 4)),
-        max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
-        max_correction_per_step=float(alm_cfg.get("max_correction_per_step", 0.10)),
-        collision_fn=builder.segment_needs_guidance,
-        collect_stats=True,
-        trace_callback=lambda inner, value: trace.append({
-            "inner": inner, "P": rounded(value[0])}),
-    )
-
-    cpu_A = repair.A[0].cpu().numpy()
-    cpu_b = repair.b[0].cpu().numpy()
-    cpu_mask = repair.face_mask[0].cpu().numpy()
-    cpu_valid = repair.valid[0].cpu().numpy()
-    regions = [
-        polygon_vertices(cpu_A[k], cpu_b[k], cpu_mask[k]) if cpu_valid[k] else []
-        for k in range(len(cpu_valid))
-    ]
-    scalar_stats = {key: float(value.cpu()) for key, value in {
-        **repair.stats, **stats}.items()}
-    return {
-        "sampleKey": sample_key,
-        "rawTrajectory": rounded(p[0]),
-        "finalTrajectory": rounded(alm_p[0]),
-        "rawCenters": rounded(p[0] + e[0, :, :2]),
-        "repairedCenters": rounded(repair.centers[0]),
-        "ellipseShape": rounded(e[0, :, 2:]),
-        "regionValid": cpu_valid.tolist(),
-        "regions": regions,
-        "trajectoryFrames": trace,
-        "stats": scalar_stats,
-    }
-
-
-@torch.no_grad()
-def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, obstacles=None):
+def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, obstacles=None,
+             alm_enabled: bool | None = None):
     sample = sample_lookup[sample_key]
     dataset_id = int(sample["datasetId"])
     condition = np.asarray(custom_condition if custom_condition is not None else conditions[dataset_id], dtype=np.float32)
@@ -184,7 +115,16 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
     p[:, 0], p[:, -1] = start, goal
     sqrt_ab = schedule.sqrt_alphas_cumprod.detach().cpu().tolist()
     sqrt_1ma = schedule.sqrt_one_minus_alphas_cumprod.detach().cpu().tolist()
+    if alm_enabled is None:
+        alm_enabled = bool(alm_cfg.get("enabled", False))
+    else:
+        alm_enabled = bool(alm_enabled)
+    alm_start_t = int(alm_cfg.get("start_t", 7))
+    alm_rho = float(alm_cfg.get("rho", 5.0))
+    corridor_builder = EllipseRegionBuilder(map_tensor, alm_cfg) if alm_enabled else None
+    horizon = int(model.horizon)
     p_history, e_history, x0_p_history, x0_e_history, labels = [], [], [], [], []
+    alm_frames: list[dict | None] = []
     for t in reversed(range(schedule.num_timesteps)):
         p_history.append(rounded(p[0])); e_history.append(rounded(e[0])); labels.append(f"t={t}")
         tb = torch.full((1,), t, device=device, dtype=torch.long)
@@ -192,8 +132,64 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
         out = model(p, e, map_tensor, cond, tb, ab)
         x0_p, x0_e = out["x0_p"], out["x0_e"]
         x0_p[:, 0], x0_p[:, -1] = start, goal
+        alm_frame = None
+        if alm_enabled and t <= alm_start_t:
+            # Same guidance as sampler_v1.guide_clean_prediction: one predicted
+            # ellipse -> one convex region; ALM corrects the x0 trajectory.
+            raw_p = x0_p.clone()
+            point_A, point_b, point_mask, point_valid = corridor_builder(x0_p, x0_e)
+            enforce_mask = corridor_builder.segment_needs_guidance(x0_p)
+            step_lam = torch.zeros(1, horizon - 1, device=device, dtype=x0_p.dtype)
+            corrected, _, stats = alm_correct(
+                x0_p, point_A[:, 1:], point_b[:, 1:],
+                point_mask[:, 1:], point_valid[:, 1:], step_lam, alm_rho,
+                step_size=float(alm_cfg.get("step_size", 0.03)),
+                inner_steps=int(alm_cfg.get("inner_steps", 4)),
+                max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
+                max_correction_per_step=float(
+                    alm_cfg.get("max_correction_per_step", 0.10)),
+                proximity_weight=float(alm_cfg.get("proximity_weight", 1.0)),
+                correction_smooth_weight=float(
+                    alm_cfg.get("correction_smooth_weight", 4.0)),
+                enforce_mask=enforce_mask,
+                collect_stats=True,
+            )
+            # E stores centre offsets (c = p + delta_c): preserve the physical
+            # ellipse centres after moving P so P/E stay coherent (as sampler).
+            x0_e = x0_e.clone()
+            x0_e[..., :2] += raw_p - corrected
+            # Convex regions actually used at this guided level: decimate to
+            # every 8th waypoint (same rhythm as the ellipse overlay) plus the
+            # region of each segment the physical gate asked to correct.
+            cpu_A, cpu_b, cpu_mask = (point_A[0].cpu().numpy(),
+                                      point_b[0].cpu().numpy(),
+                                      point_mask[0].cpu().numpy())
+            enforce_cpu = enforce_mask[0].cpu().numpy()
+            region_indices = set(range(8, horizon, 8)) | {horizon - 1}
+            if int(enforce_cpu.sum()) <= 40:
+                for s in range(horizon - 1):
+                    if bool(enforce_cpu[s]):
+                        region_indices.add(int(s) + 1)
+            regions = []
+            for j in sorted(region_indices):
+                if not bool(point_valid[0, j].cpu()):
+                    continue
+                polygon = polygon_vertices(cpu_A[j], cpu_b[j], cpu_mask[j])
+                if polygon:
+                    regions.append({"i": int(j), "polygon": polygon})
+            alm_frame = {
+                "t": int(t),
+                "rawP": rounded(raw_p[0]),
+                "enforced": [int(s) for s in range(horizon - 1)
+                             if bool(enforce_cpu[s])],
+                "regions": regions,
+                "stats": {key: float(value.cpu())
+                          for key, value in stats.items()},
+            }
+            x0_p = corrected
         x0_p_history.append(rounded(x0_p[0]))
         x0_e_history.append(rounded(x0_e[0]))
+        alm_frames.append(alm_frame)
         if t == 0:
             p, e = x0_p, x0_e
         else:
@@ -204,7 +200,8 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
         p[:, 0], p[:, -1] = start, goal
     p_history.append(rounded(p[0])); e_history.append(rounded(e[0])); labels.append("x0")
     x0_p_history.append(rounded(p[0])); x0_e_history.append(rounded(e[0]))
-    return {
+    alm_frames.append(None)
+    result = {
         "sampleKey": sample_key, "modelId": model_id, "seed": seed, "cacheHit": False,
         "condition": condition.tolist(), "obstacles": obstacles or [],
         "stateLabels": labels,
@@ -215,6 +212,11 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
         "PHistory": p_history, "E6History": e_history,
         "X0PHistory": x0_p_history, "X0E6History": x0_e_history,
     }
+    if alm_enabled:
+        result["alm"] = {"enabled": True, "startT": alm_start_t, "frames": alm_frames}
+    else:
+        result["alm"] = None
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -241,23 +243,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        route = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if route not in ("/generate", "/alm-trace"):
-            return self.send_json(404, {"error": "not found"})
+        if self.path != "/generate": return self.send_json(404, {"error": "not found"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
-            if route == "/alm-trace":
-                with inference_lock:
-                    result = generate_alm_trace(request)
-                return self.send_json(200, result)
             sample_key, model_id, seed = request.get("sampleKey"), request.get("modelId"), int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
+            alm_enabled = bool(request.get("almEnabled", True))
             if sample_key not in sample_lookup: raise ValueError("未知样本")
             if model_id not in CHECKPOINTS: raise ValueError("未知模型")
             if seed < 0 or seed > 2_147_483_647: raise ValueError("seed 超出范围")
-            cache_payload = json.dumps({"format": 2, "sample": sample_key, "model": model_id, "seed": seed, "condition": custom_condition, "obstacles": obstacles}, sort_keys=True, separators=(",", ":"))
+            cache_payload = json.dumps({"format": 3, "alm": alm_enabled, "sample": sample_key, "model": model_id, "seed": seed, "condition": custom_condition, "obstacles": obstacles}, sort_keys=True, separators=(",", ":"))
             cache_key = hashlib.sha1(cache_payload.encode()).hexdigest()[:12]
             cache_path = os.path.join(CACHE_DIR, f"{model_id}__{sample_key}__seed{seed}__{cache_key}.json")
             started = time.perf_counter()
@@ -270,7 +267,7 @@ class Handler(BaseHTTPRequestHandler):
                         with open(cache_path, "r", encoding="utf-8") as handle: result = json.load(handle)
                         result["cacheHit"] = True
                     else:
-                        result = generate(sample_key, model_id, seed, custom_condition, obstacles)
+                        result = generate(sample_key, model_id, seed, custom_condition, obstacles, alm_enabled)
                         with open(cache_path, "w", encoding="utf-8") as handle: json.dump(result, handle, separators=(",", ":"))
             result["elapsedMs"] = round((time.perf_counter() - started) * 1000, 1)
             self.send_json(200, result)

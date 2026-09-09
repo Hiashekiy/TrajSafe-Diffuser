@@ -149,17 +149,14 @@ def main():
                     print(
                         f"[{maze}][ALM t={step_stats['t']}] "
                         f"valid={step_stats['corridor_valid_rate']:.3f} "
-                        f"collision={step_stats['physical_collision_rate_before']:.3f}->"
-                        f"{step_stats['physical_collision_rate_after']:.3f} "
-                        f"covered={step_stats['collision_covered_rate']:.3f} "
-                        f"invalid={step_stats['collision_but_invalid_rate']:.3f} "
-                        f"inside={step_stats['collision_inside_region_rate']:.3f} "
-                        f"new={step_stats['new_physical_collision_rate']:.3f} "
+                        f"physical={step_stats['physical_guidance_rate']:.3f} "
                         f"active={step_stats['raw_max_positive_rate']:.3f} "
                         f"lambda={step_stats['lambda_mean']:.4f}/"
                         f"{step_stats['lambda_max']:.4f} "
                         f"corr={step_stats['mean_correction']:.5f}/"
-                        f"{step_stats['max_correction']:.5f}",
+                        f"{step_stats['max_correction']:.5f} "
+                        f"smooth={step_stats['smoothness_before']:.5f}->"
+                        f"{step_stats['smoothness_after']:.5f}",
                         flush=True,
                     )
         else:

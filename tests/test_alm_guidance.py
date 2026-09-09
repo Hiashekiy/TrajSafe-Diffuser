@@ -1,11 +1,7 @@
 import torch
 
 from src.diffusion.alm_guidance import alm_correct
-from src.geometry.convex_corridor import (
-    EllipseRegionBuilder,
-    _halfspace_intersection_nonempty,
-    _points_inside_halfspaces,
-)
+from src.geometry.convex_corridor import EllipseRegionBuilder
 
 
 def test_alm_reduces_box_violation_and_preserves_endpoints():
@@ -36,7 +32,8 @@ def test_feasible_trajectory_is_an_exact_fixed_point():
 
     corrected, lam, stats = alm_correct(
         p, A, b, mask, valid, torch.zeros(1, 3), rho=5.0,
-        step_size=0.03, inner_steps=4, collect_stats=True,
+        step_size=0.03, inner_steps=4, proximity_weight=1.0,
+        correction_smooth_weight=4.0, collect_stats=True,
     )
 
     assert torch.equal(corrected, p)
@@ -55,7 +52,7 @@ def test_physical_safety_gate_prevents_conservative_region_from_moving_point():
 
     corrected, _, _ = alm_correct(
         p, A, b, mask, valid, torch.zeros(1, 2), rho=5.0,
-        collision_fn=lambda _: physically_unsafe, inner_steps=4,
+        enforce_mask=physically_unsafe, inner_steps=4,
     )
     assert torch.equal(corrected, p)
 
@@ -110,61 +107,3 @@ def test_region_is_keyed_by_its_own_physical_ellipse():
     assert torch.equal(m1[:, 1], m2[:, 1])
     assert torch.allclose(A1[:, 1], A2[:, 1])
     assert torch.allclose(b1[:, 1], b2[:, 1])
-
-
-def test_region_validity_requires_seed_containment():
-    # The triangle is non-empty, but a region built from a seed outside it is
-    # invalid for recursive centre propagation.
-    A = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]]])
-    b = torch.tensor([[1.0, 1.0, 0.0]])
-    mask = torch.ones(1, 3, dtype=torch.bool)
-
-    assert _halfspace_intersection_nonempty(A, b, mask).item()
-    assert _points_inside_halfspaces(
-        torch.tensor([[0.5, 0.5]]), A, b, mask).item()
-    assert not _points_inside_halfspaces(
-        torch.tensor([[2.0, 2.0]]), A, b, mask).item()
-
-
-def test_collision_coverage_stats_separate_physics_from_region_validity():
-    p = torch.zeros(1, 4, 2)
-    A = torch.tensor([[[[1.0, 0.0]]] * 3])
-    b = torch.ones(1, 3, 1)
-    mask = torch.ones(1, 3, 1, dtype=torch.bool)
-    valid = torch.tensor([[True, False, True]])
-    collision = torch.tensor([[True, True, False]])
-
-    _, _, stats = alm_correct(
-        p, A, b, mask, valid, torch.zeros(1, 3), rho=5.0,
-        collision_fn=lambda _: collision, collect_stats=True)
-
-    assert torch.isclose(stats["physical_collision_rate"], torch.tensor(2 / 3))
-    assert torch.isclose(stats["collision_but_invalid_rate"], torch.tensor(1 / 3))
-    assert torch.isclose(stats["collision_covered_rate"], torch.tensor(0.5))
-
-
-def test_collision_gate_is_recomputed_during_inner_iterations():
-    p = torch.tensor([[[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [0.0, 0.0]]])
-    A = torch.tensor([[[[1.0, 0.0]]] * 3])
-    b = torch.zeros(1, 3, 1)
-    mask = torch.ones(1, 3, 1, dtype=torch.bool)
-    valid = torch.ones(1, 3, dtype=torch.bool)
-    observed = []
-
-    def collision_fn(current):
-        first_active = current[0, 1, 0] > 0.5
-        state = torch.tensor(
-            [[first_active, ~first_active, False]], dtype=torch.bool)
-        observed.append(state.clone())
-        return state
-
-    _, lam, stats = alm_correct(
-        p, A, b, mask, valid, torch.zeros(1, 3), rho=1.0,
-        step_size=1.0, inner_steps=2, max_grad_norm=10.0,
-        max_correction_per_step=2.0, collision_fn=collision_fn,
-        collect_stats=True)
-
-    assert any(state[0, 0] and not state[0, 1] for state in observed)
-    assert any(not state[0, 0] and state[0, 1] for state in observed)
-    assert lam[0, 0] == 0
-    assert stats["resolved_physical_collision_rate"] > 0

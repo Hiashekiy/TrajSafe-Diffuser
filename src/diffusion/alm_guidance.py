@@ -30,40 +30,54 @@ def _constraint_state(p, A, b, face_mask, valid):
             active_normal * right_active[..., None])
 
 
+def _second_difference(p):
+    return p[:, 2:] - 2.0 * p[:, 1:-1] + p[:, :-2]
+
+
+def _correction_smoother(horizon, step_size, weight, reference):
+    """Cholesky factor for the proximal correction-smoothness solve."""
+    if weight <= 0 or horizon < 3:
+        return None
+    # Endpoints of the correction are fixed at zero. D maps the H-2 interior
+    # corrections to the H-2 trajectory second differences.
+    n = horizon - 2
+    D = reference.new_zeros((n, n))
+    row = torch.arange(n, device=reference.device)
+    D[row, row] = -2.0
+    if n > 1:
+        D[row[1:], row[1:] - 1] = 1.0
+        D[row[:-1], row[:-1] + 1] = 1.0
+    system = (torch.eye(n, dtype=reference.dtype, device=reference.device) +
+              float(step_size) * float(weight) * (D.T @ D))
+    return torch.linalg.cholesky(system)
+
+
 def alm_correct(p0, A, b, face_mask, valid, lam, rho,
                 step_size=0.03, inner_steps=4,
                 max_grad_norm=1.0, max_correction_per_step=0.10,
-                collision_fn=None, collect_stats=False,
-                trace_callback=None):
+                proximity_weight=1.0, correction_smooth_weight=4.0,
+                enforce_mask=None, collect_stats=False):
     """Correct ``p0`` while holding one set of segment corridors fixed.
 
-    Only the inequality augmented-Lagrangian force is applied. ``lam`` belongs
-    to this fixed corridor set; the sampler resets it whenever corridors are
-    rebuilt.
+    The primal objective combines the inequality augmented Lagrangian with a
+    proximal term and smoothness of the correction field. The latter avoids
+    isolated waypoint spikes without smoothing or moving a fully feasible raw
+    diffusion trajectory. ``lam`` belongs only to this fixed corridor set; the
+    sampler resets it whenever corridors are rebuilt.
     """
     if rho <= 0:
         raise ValueError("rho must be positive")
     p = p0.clone()
     start, goal = p0[:, :1].clone(), p0[:, -1:].clone()
     lam = lam.clone()
-
-    def current_collision(trajectory):
-        collision = (torch.ones_like(valid) if collision_fn is None
-                     else collision_fn(trajectory).bool())
-        if collision.shape != valid.shape:
-            raise ValueError("collision_fn must return shape [B,H-1]")
-        return collision
-
-    initial_collision = current_collision(p)
-    if trace_callback is not None:
-        trace_callback(0, p)
+    enforced = valid if enforce_mask is None else (valid & enforce_mask)
+    smooth_factor = _correction_smoother(
+        p.shape[1], step_size, correction_smooth_weight, p)
 
     g_before, _, _ = _constraint_state(p, A, b, face_mask, valid)
+    smoothness_before = _second_difference(p).norm(dim=-1).mean()
 
     for _ in range(max(0, int(inner_steps))):
-        collision_mask = current_collision(p)
-        enforced = valid & collision_mask
-        lam = torch.where(enforced, lam, torch.zeros_like(lam))
         g, grad_left, grad_right = _constraint_state(p, A, b, face_mask, valid)
 
         # Inequality ALM after eliminating the non-negative slack. A feasible
@@ -71,7 +85,8 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
         omega = torch.relu(lam + float(rho) * g)
         omega = torch.where(enforced, omega, torch.zeros_like(omega))
 
-        grad = torch.zeros_like(p)
+        correction = p - p0
+        grad = float(proximity_weight) * correction
         grad[:, :-1] += omega[..., None] * grad_left
         grad[:, 1:] += omega[..., None] * grad_right
         grad[:, 0] = 0.0
@@ -80,7 +95,17 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
             norm = grad.norm(dim=-1, keepdim=True)
             grad = grad * (float(max_grad_norm) / norm.clamp_min(1e-8)).clamp(max=1.0)
 
-        delta = -float(step_size) * grad
+        # Proximal-gradient update: take the ALM/proximity step, then solve the
+        # correction smoothness term exactly. This avoids the unstable explicit
+        # D2^T D2 step that created alternating waypoint spikes.
+        target_correction = correction - float(step_size) * grad
+        target_correction[:, 0] = 0.0
+        target_correction[:, -1] = 0.0
+        if smooth_factor is not None:
+            rhs = target_correction[:, 1:-1]
+            factor = smooth_factor[None].expand(p.shape[0], -1, -1)
+            target_correction[:, 1:-1] = torch.cholesky_solve(rhs, factor)
+        delta = target_correction - correction
         if max_correction_per_step > 0:
             delta_norm = delta.norm(dim=-1, keepdim=True)
             delta = delta * (float(max_correction_per_step) /
@@ -88,42 +113,22 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
         p = p + delta
         p[:, :1] = start
         p[:, -1:] = goal
-        if trace_callback is not None:
-            trace_callback(_ + 1, p)
 
-        collision_after = current_collision(p)
-        enforced_after = valid & collision_after
         g_new, _, _ = _constraint_state(p, A, b, face_mask, valid)
         lam = torch.relu(lam + float(rho) * g_new)
-        lam = torch.where(enforced_after, lam, torch.zeros_like(lam))
+        lam = torch.where(enforced, lam, torch.zeros_like(lam))
 
     stats = None
     if collect_stats:
-        final_collision = current_collision(p)
         g_after, _, _ = _constraint_state(p, A, b, face_mask, valid)
         correction = (p - p0).norm(dim=-1)
         valid_float = valid.float()
         valid_count = valid_float.sum().clamp_min(1.0)
         positive_before = (g_before > 0) & valid
         positive_after = (g_after > 0) & valid
-        collision_count = initial_collision.float().sum().clamp_min(1.0)
-        initially_enforced = valid & initial_collision
         stats = {
             "corridor_valid_rate": valid_float.mean(),
-            "physical_guidance_rate": initially_enforced.float().mean(),
-            "physical_collision_rate": initial_collision.float().mean(),
-            "physical_collision_rate_before": initial_collision.float().mean(),
-            "physical_collision_rate_after": final_collision.float().mean(),
-            "new_physical_collision_rate": (
-                final_collision & ~initial_collision).float().mean(),
-            "resolved_physical_collision_rate": (
-                initial_collision & ~final_collision).float().mean(),
-            "collision_but_invalid_rate": (
-                initial_collision & ~valid).float().mean(),
-            "collision_covered_rate": (
-                initially_enforced.float().sum() / collision_count),
-            "collision_inside_region_rate": (
-                final_collision & valid & (g_after <= 0)).float().mean(),
+            "physical_guidance_rate": enforced.float().mean(),
             "raw_max_positive_rate": positive_before.sum() / valid_count,
             "segment_endpoint_pair_inside_rate": (
                 ((g_before <= 0) & valid).sum() / valid_count),
@@ -136,5 +141,7 @@ def alm_correct(p0, A, b, face_mask, valid, lam, rho,
             "lambda_max": lam.max(),
             "mean_correction": correction.mean(),
             "max_correction": correction.max(),
+            "smoothness_before": smoothness_before,
+            "smoothness_after": _second_difference(p).norm(dim=-1).mean(),
         }
     return p, lam, stats
