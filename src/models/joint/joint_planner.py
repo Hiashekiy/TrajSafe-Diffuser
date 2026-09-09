@@ -51,6 +51,10 @@ class JointPlanner(nn.Module):
         # V1.1 fine-geometry memory: enabled only when a decoder res is given
         self._geo_enabled = (self.geo_decode_res is not None
                              and self.geo_attn_every > 0)
+        # When True the ellipse token localises/attends with its OWN centre
+        # (e_t[..., :2], absolute-centre representation) instead of the
+        # trajectory waypoint, reducing the ellipse <-> trajectory coupling.
+        self.ellipse_center_anchor = bool(model_cfg.get("ellipse_center_anchor", False))
         dropout = float(model_cfg.get("dropout", 0.0))
         H = self.horizon
 
@@ -145,18 +149,28 @@ class JointPlanner(nn.Module):
         # noise-aware spatial gate w_t * phi(p_k^t)
         w = ab[:, None, None].to(p_t.dtype)
         p_pe = self.spatial_pe(p_t) * w                    # [B,H,d]
+        # Ellipse token spatial anchor: by default the trajectory waypoint (keeps
+        # the original P-anchored behaviour).  With ellipse_center_anchor the
+        # ellipse token uses its OWN centre (e_t[..., :2]) so it localises and
+        # attends by itself, decoupling it from the trajectory point.
+        e_pe = (self.spatial_pe(e_t[..., :2]) * w
+                if self.ellipse_center_anchor else p_pe)
 
         # ---- tokens (type embeddings as [1,1,d] so no extra leading dims) ----
         traj_type = self.traj_type.weight[0][None, None, :]   # [1,1,d]
         ell_type = self.traj_type.weight[1][None, None, :]    # [1,1,d]
         T = self.mlp_p(p_t) + psi + traj_type + p_pe          # [B,H,d]
-        E = self.mlp_e(e_t) + psi + ell_type + p_pe           # [B,H,d]
+        E = self.mlp_e(e_t) + psi + ell_type + e_pe           # [B,H,d]
 
         # interleave [T_1,E_1,...,T_H,E_H] -> [B,2H,d]
         z = torch.stack([T, E], dim=2).reshape(B, 2 * H, self.d_model)
 
-        # noise-aware geometry bias (once, docs #23)
-        geo_bias = self._geometry_bias(p_t, ab, dev) if self._geo_enabled else None
+        # noise-aware geometry bias (once, docs #23): anchor on the ellipse's
+        # own centre when decoupling, otherwise on the trajectory waypoint.
+        geo_bias = None
+        if self._geo_enabled:
+            geo_anchor = (e_t[..., :2] if self.ellipse_center_anchor else p_t)
+            geo_bias = self._geometry_bias(geo_anchor, ab, dev)
 
         for blk in self.blocks:
             z = blk(z, global_mem, h_t, geo_mem, geo_bias)

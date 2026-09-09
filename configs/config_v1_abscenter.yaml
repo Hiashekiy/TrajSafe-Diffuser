@@ -34,5 +34,12 @@ loss:
   center_safe_cvar_fraction: 0.2
   center_safe_cvar_weight: 1.0
 
+model:
+  # Decouple the ellipse token from the trajectory: its spatial position and
+  # fine-geometry attention anchor on the ellipse's OWN centre (e_t[..., :2])
+  # rather than the trajectory waypoint.  Only meaningful for the absolute-centre
+  # representation.
+  ellipse_center_anchor: true
+
 train:
   ckpt_dir: "outputs/ckpt_v1_abscenter"
