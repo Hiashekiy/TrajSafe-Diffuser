@@ -470,7 +470,7 @@ def main():
             optim.zero_grad()
             if center_absolute and (step + 1) % log_interval == 0:
                 last_center_grad_ratio = _loss_grad_ratio(
-                    loss_center, loss_e, model.head_e.weight)
+                    lcenter, le, model.head_e.weight)
             loss.backward()
             if grad_clip:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
