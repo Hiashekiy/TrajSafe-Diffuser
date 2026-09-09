@@ -25,5 +25,14 @@ data:
   base: "data/processed_scene_v1_abscenter"   # absolute-centre dataset
   ellipse_center_mode: "absolute"
 
+loss:
+  # Auxiliary ellipse-centre safety (absolute centres).  Small weight so the
+  # added term does not unbalance the joint P/E gradient; gradRatio is logged
+  # to monitor ||grad(loss_center)|| / ||grad(loss_e)|| on the ellipse head.
+  lambda_center_safe: 0.1
+  ellipse_center_safe_margin: 0.02
+  center_safe_cvar_fraction: 0.2
+  center_safe_cvar_weight: 1.0
+
 train:
   ckpt_dir: "outputs/ckpt_v1_abscenter"

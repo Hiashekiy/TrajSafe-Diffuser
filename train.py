@@ -36,11 +36,19 @@ from src.diffusion.schedule import NoiseSchedule
 from src.models.joint import JointPlanner
 from src.datasets.joint_dataset import make_loader
 from src.geometry.ellipse_utils import physical_ellipse_center
+from src.geometry.scene_frame import sample_sdf_scene
 
 
 def _broadcast(x0, v):
     """v [B] -> broadcastable over x0 [B, ...]."""
     return v.reshape(v.shape[0], *([1] * (x0.dim() - 1)))
+
+
+def _loss_grad_ratio(loss_a, loss_b, param):
+    """||grad loss_a|| / ||grad loss_b|| on a shared param (balance probe)."""
+    ga = torch.autograd.grad(loss_a, param, retain_graph=True)[0]
+    gb = torch.autograd.grad(loss_b, param, retain_graph=True)[0]
+    return float((ga.norm() / (gb.norm() + 1e-8)).item())
 
 
 def add_noise(x0, t, schedule):
@@ -227,11 +235,46 @@ def ellipse_mask_losses(p_pred, e_pred, occ, gt_mask, raster_res=64,
     return iou_sum / denom, loss_safe, loss_safe_mean, loss_safe_cvar
 
 
+def ellipse_center_safety_loss(p_pred, e_pred, sdf, margin=0.02,
+                               cvar_fraction=0.2, cvar_weight=1.0):
+    """Abs-centre safety: penalise ellipse centres inside walls / off-map.
+
+    The physical centre is ``e_pred[..., :2]`` (absolute representation),
+    independent of the trajectory, so the gradient flows only to the ellipse
+    branch.  Keep ``lambda_center_safe`` small so this auxiliary term does not
+    unbalance the joint P/E training.  A log-hinge bounds early outliers and a
+    CVaR tail focuses on the worst anchors, so the term only performs local
+    corrections instead of distorting the whole trajectory.
+    ``sdf`` must be [B,1,H,W] in scene units (free > 0).
+    """
+    center = e_pred[..., :2]
+
+    def _penalty(clearance):
+        violation = torch.relu(float(margin) - clearance)
+        return torch.log1p(violation / float(margin))
+
+    def _summarise(penalty):
+        mean = penalty.mean()
+        tail = max(1, math.ceil(penalty.shape[1] * cvar_fraction))
+        cvar = torch.topk(penalty, k=tail, dim=1, largest=True,
+                          sorted=False).values.mean()
+        return mean + float(cvar_weight) * cvar, mean, cvar
+
+    clearance = sample_sdf_scene(sdf, center)
+    boundary = 1.0 - center.abs().amax(dim=-1)
+    penalty = _penalty(torch.minimum(clearance, boundary))
+    loss, mean, cvar = _summarise(penalty)
+    return loss, mean, cvar
+
+
+
 def batch_losses(batch, model, schedule, lambda_e, lambda_smooth,
                  lambda_iou, lambda_safe,
                  smooth_acc_weight, smooth_jerk_weight,
                  safe_res, safe_tau, safe_chunk, safe_cvar_fraction,
-                 safe_cvar_weight, device, absolute=False):
+                 safe_cvar_weight, device, absolute=False,
+                 lambda_center_safe=0.0, center_safe_margin=0.02,
+                 center_safe_cvar_fraction=0.2, center_safe_cvar_weight=1.0):
     """One batch -> component losses and their weighted total."""
     p0 = batch["pos"].to(device)
     e0 = batch["e6"].to(device)
@@ -264,30 +307,49 @@ def batch_losses(batch, model, schedule, lambda_e, lambda_smooth,
         chunk_size=safe_chunk, safe_cvar_fraction=safe_cvar_fraction,
         safe_cvar_weight=safe_cvar_weight, absolute=absolute,
     )
+    # Absolute-centre safety: auxiliary, weighted to keep P/E balanced.
+    if absolute:
+        sdf = batch["sdf_tensor"].to(device)
+        loss_center, center_mean, center_cvar = ellipse_center_safety_loss(
+            p_hat, e_hat, sdf, margin=center_safe_margin,
+            cvar_fraction=center_safe_cvar_fraction,
+            cvar_weight=center_safe_cvar_weight,
+        )
+    else:
+        zero = p_hat.new_zeros(())
+        loss_center, center_mean, center_cvar = zero, zero, zero
     total = (loss_p + lambda_e * loss_e
              + lambda_smooth * loss_smooth + lambda_iou * loss_iou
-             + lambda_safe * loss_safe)
+             + lambda_safe * loss_safe
+             + lambda_center_safe * loss_center)
     return (loss_p, loss_e, loss_smooth, loss_iou, loss_safe,
-            loss_safe_mean, loss_safe_cvar, total)
+            loss_safe_mean, loss_safe_cvar,
+            loss_center, center_mean, center_cvar, total)
 
 
 def validate(model, schedule, val_loader, lambda_e, lambda_smooth,
              lambda_iou, lambda_safe,
              smooth_acc_weight, smooth_jerk_weight,
              safe_res, safe_tau, safe_chunk, safe_cvar_fraction,
-             safe_cvar_weight, device, max_batches, absolute=False):
+             safe_cvar_weight, device, max_batches, absolute=False,
+             lambda_center_safe=0.0, center_safe_margin=0.02,
+             center_safe_cvar_fraction=0.2, center_safe_cvar_weight=1.0):
     model.eval()
     s_p = s_e = s_smooth = s_iou = 0.0
     s_safe = s_safe_mean = s_safe_cvar = n = 0.0
+    s_center = s_center_mean = s_center_cvar = 0.0
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             if i >= max_batches:
                 break
-            lp, le, ls, liou, lsafe, lsafe_mean, lsafe_cvar, _ = batch_losses(
+            (lp, le, ls, liou, lsafe, lsafe_mean, lsafe_cvar,
+             lcenter, lcenter_mean, lcenter_cvar, _) = batch_losses(
                 batch, model, schedule, lambda_e, lambda_smooth,
                 lambda_iou, lambda_safe, smooth_acc_weight,
                 smooth_jerk_weight, safe_res, safe_tau, safe_chunk,
                 safe_cvar_fraction, safe_cvar_weight, device, absolute,
+                lambda_center_safe, center_safe_margin,
+                center_safe_cvar_fraction, center_safe_cvar_weight,
             )
             s_p += float(lp)
             s_e += float(le)
@@ -296,12 +358,16 @@ def validate(model, schedule, val_loader, lambda_e, lambda_smooth,
             s_safe += float(lsafe)
             s_safe_mean += float(lsafe_mean)
             s_safe_cvar += float(lsafe_cvar)
+            s_center += float(lcenter)
+            s_center_mean += float(lcenter_mean)
+            s_center_cvar += float(lcenter_cvar)
             n += 1.0
     model.train()
     denom = max(n, 1.0)
     return (s_p / denom, s_e / denom, s_smooth / denom,
             s_iou / denom, s_safe / denom, s_safe_mean / denom,
-            s_safe_cvar / denom)
+            s_safe_cvar / denom, s_center / denom, s_center_mean / denom,
+            s_center_cvar / denom)
 
 
 def main():
@@ -352,6 +418,10 @@ def main():
     safe_chunk = int(loss_cfg.get("ellipse_safe_chunk", 32))
     safe_cvar_fraction = float(loss_cfg.get("safe_cvar_fraction", 0.2))
     safe_cvar_weight = float(loss_cfg.get("safe_cvar_weight", 1.0))
+    lambda_center_safe = float(loss_cfg.get("lambda_center_safe", 0.0))
+    center_safe_margin = float(loss_cfg.get("ellipse_center_safe_margin", 0.02))
+    center_safe_cvar_fraction = float(loss_cfg.get("center_safe_cvar_fraction", 0.2))
+    center_safe_cvar_weight = float(loss_cfg.get("center_safe_cvar_weight", 1.0))
     for split_name, dataset in (("train", train_ds), ("val", val_ds)):
         if dataset.mask_res != safe_res or abs(dataset.mask_tau - safe_tau) > 1e-6:
             raise ValueError(
@@ -382,18 +452,25 @@ def main():
         model.train()
         ep_lp = ep_le = ep_ls = ep_liou = ep_lsafe = 0.0
         ep_lsafe_mean = ep_lsafe_cvar = 0.0
+        ep_lcenter = ep_lcenter_mean = ep_lcenter_cvar = 0.0
+        last_center_grad_ratio = float("nan")
         n_steps = 0
         for step, batch in enumerate(train_loader):
             if args.max_batches is not None and step >= args.max_batches:
                 break
-            (lp, le, ls, liou, lsafe, lsafe_mean,
-             lsafe_cvar, loss) = batch_losses(
+            (lp, le, ls, liou, lsafe, lsafe_mean, lsafe_cvar,
+             lcenter, lcenter_mean, lcenter_cvar, loss) = batch_losses(
                 batch, model, schedule, lambda_e, lambda_smooth,
                 lambda_iou, lambda_safe, smooth_acc_weight,
                 smooth_jerk_weight, safe_res, safe_tau, safe_chunk,
                 safe_cvar_fraction, safe_cvar_weight, device, center_absolute,
+                lambda_center_safe, center_safe_margin,
+                center_safe_cvar_fraction, center_safe_cvar_weight,
             )
             optim.zero_grad()
+            if center_absolute and (step + 1) % log_interval == 0:
+                last_center_grad_ratio = _loss_grad_ratio(
+                    loss_center, loss_e, model.head_e.weight)
             loss.backward()
             if grad_clip:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -405,6 +482,9 @@ def main():
             ep_lsafe += float(lsafe.detach())
             ep_lsafe_mean += float(lsafe_mean.detach())
             ep_lsafe_cvar += float(lsafe_cvar.detach())
+            ep_lcenter += float(lcenter.detach())
+            ep_lcenter_mean += float(lcenter_mean.detach())
+            ep_lcenter_cvar += float(lcenter_cvar.detach())
             n_steps += 1
             if (step + 1) % log_interval == 0:
                 el = time.time() - t_start
@@ -436,9 +516,13 @@ def main():
         avg_lsafe = ep_lsafe / denom
         avg_lsafe_mean = ep_lsafe_mean / denom
         avg_lsafe_cvar = ep_lsafe_cvar / denom
+        avg_lcenter = ep_lcenter / denom
+        avg_lcenter_mean = ep_lcenter_mean / denom
+        avg_lcenter_cvar = ep_lcenter_cvar / denom
         avg_total = (avg_lp + lambda_e * avg_le
                      + lambda_smooth * avg_ls + lambda_iou * avg_liou
-                     + lambda_safe * avg_lsafe)
+                     + lambda_safe * avg_lsafe
+                     + lambda_center_safe * avg_lcenter)
         line = (f"[epoch {epoch}/{epochs}] train Lp={avg_lp:.4f} Le={avg_le:.4f} "
                 f"Ls={avg_ls:.4f} Liou={avg_liou:.4f} Lsafe={avg_lsafe:.4f} "
                 f"LsafeMean={avg_lsafe_mean:.4f} "
@@ -448,18 +532,25 @@ def main():
                 f"wLsafe={lambda_safe * avg_lsafe:.4f} "
                 f"wLsafeMean={lambda_safe * avg_lsafe_mean:.4f} "
                 f"wLsafeCVaR={lambda_safe * safe_cvar_weight * avg_lsafe_cvar:.4f} "
-                f"L={avg_total:.4f}")
+                f"Lcenter={avg_lcenter:.4f} "
+                 f"wLcenter={lambda_center_safe * avg_lcenter:.4f} "
+                 f"gradRatio={last_center_grad_ratio:.3f} "
+                 f"L={avg_total:.4f}")
         if (epoch + 1) % eval_every == 0 or epoch == epochs - 1:
-            vp, ve, vs, viou, vsafe, vsafe_mean, vsafe_cvar = validate(
+            (vp, ve, vs, viou, vsafe, vsafe_mean, vsafe_cvar,
+             vcenter, vcenter_mean, vcenter_cvar) = validate(
                 model, schedule, val_loader, lambda_e, lambda_smooth,
                 lambda_iou, lambda_safe, smooth_acc_weight,
                 smooth_jerk_weight, safe_res, safe_tau, safe_chunk,
                 safe_cvar_fraction, safe_cvar_weight, device, center_absolute,
                 int(train_cfg.get("val_batches", 20)),
+                lambda_center_safe, center_safe_margin,
+                center_safe_cvar_fraction, center_safe_cvar_weight,
             )
             vtot = (vp + lambda_e * ve
                     + lambda_smooth * vs + lambda_iou * viou
-                    + lambda_safe * vsafe)
+                    + lambda_safe * vsafe
+                    + lambda_center_safe * vcenter)
             line += (f" | val Lp={vp:.4f} Le={ve:.4f} Ls={vs:.4f} "
                      f"Liou={viou:.4f} Lsafe={vsafe:.4f} "
                      f"LsafeMean={vsafe_mean:.4f} "
