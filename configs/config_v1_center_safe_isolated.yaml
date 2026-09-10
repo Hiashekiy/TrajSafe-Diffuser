@@ -1,0 +1,12 @@
+# Isolated ellipse-centre safety experiment based on the frozen V1 config.
+# The new loss can update only the centre rows of head_e; it has no gradient
+# path to the trajectory head, scene encoder, or shared transformer.
+base: configs/config_v1.yaml
+
+loss:
+  lambda_center_safe: 0.1
+  ellipse_center_safe_margin: 0.01  # scene units; slightly over one 256-grid cell
+  ellipse_center_safe_tau: 0.02     # bounded-gradient soft hinge temperature
+
+train:
+  ckpt_dir: "outputs/ckpt_v1_center_safe_isolated"

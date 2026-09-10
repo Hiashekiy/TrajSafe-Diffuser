@@ -167,4 +167,8 @@ class JointPlanner(nn.Module):
         return {
             "x0_p": self.head_p(h_p),                      # [B,H,2]
             "x0_e": self.head_e(h_e),                      # [B,H,6]
+            # Numerically identical to x0_e. Its detached input gives the
+            # centre-safety loss a graph that ends at the ellipse output head,
+            # before the shared transformer and scene encoder.
+            "x0_e_center_safe": self.head_e(h_e.detach()),
         }
