@@ -42,6 +42,7 @@ Neural-IRISDiffuser/
 - `outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced/epoch_100.pt`
 - `outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue100/best.pt`
 - `outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue200/best.pt`
+- `outputs/ckpt_v1_center_safe_isolated/best.pt`
 
 ## 3. 环境要求
 
@@ -188,10 +189,9 @@ http://localhost:3000/
 - 自定义起点和终点。
 - 自定义障碍物的位置与半径。
 
-相同参数再次生成时会直接读取缓存。右侧“缓存状态”显示：
-
-- `SAVED`：本次由模型生成并写入缓存。
-- `HIT`：本次直接读取已有缓存。
+每次点击生成都会先清除旧的 JSON 缓存，再重新运行完整扩散；相同参数也
+不会复用旧结果。右侧“缓存状态”正常显示 `SAVED`，表示本次结果由模型
+重新生成并写入缓存。该缓存只保留到下一次生成。
 
 缓存文件保存在：
 

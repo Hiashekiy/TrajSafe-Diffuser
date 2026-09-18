@@ -67,23 +67,20 @@ def test_corridor_builder_batches_and_normalises_faces():
     e[..., 4] = 1.0
 
     A, b, mask, valid = EllipseRegionBuilder(
-        occ, {"max_faces": 12, "corridor_chunk_size": 4},
+        occ, {"corridor_chunk_size": 4},
     )(p, e)
 
-    assert A.shape == (2, 8, 12, 2)
-    assert b.shape == (2, 8, 12)
-    assert mask.shape == (2, 8, 12)
+    assert A.shape[:2] == (2, 8)
+    assert A.shape[2] == b.shape[2]
+    assert A.shape[-1] == 2
+    assert mask.shape == b.shape
     assert valid.all()
     assert mask.sum(dim=-1).min() >= 4
     assert torch.allclose(A.norm(dim=-1)[mask], torch.ones_like(b[mask]), atol=1e-6)
 
-    # A deliberately smaller cap cannot represent the central square from
-    # every seed. Those truncated regions must be rejected, not treated as
-    # occupancy-verified corridors.
-    _, _, _, capped_valid = EllipseRegionBuilder(
-        occ, {"max_faces": 8, "corridor_chunk_size": 4},
-    )(p, e)
-    assert (~capped_valid).any()
+    # There is no fixed face budget: filtering always consumes every real and
+    # local-border obstacle point.
+    assert valid.all()
 
 
 def test_region_is_keyed_by_its_own_physical_ellipse():
@@ -97,13 +94,13 @@ def test_region_is_keyed_by_its_own_physical_ellipse():
     e1[..., 4] = 1.0
     e2 = e1.clone()
     e2[:, 1, 0] -= 0.2
-    builder = EllipseRegionBuilder(occ, {"max_faces": 20})
+    builder = EllipseRegionBuilder(occ)
 
     A1, b1, m1, _ = builder(p1, e1)
     A2, b2, m2, _ = builder(p2, e2)
 
     # Moving p_1 while compensating delta-c_1 leaves its physical ellipse
-    # unchanged, so its corresponding convex region must also be unchanged.
+    # unchanged, so its ellipse-centred local map and region stay unchanged.
     assert torch.equal(m1[:, 1], m2[:, 1])
     assert torch.allclose(A1[:, 1], A2[:, 1])
     assert torch.allclose(b1[:, 1], b2[:, 1])

@@ -18,6 +18,7 @@ env/
 *.swp
 
 # Data artifacts (large / generated)
+/data/
 data/d4rl/*.hdf5
 data/processed/
 logs/

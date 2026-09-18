@@ -40,6 +40,8 @@ def test_model_center_safety_path_updates_only_ellipse_head_center_rows():
         "dropout": 0.0,
     })
     with torch.no_grad():
+        model.head_p.weight.zero_()
+        model.head_p.bias.zero_()
         model.head_e.weight.zero_()
         model.head_e.bias.zero_()
         model.head_e.bias[0] = -0.25

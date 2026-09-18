@@ -22,9 +22,9 @@ alm:
   max_grad_norm: 1.0
   max_correction_per_step: 0.10
 
-  # One predicted ellipse -> one local Neural-IRIS-style convex region. Four
-  # slots bound the queried local box and the rest separate local obstacles.
-  max_faces: 20
+  # One predicted ellipse -> one local Neural-IRIS convex region. A dense ring
+  # of local-map border points prevents unbounded regions. All real and border
+  # obstacle points use the same Mahalanobis ordering/filtering, without caps.
   safety_margin: 0.02
   obstacle_window_half: 0.35
   obstacle_dilation: 0
@@ -34,7 +34,7 @@ alm:
   guidance_occupancy_threshold: 1.0e-3
   segment_collision_samples: 8
   corridor_chunk_size: 512
-  max_obstacle_points: 4096
   ellipse_axis_min: 0.002
   ellipse_axis_max: 2.0
-  dedup_eps: 1.0e-6
+  # filter_eps defaults to Neural-IRIS's 1e-3 pixel tolerance converted to
+  # scene coordinates.

@@ -22,8 +22,9 @@ MODEL_SOURCES = {
     "epoch100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced/epoch_100.pt",
     "continue100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue100/best.pt",
     "continue200": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue200/best.pt",
+    "center_safe_isolated": "outputs/ckpt_v1_center_safe_isolated/best.pt",
 }
-SAMPLE_IDS = [9, 18, 368, 376, 668, 676]
+SAMPLE_IDS = [9, 18, 368, 376, 668, 676, 739, 855, 460]
 MAZES = ("umaze", "medium", "large")
 
 

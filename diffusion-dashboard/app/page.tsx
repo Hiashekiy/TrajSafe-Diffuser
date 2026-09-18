@@ -25,6 +25,7 @@ const models = [
   { id: 'epoch100', name: 'Epoch 100', source: 'center_balanced / epoch_100.pt' },
   { id: 'continue100', name: 'Continue 100 · Best', source: 'continue100 / best.pt' },
   { id: 'continue200', name: 'Continue 200 · Best', source: 'continue200 / best.pt' },
+  { id: 'center_safe_isolated', name: 'Center-Safe Isolated · Best', source: 'center_safe_isolated / best.pt · ep 260' },
 ];
 const mazeNames: Record<string, string> = { umaze: 'U-Maze', medium: 'Medium', large: 'Large' };
 const layerConfig = [

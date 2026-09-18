@@ -1,9 +1,11 @@
 """Fast per-ellipse convex safe-region construction.
 
 There is exactly one predicted ellipse and one convex region per trajectory
-waypoint. For ellipse k, obstacle boundary points are collected in a local box
-centred at its physical centre and separated with the same greedy geometry as
-Neural-IRIS. All ellipses in a chunk run in parallel on the sampling device.
+waypoint. For ellipse k, real obstacle-boundary points from a local map are
+combined with a dense ring of points along that local map's outer border. The
+local map and border ring are centred at the predicted physical ellipse centre.
+All points then go through the Neural-IRIS Mahalanobis ordering and greedy
+filtering mechanism.
 """
 from __future__ import annotations
 
@@ -38,12 +40,36 @@ def _obstacle_boundary_points(occ: torch.Tensor, dilation: int = 0) -> torch.Ten
     return torch.stack((x, y), dim=-1)
 
 
+def _halfspaces_are_bounded(A: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Return whether 2-D halfspace normals positively span every direction.
+
+    A 2-D intersection is bounded exactly when its active normal angles are not
+    contained in any closed semicircle. Equivalently, every circular gap
+    between consecutive normal angles is strictly smaller than pi. Three faces
+    are sufficient when they form a triangle; there is no four-face rule.
+    """
+    if A.shape[-2] < 2:
+        return torch.zeros(mask.shape[:-1], dtype=torch.bool, device=mask.device)
+    count = mask.sum(dim=-1)
+    angle = torch.atan2(A[..., 1], A[..., 0]).remainder(2.0 * torch.pi)
+    ordered = angle.masked_fill(~mask, torch.inf).sort(dim=-1).values
+    positions = torch.arange(A.shape[-2], device=A.device)
+    adjacent_valid = positions[:-1] < (count[..., None] - 1)
+    adjacent_gap = (ordered[..., 1:] - ordered[..., :-1]).masked_fill(
+        ~adjacent_valid, -torch.inf)
+    last_index = (count - 1).clamp_min(0)[..., None]
+    last = ordered.gather(-1, last_index).squeeze(-1)
+    wrap_gap = ordered[..., 0] + 2.0 * torch.pi - last
+    max_gap = torch.maximum(adjacent_gap.max(dim=-1).values, wrap_gap)
+    return (count >= 3) & torch.isfinite(max_gap) & (max_gap < torch.pi - 1e-6)
+
+
 class EllipseRegionBuilder:
     """Return one padded ``A x <= b`` safe region for every predicted ellipse.
 
     Shapes are ``A[B,H,M,2]``, ``b[B,H,M]``, ``mask[B,H,M]`` and
-    ``valid[B,H]``. Four faces bound the local obstacle-query box; remaining
-    faces are the Neural-IRIS greedy obstacle separators.
+    ``valid[B,H]``. ``M`` is the largest number of faces actually generated in
+    this call; shorter regions are padded. Obstacles and faces are never capped.
     """
 
     def __init__(self, map_tensor: torch.Tensor, config: dict | None = None):
@@ -51,7 +77,6 @@ class EllipseRegionBuilder:
         if map_tensor.ndim != 4 or map_tensor.shape[1] != 1:
             raise ValueError("map_tensor must have shape [B,1,H,W]")
         self.maps = map_tensor.detach()
-        self.max_faces = max(4, int(cfg.get("max_faces", 20)))
         self.margin = max(0.0, float(cfg.get("safety_margin", 0.02)))
         self.window_half = max(
             self.margin + 1e-4, float(cfg.get("obstacle_window_half", 0.35)))
@@ -59,8 +84,11 @@ class EllipseRegionBuilder:
         self.chunk_size = max(1, int(cfg.get("corridor_chunk_size", 512)))
         self.axis_min = max(1e-5, float(cfg.get("ellipse_axis_min", 2e-3)))
         self.axis_max = max(self.axis_min, float(cfg.get("ellipse_axis_max", 2.0)))
-        self.dedup_eps = max(0.0, float(cfg.get("dedup_eps", 1e-6)))
-        self.max_obstacle_points = max(0, int(cfg.get("max_obstacle_points", 4096)))
+        map_scale = 2.0 / float(max(map_tensor.shape[-2:]))
+        # Neural-IRIS uses 1e-3 in patch pixels. The default below is the same
+        # tolerance converted to scene coordinates.
+        self.filter_eps = max(
+            0.0, float(cfg.get("filter_eps", 1e-3 * map_scale)))
         self.guidance_dilation = max(0, int(cfg.get("guidance_dilation_cells", 1)))
         self.guidance_threshold = float(cfg.get("guidance_occupancy_threshold", 1e-3))
         self.segment_collision_samples = max(
@@ -123,28 +151,82 @@ class EllipseRegionBuilder:
         out = []
         for indices, occ in groups:
             points = _obstacle_boundary_points(occ, self.dilation)
-            if self.max_obstacle_points and len(points) > self.max_obstacle_points:
-                pick = torch.linspace(
-                    0, len(points) - 1, self.max_obstacle_points,
-                    device=points.device,
-                ).long()
-                points = points[pick]
             out.append((indices, points))
         return out
 
-    def __call__(self, p0: torch.Tensor, e0: torch.Tensor):
+    def _local_border_points(self, centers: torch.Tensor) -> torch.Tensor:
+        """Dense obstacle-point ring around each ellipse-centred local map."""
+        height, width = self.maps.shape[-2:]
+        nx = max(2, int(round(2.0 * self.window_half / (2.0 / width))) + 1)
+        ny = max(2, int(round(2.0 * self.window_half / (2.0 / height))) + 1)
+        x = torch.linspace(-self.window_half, self.window_half, nx,
+                           dtype=centers.dtype, device=centers.device)
+        y = torch.linspace(-self.window_half, self.window_half, ny,
+                           dtype=centers.dtype, device=centers.device)
+        top = torch.stack((x, torch.full_like(x, self.window_half)), dim=-1)
+        bottom = torch.stack((x, torch.full_like(x, -self.window_half)), dim=-1)
+        if ny > 2:
+            side_y = y[1:-1]
+            right = torch.stack(
+                (torch.full_like(side_y, self.window_half), side_y), dim=-1)
+            left = torch.stack(
+                (torch.full_like(side_y, -self.window_half), side_y), dim=-1)
+            offsets = torch.cat((top, right, bottom.flip(0), left.flip(0)), dim=0)
+        else:
+            offsets = torch.cat((top, bottom.flip(0)), dim=0)
+        return centers[:, None, :] + offsets[None, :, :]
+
+    def _greedy_faces(self, centers: torch.Tensor, quadratics: torch.Tensor,
+                      points: torch.Tensor, initial_active: torch.Tensor):
+        """Neural-IRIS one-time metric sort followed by active-point filtering."""
+        size = len(centers)
+        if points.shape[1] == 0 or not bool(initial_active.any()):
+            return (centers.new_zeros((size, 0, 2)),
+                    centers.new_zeros((size, 0)),
+                    torch.zeros((size, 0), dtype=torch.bool,
+                                device=centers.device))
+        diff = points - centers[:, None]
+        metric = torch.einsum("snd,sde,sne->sn", diff, quadratics, diff)
+        order = torch.argsort(metric, dim=1, stable=True)
+        active = torch.gather(initial_active, 1, order)
+        rows = torch.arange(size, device=centers.device)
+        generated_A, generated_b, generated_mask = [], [], []
+
+        while bool(active.any()):
+            has_point = active.any(dim=1)
+            first = active.to(torch.int8).argmax(dim=1)
+            nearest_idx = order[rows, first]
+            obs = points[rows, nearest_idx]
+            obs_diff = obs - centers
+            normal = torch.einsum("sde,se->sd", quadratics, obs_diff)
+            norm = normal.norm(dim=-1)
+            has_face = has_point & torch.isfinite(norm) & (norm > 1e-7)
+            normal = normal / norm.clamp_min(1e-7)[:, None]
+            rhs = (normal * obs).sum(dim=-1) - self.margin
+            generated_A.append(torch.where(
+                has_face[:, None], normal, torch.zeros_like(normal)))
+            generated_b.append(torch.where(
+                has_face, rhs, torch.zeros_like(rhs)))
+            generated_mask.append(has_face)
+
+            projection = torch.einsum("sd,snd->sn", normal, points)
+            keep = torch.gather(
+                projection <= rhs[:, None] + self.filter_eps, 1, order)
+            active &= keep | ~has_face[:, None]
+            active[rows[has_point], first[has_point]] = False
+
+        return (torch.stack(generated_A, dim=1),
+                torch.stack(generated_b, dim=1),
+                torch.stack(generated_mask, dim=1))
+
+    def __call__(self, p0: torch.Tensor, e0: torch.Tensor,
+                 return_diagnostics: bool = False):
         if p0.ndim != 3 or p0.shape[-1] != 2:
             raise ValueError("p0 must have shape [B,H,2]")
         if e0.shape[:2] != p0.shape[:2] or e0.shape[-1] < 6:
             raise ValueError("e0 must have shape [B,H,6]")
         batch, horizon, _ = p0.shape
         dtype, device = p0.dtype, p0.device
-        A = torch.zeros(batch, horizon, self.max_faces, 2,
-                        dtype=dtype, device=device)
-        b = torch.zeros(batch, horizon, self.max_faces,
-                        dtype=dtype, device=device)
-        face_mask = torch.zeros(batch, horizon, self.max_faces,
-                                dtype=torch.bool, device=device)
         region_complete = torch.ones(batch, horizon, dtype=torch.bool, device=device)
 
         clean_e = torch.nan_to_num(e0, nan=0.0, posinf=0.0, neginf=0.0)
@@ -161,86 +243,92 @@ class EllipseRegionBuilder:
             axes[..., 1, None, None].square()
         )
 
-        # Bound every region by exactly the local box whose obstacles we query.
-        xmin = (center_all[..., 0] - self.window_half).clamp_min(-1.0 + self.margin)
-        xmax = (center_all[..., 0] + self.window_half).clamp_max(1.0 - self.margin)
-        ymin = (center_all[..., 1] - self.window_half).clamp_min(-1.0 + self.margin)
-        ymax = (center_all[..., 1] + self.window_half).clamp_max(1.0 - self.margin)
-        box_A = p0.new_tensor(((1.0, 0.0), (-1.0, 0.0),
-                              (0.0, 1.0), (0.0, -1.0)))
-        A[:, :, :4] = box_A
-        b[:, :, 0] = xmax
-        b[:, :, 1] = -xmin
-        b[:, :, 2] = ymax
-        b[:, :, 3] = -ymin
-        face_mask[:, :, :4] = True
-
-        obstacle_slots = self.max_faces - 4
+        group_results = []
+        max_faces = 0
         for batch_indices, obstacle_points in self._groups:
-            if obstacle_points.numel() == 0:
-                continue
             centers = center_all[batch_indices].reshape(-1, 2)
             quadratics = quadratic_all[batch_indices].reshape(-1, 2, 2)
-            local_A = A[batch_indices].reshape(-1, self.max_faces, 2).clone()
-            local_b = b[batch_indices].reshape(-1, self.max_faces).clone()
-            local_mask = face_mask[batch_indices].reshape(-1, self.max_faces).clone()
-            local_complete = torch.zeros(len(centers), dtype=torch.bool, device=device)
+            chunk_results = []
 
             for begin in range(0, len(centers), self.chunk_size):
                 end = min(begin + self.chunk_size, len(centers))
                 c = centers[begin:end]
                 quadratic = quadratics[begin:end]
-                diff = obstacle_points[None] - c[:, None]
-                metric = torch.einsum("snd,sde,sne->sn", diff, quadratic, diff)
-                # Only points inside the bounded local query box matter.
-                active = (diff.abs() <= self.window_half + self.margin).all(dim=-1)
+                border_points = self._local_border_points(c)
+                border_active = torch.ones(
+                    len(c), border_points.shape[1], dtype=torch.bool, device=device)
+                border_A, border_b, border_mask = self._greedy_faces(
+                    c, quadratic, border_points, border_active)
 
-                for slot in range(obstacle_slots):
-                    ranked = metric.masked_fill(~active, torch.inf)
-                    nearest_value, nearest_idx = ranked.min(dim=1)
-                    has_face = torch.isfinite(nearest_value)
-                    if not bool(has_face.any()):
-                        break
-                    row = torch.arange(end - begin, device=device)
-                    obs = obstacle_points[nearest_idx]
-                    obs_diff = obs - c
-                    normal = torch.einsum("sde,se->sd", quadratic, obs_diff)
-                    norm = normal.norm(dim=-1)
-                    has_face &= torch.isfinite(norm) & (norm > 1e-7)
-                    normal = normal / norm.clamp_min(1e-7)[:, None]
-                    rhs = (normal * obs).sum(dim=-1) - self.margin
-                    face = 4 + slot
-                    local_A[begin:end, face] = torch.where(
-                        has_face[:, None], normal, local_A[begin:end, face])
-                    local_b[begin:end, face] = torch.where(
-                        has_face, rhs, local_b[begin:end, face])
-                    local_mask[begin:end, face] = has_face
+                if obstacle_points.numel() != 0:
+                    real_points = obstacle_points[None].expand(len(c), -1, -1)
+                    real_diff = real_points - c[:, None]
+                    in_local_map = (real_diff.abs() <= self.window_half).all(dim=-1)
+                    real_A, real_b, real_mask = self._greedy_faces(
+                        c, quadratic, real_points, in_local_map)
+                else:
+                    real_A = c.new_zeros((len(c), 0, 2))
+                    real_b = c.new_zeros((len(c), 0))
+                    real_mask = torch.zeros(
+                        (len(c), 0), dtype=torch.bool, device=device)
 
-                    projection = torch.einsum("sd,nd->sn", normal, obstacle_points)
-                    keep = projection <= rhs[:, None] + self.dedup_eps
-                    active &= keep | ~has_face[:, None]
-                    active[row[has_face], nearest_idx[has_face]] = False
-                local_complete[begin:end] = ~active.any(dim=1)
+                # Border faces are generated independently so real-obstacle
+                # filtering cannot discard the boundary ring before it closes
+                # every recession direction.
+                chunk_A = torch.cat((real_A, border_A), dim=1)
+                chunk_b = torch.cat((real_b, border_b), dim=1)
+                chunk_mask = torch.cat((real_mask, border_mask), dim=1)
+                max_faces = max(max_faces, chunk_A.shape[1])
+                chunk_results.append((begin, end, chunk_A, chunk_b, chunk_mask))
+            group_results.append((batch_indices, len(centers), chunk_results))
 
+        A = torch.zeros(batch, horizon, max_faces, 2, dtype=dtype, device=device)
+        b = torch.zeros(batch, horizon, max_faces, dtype=dtype, device=device)
+        face_mask = torch.zeros(batch, horizon, max_faces,
+                                dtype=torch.bool, device=device)
+        for batch_indices, count, chunk_results in group_results:
+            local_A = p0.new_zeros((count, max_faces, 2))
+            local_b = p0.new_zeros((count, max_faces))
+            local_mask = torch.zeros((count, max_faces), dtype=torch.bool, device=device)
+            for begin, end, chunk_A, chunk_b, chunk_mask in chunk_results:
+                faces = chunk_A.shape[1]
+                local_A[begin:end, :faces] = chunk_A
+                local_b[begin:end, :faces] = chunk_b
+                local_mask[begin:end, :faces] = chunk_mask
             A[batch_indices] = local_A.reshape(
-                len(batch_indices), horizon, self.max_faces, 2)
+                len(batch_indices), horizon, max_faces, 2)
             b[batch_indices] = local_b.reshape(
-                len(batch_indices), horizon, self.max_faces)
+                len(batch_indices), horizon, max_faces)
             face_mask[batch_indices] = local_mask.reshape(
-                len(batch_indices), horizon, self.max_faces)
-            region_complete[batch_indices] = local_complete.reshape(
-                len(batch_indices), horizon)
+                len(batch_indices), horizon, max_faces)
 
         finite_faces = torch.isfinite(A).all(dim=-1) & torch.isfinite(b)
         face_mask &= finite_faces
         center_violation = (A * center_all[:, :, None]).sum(dim=-1) - b
-        center_inside = (center_violation.masked_fill(~face_mask, -torch.inf)
-                         .max(dim=-1).values <= 1e-5)
-        valid = (torch.isfinite(center_all).all(dim=-1) &
-                 torch.isfinite(quadratic_all).all(dim=(-1, -2)) &
-                 region_complete & center_inside &
-                 (face_mask.sum(dim=-1) >= 4))
-        return A, b, face_mask, valid
+        max_center_violation = center_violation.masked_fill(
+            ~face_mask, -torch.inf).max(dim=-1).values
+        center_inside = max_center_violation <= 1e-5
+        center_finite = torch.isfinite(center_all).all(dim=-1)
+        quadratic_finite = torch.isfinite(quadratic_all).all(dim=(-1, -2))
+        face_count = face_mask.sum(dim=-1)
+        bounded = _halfspaces_are_bounded(A, face_mask)
+        # Diagnostic only: face_count counts generated separator rows, not the
+        # visible edge count after redundant halfspaces are removed. Neither it
+        # nor center_inside determines validity.
+        valid = center_finite & quadratic_finite & region_complete & bounded
+        if not return_diagnostics:
+            return A, b, face_mask, valid
+        diagnostics = {
+            "center": center_all,
+            "center_finite": center_finite,
+            "quadratic_finite": quadratic_finite,
+            "region_complete": region_complete,
+            "center_inside": center_inside,
+            "face_count": face_count,
+            "bounded": bounded,
+            "max_center_violation": max_center_violation,
+        }
+        return A, b, face_mask, valid, diagnostics
 
 
 # Backward-compatible import name for callers outside the current sampler.

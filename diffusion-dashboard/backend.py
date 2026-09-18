@@ -29,10 +29,12 @@ CHECKPOINTS = {
     "epoch100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced/epoch_100.pt",
     "continue100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue100/best.pt",
     "continue200": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue200/best.pt",
+    "center_safe_isolated": "outputs/ckpt_v1_center_safe_isolated/best.pt",
 }
 MAZES = ("umaze", "medium", "large")
 CACHE_DIR = os.path.join(SITE_ROOT, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
+CACHE_FORMAT = 4
 
 cfg = load_config(os.path.join(ROOT, "configs", "config_v1_continue.yaml"))
 alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml")).get("alm") or {}
@@ -48,6 +50,21 @@ inference_lock = threading.Lock()
 with open(os.path.join(SITE_ROOT, "lib", "dashboard-catalog.json"), "r", encoding="utf-8") as handle:
     catalog = json.load(handle)
 sample_lookup = {sample["key"]: sample for sample in catalog["samples"]}
+
+
+def clear_generation_cache():
+    """Remove prior generated JSON files before every diffusion run.
+
+    The cache directory is fixed relative to this backend. Only regular JSON
+    files directly inside that directory are removed; subdirectories and other
+    files are never touched.
+    """
+    removed = 0
+    for entry in os.scandir(CACHE_DIR):
+        if entry.is_file(follow_symlinks=False) and entry.name.endswith(".json"):
+            os.remove(entry.path)
+            removed += 1
+    return removed
 
 
 def get_model(model_id: str):
@@ -254,21 +271,18 @@ class Handler(BaseHTTPRequestHandler):
             if sample_key not in sample_lookup: raise ValueError("未知样本")
             if model_id not in CHECKPOINTS: raise ValueError("未知模型")
             if seed < 0 or seed > 2_147_483_647: raise ValueError("seed 超出范围")
-            cache_payload = json.dumps({"format": 3, "alm": alm_enabled, "sample": sample_key, "model": model_id, "seed": seed, "condition": custom_condition, "obstacles": obstacles}, sort_keys=True, separators=(",", ":"))
+            cache_payload = json.dumps({"format": CACHE_FORMAT, "alm": alm_enabled, "sample": sample_key, "model": model_id, "seed": seed, "condition": custom_condition, "obstacles": obstacles}, sort_keys=True, separators=(",", ":"))
             cache_key = hashlib.sha1(cache_payload.encode()).hexdigest()[:12]
             cache_path = os.path.join(CACHE_DIR, f"{model_id}__{sample_key}__seed{seed}__{cache_key}.json")
             started = time.perf_counter()
-            if os.path.exists(cache_path):
-                with open(cache_path, "r", encoding="utf-8") as handle: result = json.load(handle)
-                result["cacheHit"] = True
-            else:
-                with inference_lock:
-                    if os.path.exists(cache_path):
-                        with open(cache_path, "r", encoding="utf-8") as handle: result = json.load(handle)
-                        result["cacheHit"] = True
-                    else:
-                        result = generate(sample_key, model_id, seed, custom_condition, obstacles, alm_enabled)
-                        with open(cache_path, "w", encoding="utf-8") as handle: json.dump(result, handle, separators=(",", ":"))
+            with inference_lock:
+                clear_generation_cache()
+                result = generate(
+                    sample_key, model_id, seed, custom_condition, obstacles,
+                    alm_enabled,
+                )
+                with open(cache_path, "w", encoding="utf-8") as handle:
+                    json.dump(result, handle, separators=(",", ":"))
             result["elapsedMs"] = round((time.perf_counter() - started) * 1000, 1)
             self.send_json(200, result)
         except Exception as error:
