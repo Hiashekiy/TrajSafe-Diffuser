@@ -11,6 +11,36 @@
 
 ---
 
+## V2（新增）：Skeleton-Topology-Grounded Trajectory Diffusion
+
+> V1 主链路（`configs/config_v1*.yaml`、`src/models/joint/*`）保持冻结，一行未改。
+
+V2 只保留**一套** trajectory diffusion：
+
+```
+x_T -> ... -> x_tc -> P_hat^c -> m -> s_i -> E_i -> x_tc -> ... -> x_0
+```
+
+传统几何只负责生成「合法候选空间」（骨架 + Yen K 短路），粗轨迹负责选择
+topology，Progress Head 决定椭圆沿 topology 的分布（`c_i = gamma_m(s_i)`），
+固定中心的 Ellipse Shape Head 学二维安全域，这些椭圆再反过来 condition **同一条**
+trajectory diffusion 的后半程。不再有 `e_t ~ N(0,I)`，不再有 `c = p + delta_c`。
+
+快速开始：
+
+```bash
+python scripts/data/10_build_skeletons.py               # 骨架 + 压缩 branch graph
+python scripts/data/11_build_skeleton_candidates.py     # 离线候选 + topology/progress 标签
+python scripts/data/12_build_skeleton_shape_labels.py   # 固定中心 IRIS 形状标签
+python train_v2.py    --config configs/config_v2_skeleton.yaml
+python sample_v2.py   --config configs/config_v2_skeleton.yaml --ckpt outputs/ckpt_v2_skeleton/best.pt
+python evaluate_v2.py --config configs/config_v2_skeleton.yaml --ckpt outputs/ckpt_v2_skeleton/best.pt
+```
+
+完整设计、八条禁止、运行方式、实测结果与测试清单见 `docs/V2.md`。
+
+---
+
 ## 环境
 
 统一使用 conda 环境 GGMPC：

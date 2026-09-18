@@ -1,0 +1,101 @@
+# ============================================================
+# V2: Skeleton-Topology-Grounded Trajectory Diffusion
+#   x_T -> P_hat^c -> m -> s_i -> E_i -> x_0
+#   ONE trajectory diffusion; the skeleton only defines the legal topology
+#   space and the ellipse centres (c_i = gamma_m(s_i)).
+# See docs/V2.md.  V1 (configs/config_v1.yaml) is frozen and untouched.
+# ============================================================
+
+env:
+  python: "E:/CondaEnvData/envs/GGMPC/python.exe"
+  device: "cuda"          # falls back to cpu when cuda unavailable
+  seed: 42
+
+data:
+  source: "data/processed_scene_v1"   # positions/conditions/maze_id/GT trajectories
+  base: "data/processed_scene_v2"     # V2 preprocessed artefacts (skeletons/candidates)
+  batch_size: 32
+  num_workers: 0
+  splits: ["train", "val", "test"]
+
+# --- section 4/5/6: skeleton construction -------------------------------
+skeleton:
+  safety_dilation_cells: 1   # Dilate(M, r_c) before thinning; no SDF is used
+  thinning_backend: "auto"   # cv2.ximgproc when importable, else numpy Guo-Hall
+  pure_cycle_aux_nodes: 2
+
+# --- section 7/8/9/17: candidate topologies -----------------------------
+topology:
+  num_candidates: 4        # M <= 4 slots; invalid slots get -inf before softmax
+  raw_k: 16                # Yen candidates before filtering
+  max_length_ratio: 1.5    # keep L_m <= 1.5 * L_min
+  dedup_jaccard: 0.75      # branch-set Jaccard above this = same topology
+  candidate_points: 128    # arc-length resampling of every candidate
+  anchor_candidates: 16    # visible skeleton nodes probed for start/goal
+  tau_gt: 0.05             # soft topology target temperature (scene units)
+  commit_t: 7              # topology is committed once, at the first t <= 7
+  detach_trajectory_feature: true   # topology loss must not drag the backbone
+  selection: "sample"      # sample (=Categorical(pi)) | argmax (deterministic)
+
+model:
+  horizon: 128        # K trajectory waypoints == K ellipse anchors
+  d_model: 128
+  num_heads: 4
+  traj_blocks: 8      # trajectory-only diffusion transformer blocks
+  ffn_dim: 512
+  map_res: 256        # occupancy input resolution
+
+  # scene memory: global 16x16 (kept from V1) + fine geometry 32x32
+  global_mem_res: 16
+  geo_decode_res: 64
+  geo_mem_res: 32
+  geo_attn_every: 2
+  geo_sigma: 0.25
+  geo_bias_clip: 8.0
+
+  dropout: 0.0
+  head_hidden: 256    # hidden width of the score / shape MLPs
+  path_hidden: 128    # PathEncoder width
+
+diffusion:
+  timesteps: 16       # cosine schedule, x0 prediction (V1 setting, unchanged)
+  beta_schedule: "squaredcos_cap_v2"
+  beta_start: 0.0001
+  beta_end: 0.02
+  prediction_type: "x0"
+
+# --- section 31/32: losses ----------------------------------------------
+loss:
+  lambda_traj: 1.0
+  lambda_smooth: 0.1
+  smooth_acc_weight: 0.25
+  smooth_jerk_weight: 1.0
+
+  lambda_topology: 1.0     # soft cross entropy against q_m (nDTW softmax)
+  lambda_progress: 0.5     # SmoothL1(s, s_GT)
+  lambda_shape: 1.0        # MSE on [log a, log b, cos2t, sin2t]
+
+  lambda_iou: 0.25
+  lambda_safe: 0.1         # full-ellipse occupancy safety (CVaR-mean)
+  ellipse_safe_res: 64
+  ellipse_mask_tau: 10.0
+  ellipse_safe_chunk: 32
+  safe_cvar_fraction: 0.2
+  safe_cvar_weight: 1.0
+  # there is NO lambda_center_safe in V2: c_i = gamma_m(s_i) is structural.
+
+train:
+  epochs: 100
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  log_interval: 20
+  save_every: 10
+  eval_every: 10
+  val_batches: 25
+  topology_teacher_forcing: true   # stage 1: use the GT-best candidate
+  ckpt_dir: "outputs/ckpt_v2_skeleton"
+
+eval:
+  num_candidates_ablation: [1, 2, 4, 8]
+  samples_per_od: 4
