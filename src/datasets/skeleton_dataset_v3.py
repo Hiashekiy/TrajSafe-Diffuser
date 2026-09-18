@@ -71,6 +71,7 @@ class SkeletonDatasetV3(Dataset):
     def __getitem__(self, idx):
         maze_id = int(self.mid[idx])
         M, G = self.num_candidates, self.geometry_points
+        cond = np.asarray(self.cond[idx], dtype=np.float32).reshape(2, 2)
         geom = np.zeros((M, G, 2), dtype=np.float32)
         glen = self.geom_lengths[idx].astype(np.int64).copy()
         for m in range(M):
@@ -81,11 +82,19 @@ class SkeletonDatasetV3(Dataset):
             lo, hi = int(self.offsets[idx, m]), int(self.offsets[idx, m + 1])
             px = np.asarray(self.geometry[lo:hi], dtype=np.float32)
             geom[m, :n] = (px + 0.5) * self.cell - 1.0
+            # The dense chain is stored as int16 CELL indices, so the two
+            # continuous endpoints (start / goal) would be snapped to cell
+            # centres by the rounding - up to half a cell of error that L_align
+            # could never remove.  Restore them exactly; the inner points are
+            # genuine cell centres and stay untouched.
+            if n >= 2:
+                geom[m, 0] = cond[0]
+                geom[m, n - 1] = cond[1]
         mask = self.mask[idx].astype(bool)
         glen = np.where(mask, glen, 0)
         return {
             "pos": torch.as_tensor(self.pos[idx], dtype=torch.float32),
-            "cond": torch.as_tensor(self.cond[idx], dtype=torch.float32),
+            "cond": torch.from_numpy(cond),
             "maze_id": maze_id,
             "candidate_features": torch.as_tensor(
                 np.array(self.features[idx]), dtype=torch.float32),

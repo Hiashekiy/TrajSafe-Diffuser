@@ -14,9 +14,18 @@ Every reverse timestep runs the FULL network, including a fresh skeleton choice:
         P0     = head_p(h_fin)                 # SAME head, real output
         P_t    = ddim_step(P_t, P0, t)
 
-No commit_t, no committed flag, no cached selected path/features.  The last
-transition (next index < 0) sets P = x0 exactly, for both the full and the
-sub-sampled schedule.
+No commit_t, no committed flag, no cached selected path/features.
+
+Schedules (section 21).  The network is evaluated at EVERY listed time and the
+final transition is always ``t = 0 -> -1``, which sets P = x0 exactly:
+
+    full        (T-1 -> T-2) ... (1 -> 0) (0 -> -1)        T+1 transitions
+    sub-sampled (15 -> 10) (10 -> 5) (5 -> 0) (0 -> -1)    4 transitions
+
+The trailing ``0 -> -1`` step is NOT optional: without it the last scheduled
+index (e.g. t = 5) would hand its own x0 estimate to DDIM, the network would
+never run at t = 0, and P_0 would not be the clean prediction.  Only
+``s_t < 0`` may therefore bypass DDIM.
 """
 
 from __future__ import annotations
@@ -60,6 +69,9 @@ def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
         pairs = [(t, t - 1) for t in range(T - 1, -1, -1)]
     else:
         pairs = [(times[i], times[i - 1]) for i in range(len(times) - 1, 0, -1)]
+        # always close the schedule with the clean transition 0 -> -1, so the net
+        # is evaluated at t = 0 and P_0 == x0(t = 0) (section 21)
+        pairs.append((times[0], -1))
 
     p = torch.randn(B, H, 2, device=dev, dtype=torch.float32)
     p[:, 0] = start
@@ -91,10 +103,11 @@ def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
             out["selected_idx"] = idx
         x0 = out["final"]
         last = out
-        # The last transition must land EXACTLY on the clean prediction, for the
-        # full schedule (next index -1) and for a sub-sampled one (next index 0,
-        # where alpha_bar_0 is not exactly 1).  Section 21.
-        if int(s_t) <= 0:
+        # ONLY the explicit clean transition (t = 0 -> -1) bypasses DDIM.  Every
+        # other step - including a sub-sampled step that lands on index 0 - must
+        # go through the real DDIM update, because alpha_bar_0 != 1: index 0 is
+        # still a noisy latent, not the clean sample.  Section 21.
+        if int(s_t) < 0:
             p = x0
         else:
             sa_t, s1_t = sqrt_ab[int(t)], sqrt_1ma[int(t)]

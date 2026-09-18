@@ -59,32 +59,61 @@ def main():
 
     print("device=%s B=%d H=%d M=%d L=%d G=%d" % (device, B, H, M, L, G),
           flush=True)
+
+    cuda = device.type == "cuda"
+
+    def sync():
+        # CUDA is asynchronous: without this every segment timing below is a
+        # kernel-LAUNCH time, not a kernel time.
+        if cuda:
+            torch.cuda.synchronize()
+
+    def timed(call):
+        sync()
+        t0 = time.time()
+        out = call()
+        sync()
+        return out, time.time() - t0
+
+    # warm-up pass (cudnn autotune, lazy init) - never reported
+    warm = model.forward_all(p0, occ, cond, t, ab, feats, mask, lengths,
+                             geom, glen, select_index=None)
+    warm_loss = trajectory_x0_loss(warm["final"], p0)
+    sync()
+    warm_loss.backward()
+    model.zero_grad(set_to_none=True)
+    sync()
+    print("warm-up done", flush=True)
+
     times = []
     for i in range(args.repeat):
-        t0 = time.time()
-        out = model.forward_all(p0, occ, cond, t, ab, feats, mask, lengths,
-                                geom, glen, select_index=None)
-        t_fwd = time.time() - t0
+        out, t_fwd = timed(lambda: model.forward_all(
+            p0, occ, cond, t, ab, feats, mask, lengths, geom, glen,
+            select_index=None))
         loss = (trajectory_x0_loss(out["final"], p0)
                 + trajectory_x0_loss(out["coarse"], p0))
-        safe, _, _ = ellipse_safety_loss(out["ellipse"]["center"],
-                                         out["ellipse"]["a"], out["ellipse"]["b"],
-                                         out["ellipse"]["theta"], occ)
-        loss = loss + safe + ellipse_area_loss(out["ellipse"]["a"],
-                                               out["ellipse"]["b"],
-                                               model.ellipse.a_max)
-        t0 = time.time()
-        loss.backward()
-        model.zero_grad(set_to_none=True)
-        t_bwd = time.time() - t0
-        times.append((t_fwd, t_bwd))
-        print("  pass %d: forward %.3fs  backward %.3fs  total %.3fs"
-              % (i, t_fwd, t_bwd, t_fwd + t_bwd), flush=True)
+
+        def _losses():
+            safe, _, _ = ellipse_safety_loss(
+                out["ellipse"]["center"], out["ellipse"]["a"],
+                out["ellipse"]["b"], out["ellipse"]["theta"], occ)
+            return loss + safe + ellipse_area_loss(
+                out["ellipse"]["a"], out["ellipse"]["b"],
+                model.ellipse.a_max, model.ellipse.b_max)
+
+        total_loss, t_loss = timed(_losses)
+        _, t_bwd = timed(lambda: (total_loss.backward(),
+                                  model.zero_grad(set_to_none=True)))
+        times.append((t_fwd, t_loss, t_bwd))
+        print("  pass %d: forward %.3fs  losses %.3fs  backward %.3fs  total %.3fs"
+              % (i, t_fwd, t_loss, t_bwd, t_fwd + t_loss + t_bwd), flush=True)
     if len(times) > 1:
         later = times[1:]
-        print("steady-state forward %.3fs backward %.3fs"
-              % (sum(t[0] for t in later) / len(later),
-                 sum(t[1] for t in later) / len(later)))
+        n = len(later)
+        print("steady-state forward %.3fs losses %.3fs backward %.3fs total %.3fs"
+              % (sum(t[0] for t in later) / n, sum(t[1] for t in later) / n,
+                 sum(t[2] for t in later) / n,
+                 sum(sum(t) for t in later) / n))
     print("first pass total %.3fs" % sum(times[0]))
 
 

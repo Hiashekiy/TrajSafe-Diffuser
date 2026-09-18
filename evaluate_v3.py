@@ -120,7 +120,8 @@ def main():
            ["traj_collision", "goal_dist", "smooth", "center_free",
             "center_min_clearance", "ellipse_collision", "area", "align_mae",
             "progress_violations", "topo_entropy", "selected_ndtw", "recall",
-            "topo_diversity", "traj_diversity", "step_jitter", "sel_best_rate"]}
+            "topo_diversity", "traj_diversity", "step_jitter",
+            "step_switch_rate", "sel_best_rate"]}
     rng = np.random.default_rng(0)
 
     for bi in range(args.num_batches):
@@ -205,7 +206,12 @@ def main():
             sel_all = [int(run["selected_idx"][b]) for run in runs]
             agg["topo_diversity"].append(float(len(set(sel_all)) > 1))
             per_step = [int(step["selected_idx"][b]) for step in runs[0]["trace"]]
-            agg["step_jitter"].append(float(len(set(per_step)) - 1))
+            # real switch count, not |set|-1: a path A -> B -> A switches twice
+            # while set(...) only has two elements.
+            switches = sum(1 for u, v in zip(per_step[:-1], per_step[1:]) if u != v)
+            agg["step_jitter"].append(float(switches))
+            agg["step_switch_rate"].append(
+                float(switches) / max(len(per_step) - 1, 1))
         print("[eval_v3] batch %d/%d" % (bi + 1, args.num_batches), flush=True)
 
     summary = {}

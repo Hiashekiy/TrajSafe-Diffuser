@@ -14,7 +14,8 @@ env:
 data:
   source: "data/processed_scene_v1"    # 轨迹 / 起终点 / 地图
   base: "data/processed_scene_v3"      # V3 候选（features + dense geometry）
-  batch_size: 32
+  batch_size: 16           # 32 在本机(12GB 且与其它进程共享)会掉进显存回退的性能
+                           # 悬崖：实测同一 step，B=16 是 0.143s，B=32 是 4.1s
   num_workers: 0
   splits: ["train", "val", "test"]
 
@@ -98,7 +99,7 @@ train:
   lr: 2.0e-4
   weight_decay: 1.0e-4
   grad_clip: 1.0
-  log_interval: 20
+  log_interval: 50
   save_every: 10
   eval_every: 10
   val_batches: 25

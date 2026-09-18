@@ -24,7 +24,7 @@ import time
 
 import torch
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, ROOT)
 
@@ -116,7 +116,8 @@ def batch_losses(batch, model, schedule, lcfg, device, pred_prob=0.0):
         cvar_weight=float(lcfg.get("safe_cvar_weight", 1.0)),
         sample_mask=has_cand)
     a_max = float(model.ellipse.a_max)
-    l_area = ellipse_area_loss(ell["a"], ell["b"], a_max, has_cand)
+    b_max = float(model.ellipse.b_max)
+    l_area = ellipse_area_loss(ell["a"], ell["b"], a_max, b_max, has_cand)
     l_ratio = ellipse_ratio_loss(ell["a"], ell["b"],
                                  float(lcfg.get("ratio_max", 4.0)), has_cand)
     l_inside = ellipse_inside_loss(ell["center"], ell["a"], ell["b"],
@@ -184,6 +185,9 @@ def main():
     ap.add_argument("--no-val", action="store_true")
     ap.add_argument("--overfit", type=int, default=0,
                     help="train on the first N samples only (section 33)")
+    ap.add_argument("--max-hours", type=float, default=None,
+                    help="stop gracefully after the first epoch that exceeds "
+                         "this wall-clock budget (keeps latest.pt/best.pt)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -302,6 +306,12 @@ def main():
         if save_every and (epoch + 1) % save_every == 0:
             save_checkpoint(os.path.join(ckpt_dir, "epoch_%d.pt" % (epoch + 1)),
                             model, optim, epoch, cfg)
+        if args.max_hours and (time.time() - t0) / 3600.0 >= args.max_hours:
+            print("[stop] wall-clock budget %.2fh reached after epoch %d "
+                  "(%.2fh elapsed); latest.pt/best.pt are up to date"
+                  % (args.max_hours, epoch, (time.time() - t0) / 3600.0),
+                  flush=True)
+            break
     print("[done] best val L=%.4f ckpt=%s" % (best_val, ckpt_dir), flush=True)
 
 

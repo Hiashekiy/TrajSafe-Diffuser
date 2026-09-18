@@ -115,6 +115,11 @@ def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
     np.save(os.path.join(out_dir, "candidate_branch_counts.npy"), branch_counts)
 
     valid = mask.sum(axis=1)
+    # (branch_counts == 0) alone also counts the INVALID padding slots, which
+    # inflate the "no branch" count by up to M-1 per sample.  Only valid
+    # candidates with an empty branch set are real (and they are legitimate:
+    # start and goal can sit next to the same skeleton node).
+    no_branch = int((mask & (branch_counts == 0)).sum())
     stats = {
         "n": int(n), "empty_od": int(empty),
         "mean_valid": float(valid.mean()),
@@ -122,13 +127,19 @@ def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
         "geometry_points_total": int(geom.shape[0]),
         "geometry_points_max": int(geom_lengths.max()) if n else 0,
         "geometry_mean_per_valid": float(geom_lengths.sum() / max(int(mask.sum()), 1)),
-        "candidates_without_branch": int((branch_counts == 0).sum()),
+        "candidates_without_branch": no_branch,
+        "candidates_without_branch_frac": float(
+            no_branch / max(int(mask.sum()), 1)),
+        "candidates_without_branch_incl_invalid": int((branch_counts == 0).sum()),
+        "branch_hist": [int((branch_counts[mask] == k).sum())
+                        for k in range(int(branch_counts.max()) + 1)]
+        if int(mask.sum()) else [],
         "cache_entries": len(cache),
         "seconds": float(time.time() - t0),
     }
-    print("[%s] n=%d empty=%d mean_valid=%.2f geom_pts=%d max_len=%d"
+    print("[%s] n=%d empty=%d mean_valid=%.2f geom_pts=%d max_len=%d no_branch=%d"
           % (split, n, empty, stats["mean_valid"], geom.shape[0],
-             stats["geometry_points_max"]), flush=True)
+             stats["geometry_points_max"], no_branch), flush=True)
     return stats
 
 

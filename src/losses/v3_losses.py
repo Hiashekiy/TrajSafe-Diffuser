@@ -7,7 +7,7 @@
       + lam_align  L_align    SmoothL1(gamma_m(s_i), p_i^*)   - no progress GT
       + lam_gap    L_gap      gap smoothness (weak)
       + lam_safe   L_safe     full-ellipse occupancy safety (mean + CVaR)
-      + lam_area   L_area     push the ellipse to grow (bounded axes)
+      + lam_area   L_area     push the ellipse to grow, normalised by a_max b_max
       + lam_ratio  L_ratio    aspect-ratio cap (weak)
       + lam_inside L_inside   trajectory inside the ellipse (off by default)
 
@@ -120,12 +120,21 @@ def ellipse_safety_loss(center, a, b, theta, occ, raster_res=64, tau=10.0,
 
 
 def ellipse_area_loss(a: torch.Tensor, b: torch.Tensor, a_max: float,
-                      sample_mask=None) -> torch.Tensor:
-    """L_area = 1 - mean(a_i b_i / a_max^2): bounded, so it cannot diverge."""
-    per = ((a * b) / float(a_max) ** 2).mean(dim=1)
+                      b_max: float = None, sample_mask=None) -> torch.Tensor:
+    """L_area = masked_mean(1 - a_i b_i / (a_max b_max)): bounded, so it cannot
+    diverge, and exactly 0 when nothing is valid.
+
+    The normaliser is the LARGEST AREA the head can produce, a_max * b_max, not
+    a_max^2.  With b_max = 0.30 and a_max = 0.80 the old normaliser could never
+    exceed 0.375, so the loss could not reach 0 even with maximal ellipses.
+    """
+    if b_max is None:
+        b_max = a_max
+    per = 1.0 - (a * b) / (float(a_max) * float(b_max))
+    per = per.mean(dim=1)
     if sample_mask is None:
-        return 1.0 - per.mean()
-    return 1.0 - _masked_mean(per, sample_mask)
+        return per.mean()
+    return _masked_mean(per, sample_mask)
 
 
 def ellipse_ratio_loss(a: torch.Tensor, b: torch.Tensor, r_max: float = 4.0,

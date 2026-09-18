@@ -6,7 +6,7 @@
     raw [r_a, r_b, u, v] ->
         b = b_min + (b_max - b_min) sigma(r_b)
         a = b + (a_max - b) sigma(r_a)          =>  b_min <= b <= a <= a_max
-        theta = 0.5 atan2(v', u')
+        theta = 0.5 atan2(v, u)   (with a safe fallback for (u, v) = (0, 0))
 
 shape4 = [log a, log b, cos 2t, sin 2t] is derived for token encoding and
 visualisation only - it has NO ground-truth supervision in V3.
@@ -21,6 +21,27 @@ from ..joint.joint_blocks import AdaLN
 from .blocks import CrossAttention
 
 __all__ = ["EllipseHead"]
+
+
+def _unit_direction(uv: torch.Tensor) -> torch.Tensor:
+    """Normalise (u, v) to a unit vector, with a safe degenerate fallback.
+
+    The head CAN emit exactly (0, 0) at initialisation or after a bad step.
+    Dividing by ``sqrt(0 + eps)`` there would yield a non-unit vector, and
+    ``atan2(0, 0)`` has a NaN derivative, so the zero direction is replaced by
+    the well defined constant direction (1, 0) - the same convention as the V2
+    shape head.  torch.where keeps the NaN branch out of the backward pass.
+    """
+    norm2 = (uv * uv).sum(dim=-1, keepdim=True)
+    safe = norm2 > 1e-12
+    # clamp AFTER the sqrt: adding eps inside the root would bias the direction
+    # by eps / (2 norm2) - a 2.5e-5 error for a small but perfectly valid (u, v).
+    norm = torch.sqrt(norm2).clamp_min(1e-12)
+    unit = uv / norm
+    one = torch.ones_like(uv[..., :1])
+    zero = torch.zeros_like(uv[..., :1])
+    fallback = torch.cat([one, zero], dim=-1)
+    return torch.where(safe, unit, fallback)
 
 
 class EllipseHead(nn.Module):
@@ -65,9 +86,8 @@ class EllipseHead(nn.Module):
         r_a, r_b = raw[..., 0], raw[..., 1]
         b = self.b_min + (self.b_max - self.b_min) * torch.sigmoid(r_b)
         a = b + (self.a_max - b) * torch.sigmoid(r_a)
-        uv = raw[..., 2:4]
-        norm = torch.sqrt((uv * uv).sum(dim=-1, keepdim=True) + 1e-12)
-        u_hat = uv / norm
+        u_hat = _unit_direction(raw[..., 2:4])
+        # atan2 is scale invariant, so the unit direction IS (cos 2t, sin 2t)
         theta = 0.5 * torch.atan2(u_hat[..., 1], u_hat[..., 0])
         shape4 = torch.stack([torch.log(a.clamp_min(1e-6)),
                               torch.log(b.clamp_min(1e-6)),

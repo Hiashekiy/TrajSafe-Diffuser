@@ -69,7 +69,12 @@ def plot_samples(occ, cond, path, traj, ell, out_png, title, stride=4):
 
 
 def plot_trace(occ, trace, geometry, geometry_lengths, out_png, title):
-    """Per-timestep replay: coarse (dashed) vs final, plus the selected chain."""
+    """Per-timestep replay: coarse (dashed) vs final, plus the selected chain.
+
+    ``trace`` is the per-sample trace: every step already has the batch axis
+    removed, so the trajectory arrays are [H, 2] and are plotted in full (the
+    old code took element 0 and silently drew a single waypoint).
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -82,15 +87,18 @@ def plot_trace(occ, trace, geometry, geometry_lengths, out_png, title):
     for i, step in enumerate(trace):
         ax = axes[i // cols][i % cols]
         ax.imshow(occ, origin="lower", cmap="gray_r", interpolation="nearest")
-        j = int(step["selected_idx"][0])
+        j = int(np.asarray(step["selected_idx"]).reshape(-1)[0])
         n = max(2, int(geometry_lengths[j]))
         ax.plot(*to_px(geometry[j][:n], res).T, color="#1f77b4", lw=1.1)
-        ax.plot(*to_px(step["coarse"][0], res).T, color="#ff9f1c", lw=1.0, ls="--")
-        ax.plot(*to_px(step["final"][0], res).T, color="#2ca02c", lw=1.4)
-        cp = to_px(step["ellipse_center"][0], res)
+        ax.plot(*to_px(np.asarray(step["coarse"]), res).T,
+                color="#ff9f1c", lw=1.0, ls="--")
+        ax.plot(*to_px(np.asarray(step["final"]), res).T,
+                color="#2ca02c", lw=1.4)
+        cp = to_px(np.asarray(step["ellipse_center"]), res)
         ax.scatter(cp[:, 0], cp[:, 1], s=1.2, c="#d62728")
-        ax.set_title("t=%d  m=%d  pi(m)=%.2f" % (step["t"], j,
-                                                 float(step["pi"][0, j])),
+        ax.set_title("t=%d->%d  m=%d  pi(m)=%.2f"
+                     % (step["t"], step["s"], j,
+                        float(np.asarray(step["pi"]).reshape(-1)[j])),
                      fontsize=8)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -100,6 +108,7 @@ def plot_trace(occ, trace, geometry, geometry_lengths, out_png, title):
     fig.tight_layout()
     fig.savefig(out_png)
     plt.close(fig)
+    return axes        # returned so tests can inspect what was actually drawn
 
 
 def main():
@@ -188,13 +197,15 @@ def main():
                 "V3 %s #%d  m=%d" % (MAZE_NAMES[maze], idxs[k], sel))
             if not args.no_trace_plot:
                 # the trace is a list of per-STEP dicts with a batch axis: slice
-                # sample k out of every step and drop the batch dim
+                # sample k out of every step and drop the batch dim, so every
+                # array below is [H, 2] / [H] / [M]
                 trace_k = [{**step,
                             "coarse": step["coarse"][k].numpy(),
                             "final": step["final"][k].numpy(),
-                            "selected_idx": step["selected_idx"][k:k + 1],
-                            "pi": step["pi"][k:k + 1],
-                            "ellipse_center": step["ellipse_center"][k:k + 1]}
+                            "p": step["p"][k].numpy(),
+                            "selected_idx": step["selected_idx"][k].numpy(),
+                            "pi": step["pi"][k].numpy(),
+                            "ellipse_center": step["ellipse_center"][k].numpy()}
                            for step in out["trace"]]
                 plot_trace(occ_map, trace_k, geom_cpu[k], glen_cpu[k],
                            os.path.join(args.out,

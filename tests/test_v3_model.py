@@ -151,13 +151,30 @@ def test_safety_loss_has_gradient_on_axes_and_angle():
 def test_area_loss_pushes_the_ellipse_to_grow():
     a = torch.full((1, 4), 0.1, requires_grad=True)
     b = torch.full((1, 4), 0.05, requires_grad=True)
-    loss = v3_losses.ellipse_area_loss(a, b, a_max=0.8)
+    loss = v3_losses.ellipse_area_loss(a, b, a_max=0.8, b_max=0.3)
     loss.backward()
     before = float((a * b).mean())
     with torch.no_grad():
         a += -0.05 * a.grad
         b += -0.05 * b.grad
     assert float((a * b).mean()) > before
+
+
+def test_area_loss_normalisation_and_mask():
+    """a_max * b_max normalisation, and exactly 0 when nothing is valid."""
+    a = torch.full((2, 4), 0.8)
+    b = torch.full((2, 4), 0.30)
+    # a maximal ellipse is a ZERO loss (the old a_max^2 normaliser gave 0.625)
+    assert float(v3_losses.ellipse_area_loss(a, b, 0.8, 0.30)) < 1e-6
+    assert float(v3_losses.ellipse_area_loss(a * 0.5, b * 0.5, 0.8, 0.30)) > 0.5
+    # an all-invalid batch (and a mixed one) must not invent a loss
+    empty = torch.zeros(2, dtype=torch.bool)
+    mixed = torch.tensor([True, False])
+    small = torch.full((2, 4), 0.1)
+    assert float(v3_losses.ellipse_area_loss(small, small, 0.8, 0.30, empty)) == 0.0
+    only_first = float(v3_losses.ellipse_area_loss(small, small, 0.8, 0.30, mixed))
+    assert abs(only_first - float(v3_losses.ellipse_area_loss(
+        small[:1], small[:1], 0.8, 0.30))) < 1e-6
 
 
 def test_safety_and_area_backpropagate_together():
@@ -264,19 +281,45 @@ def test_sampler_selection_can_change_between_steps():
 
 
 # --------------------------------------------------------------------- 11
-def test_subsampled_last_step_returns_x0_exactly():
+def test_subsampled_schedule_ends_with_the_clean_transition():
+    """Section 21: the sub-sampled schedule must ALSO end with 0 -> -1.
+
+    Otherwise the last scheduled index (t = 5 for steps = 4) hands its own x0 to
+    DDIM, the network never runs at t = 0, and P_0 is not the clean prediction.
+    """
     model = tiny_model()
     b = tiny_batch(B=2, M=2)
-    for steps in (None, 4, 2):
+    assert sampler_v3.pick_times(16, 4) == [0, 5, 10, 15]
+    assert sampler_v3.pick_times(16, None) is None
+    for steps, want in ((None, 16), (4, 4), (2, 2), (8, 8)):
         out = sampler_v3.sample_v3(model, NoiseSchedule(16), b["cond"], b["occ"],
                                    b["features"], b["mask"], b["lengths"],
                                    b["geom"], b["geom_len"], device="cpu",
                                    steps=steps, seed=0, return_trace=True)
-        last = out["trace"][-1]
-        assert last["s"] <= 0          # -1 for the full run, 0 for sub-sampled
-        assert torch.allclose(out["p"], last["final"], atol=1e-6), steps
-    assert sampler_v3.pick_times(16, 4) == [0, 5, 10, 15]
-    assert sampler_v3.pick_times(16, None) is None
+        trace = out["trace"]
+        assert len(trace) == want, steps
+        # every step but the last is a real DDIM transition (s_t >= 0) ...
+        assert all(step["s"] >= 0 for step in trace[:-1]), steps
+        # ... and the last one is the explicit clean transition t = 0 -> -1
+        assert trace[-1]["t"] == 0 and trace[-1]["s"] == -1, steps
+        assert torch.allclose(out["p"], trace[-1]["final"], atol=1e-6), steps
+
+
+def test_subsampled_schedule_evaluates_the_network_at_every_listed_time():
+    model = tiny_model()
+    b = tiny_batch(B=1, M=2)
+    seen = []
+    orig = model.forward_all
+
+    def spy(p_t, occ, cond, t, ab, *a, **k):
+        seen.append(int(t[0]))
+        return orig(p_t, occ, cond, t, ab, *a, **k)
+
+    model.forward_all = spy
+    sampler_v3.sample_v3(model, NoiseSchedule(16), b["cond"], b["occ"],
+                         b["features"], b["mask"], b["lengths"], b["geom"],
+                         b["geom_len"], device="cpu", steps=4, seed=0)
+    assert seen == [15, 10, 5, 0], seen
 
 
 # --------------------------------------------------------------------- 12
@@ -290,19 +333,37 @@ def test_no_candidate_row_works_end_to_end():
     assert torch.isfinite(out["coarse"]).all()
     assert torch.isfinite(out["ellipse"]["center"]).all()
     assert torch.isfinite(out["ellipse"]["a"]).all()
+    # ... and it really degenerates to the plain trajectory diffusion
+    assert torch.allclose(out["final"], out["coarse"], atol=1e-7)
     has = b["mask"].any(dim=1)
     safe, _, _ = v3_losses.ellipse_safety_loss(
         out["ellipse"]["center"], out["ellipse"]["a"], out["ellipse"]["b"],
         out["ellipse"]["theta"], b["occ"], sample_mask=has)
     topo = v3_losses.topology_ce(out["topo"]["pi"], torch.zeros(3, dtype=torch.long), has)
-    assert float(safe) == 0.0 and float(topo) == 0.0
-    assert torch.isfinite(safe) and torch.isfinite(topo)
+    area = v3_losses.ellipse_area_loss(out["ellipse"]["a"], out["ellipse"]["b"],
+                                       model.ellipse.a_max, model.ellipse.b_max,
+                                       has)
+    assert float(safe) == 0.0 and float(topo) == 0.0 and float(area) == 0.0
+    assert torch.isfinite(safe) and torch.isfinite(topo) and torch.isfinite(area)
     # the sampler must survive the same rows
     res = sampler_v3.sample_v3(model, NoiseSchedule(16), b["cond"], b["occ"],
                                b["features"], b["mask"], b["lengths"], b["geom"],
                                b["geom_len"], device="cpu", seed=0)
     assert torch.isfinite(res["p"]).all()
     assert not bool(res["has_candidate"].any())
+
+
+def test_no_candidate_bypass_is_per_row():
+    """A mixed batch: only the candidate-free rows fall back to the coarse x0."""
+    model = tiny_model()
+    b = tiny_batch(B=3, M=3)
+    b["mask"][:] = False
+    b["mask"][0, 0] = True
+    b["geom_len"][:] = 0
+    b["geom_len"][0, 0] = 16
+    out = _forward(model, b)
+    assert torch.allclose(out["final"][1:], out["coarse"][1:], atol=1e-7)
+    assert not torch.allclose(out["final"][0], out["coarse"][0])
 
 
 # --------------------------------------------------------------------- 13
@@ -347,13 +408,17 @@ def test_ellipse_axes_are_bounded_and_ordered():
     assert bool((ell["a"] >= ell["b"] - 1e-6).all())
 
     class _Const(torch.nn.Module):
-        def __init__(self, value):
+        def __init__(self, value, zero_dir=False):
             super().__init__()
             self.value = float(value)
+            self.zero_dir = bool(zero_dir)
 
         def forward(self, x):
-            return torch.full((*x.shape[:-1], 4), self.value, device=x.device,
-                              dtype=x.dtype)
+            out = torch.full((*x.shape[:-1], 4), self.value, device=x.device,
+                             dtype=x.dtype)
+            if self.zero_dir:
+                out[..., 2:4] = 0.0        # exact (u, v) = (0, 0)
+            return out
 
     for value in (-80.0, 80.0):
         model.ellipse.mlp = _Const(value)
@@ -366,4 +431,66 @@ def test_ellipse_axes_are_bounded_and_ordered():
         # the direction must stay a unit vector even for a degenerate raw output
         unit = (ell["shape4"][..., 2] ** 2 + ell["shape4"][..., 3] ** 2)
         assert torch.allclose(unit, torch.ones_like(unit), atol=1e-6)
+
+
+@pytest.mark.parametrize("value,fallback", [(0.0, True), (-0.0, True),
+                                            (1e-7, True), (1e-4, False)])
+def test_ellipse_degenerate_direction_is_finite_and_unit(value, fallback):
+    """raw (u, v) = (0, 0) exactly: no NaN gradient, unit direction, theta = 0."""
+    model = tiny_model()
+    b = tiny_batch()
+
+    class _ZeroDir(torch.nn.Module):
+        def forward(self, x):
+            out = torch.full((*x.shape[:-1], 4), float(value), device=x.device,
+                             dtype=x.dtype)
+            out[..., 2:4] = float(value)
+            return out
+
+    model.ellipse.mlp = _ZeroDir()
+    out = _forward(model, b)
+    ell = out["ellipse"]
+    assert torch.isfinite(ell["a"]).all() and torch.isfinite(ell["b"]).all()
+    assert torch.isfinite(ell["theta"]).all()
+    unit = ell["shape4"][..., 2] ** 2 + ell["shape4"][..., 3] ** 2
+    assert torch.allclose(unit, torch.ones_like(unit), atol=1e-6)
+    if fallback:
+        # the zero direction is replaced by the constant (1, 0)
+        assert torch.allclose(ell["shape4"][..., 2], torch.ones_like(unit),
+                              atol=1e-6)
+        assert torch.allclose(ell["shape4"][..., 3], torch.zeros_like(unit),
+                              atol=1e-6)
+        assert torch.allclose(ell["theta"], torch.zeros_like(unit), atol=1e-6)
+    # ... and the backward pass through the direction must not produce NaN
+    model.zero_grad()
+    loss = ell["theta"].sum() + ell["shape4"].sum() + out["final"].sum()
+    loss.backward()
+    grads = [p.grad for p in model.ellipse.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+def test_ellipse_tokens_use_both_type_embeddings():
+    """Trajectory and ellipse streams must not share one type embedding."""
+    model = tiny_model()
+    b = tiny_batch()
+    with torch.no_grad():
+        model.traj_type.weight[0].fill_(0.0)
+        model.traj_type.weight[1].fill_(0.0)
+    base = model.encode_trajectory(b["pos"], b["occ"], b["cond"], b["t"], b["ab"])
+    coarse = model.coarse_trajectory(base, b["cond"])
+    topo = model.score_candidates(base, coarse, b["features"], b["mask"],
+                                  b["lengths"])
+    ar = torch.arange(b["mask"].shape[0])
+    idx = topo["pi"].argmax(dim=-1)
+    ell0 = model.build_ellipses(base, coarse, topo["path_feat"][ar, idx],
+                                b["geom"][ar, idx], b["geom_len"][ar, idx],
+                                b["ab"])
+    with torch.no_grad():
+        model.traj_type.weight[1].add_(1.0)
+    ell1 = model.build_ellipses(base, coarse, topo["path_feat"][ar, idx],
+                                b["geom"][ar, idx], b["geom_len"][ar, idx],
+                                b["ab"])
+    assert not torch.allclose(ell0["tokens"], ell1["tokens"])
+    assert torch.allclose(ell1["tokens"] - ell0["tokens"],
+                          torch.ones_like(ell0["tokens"]), atol=1e-6)
 

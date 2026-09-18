@@ -172,7 +172,10 @@ class SkeletonPlannerV3(nn.Module):
             center = torch.where(degenerate[:, None, None], coarse, center)
         ell = self.ellipse(fused, center, base["geo_mem"], base["h_t"], ab)
         token_in = torch.cat([center, ell["shape4"]], dim=-1)
-        h_e = (self.mlp_e(token_in)
+        # the V1 type embedding is kept for BOTH token streams (index 0 =
+        # trajectory, 1 = ellipse), on top of the bias inside JointFusionBlock
+        ell_type = self.traj_type.weight[1][None, None, :]
+        h_e = (self.mlp_e(token_in) + ell_type
                + self.plan_pe(self.plan_idx.to(token_in.device))[None])
         if ell.get("geo_attn") is not None:
             h_e = h_e + ell["geo_attn"]
@@ -213,17 +216,22 @@ class SkeletonPlannerV3(nn.Module):
         """
         B = base["traj_feat"].shape[0]
         ar = torch.arange(B, device=base["traj_feat"].device)
+        has_cand = candidate_mask.any(dim=1)
         if select_index is None:
             idx = topo["pi"].argmax(dim=-1)
         else:
             idx = select_index.long()
-        idx = torch.where(candidate_mask.any(dim=1), idx,
-                          torch.zeros_like(idx))
+        idx = torch.where(has_cand, idx, torch.zeros_like(idx))
         path_feat = topo["path_feat"][ar, idx]
         geom = geometry[ar, idx]
         geom_len = geometry_lengths[ar, idx]
         ell = self.build_ellipses(base, coarse, path_feat, geom, geom_len, ab)
         h_final = self.fuse(base, ell["tokens"])
         final = self.final_trajectory(h_final, cond)
+        # No candidate at all => there is no skeleton to ground on, so the row
+        # degenerates to the plain trajectory diffusion: P^_0 = P~_0.  Without
+        # this the meaningless ellipse branch would still move the output.
+        final = torch.where(has_cand[:, None, None], final, coarse)
         return {"base": base, "coarse": coarse, "topo": topo, "ellipse": ell,
-                "h_final": h_final, "final": final, "selected_idx": idx}
+                "h_final": h_final, "final": final, "selected_idx": idx,
+                "has_candidate": has_cand}
