@@ -70,9 +70,16 @@ def _ellipse_points(center, shape4, n_b=64, n_i=48, rng=None):
 
 
 def _smoothness(p):
-    """Mean |acceleration| normalized by the mean step length (lower = smoother)."""
-    v = np.diff(p, axis=1)
-    acc = np.diff(v, axis=1)
+    """Mean |acceleration| normalized by the mean step length (lower = smoother).
+
+    p is ONE trajectory [H, 2], so the difference is taken along the waypoint
+    axis (0).  Taking it along axis 1 would differentiate across x/y and always
+    return zero.
+    """
+    p = np.asarray(p, dtype=float)
+    axis = 0 if p.ndim == 2 else 1
+    v = np.diff(p, axis=axis)
+    acc = np.diff(v, axis=axis)
     step = float(np.linalg.norm(v, axis=-1).mean()) + 1e-9
     return float(np.linalg.norm(acc, axis=-1).mean() / step)
 
