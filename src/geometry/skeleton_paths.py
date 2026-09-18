@@ -42,6 +42,7 @@ __all__ = [
     "CandidateSet",
     "route_between",
     "routes_k_shortest",
+    "UnsafeRouteError",
     "resample_polyline",
     "path_features",
     "branch_jaccard",
@@ -134,32 +135,52 @@ def _dedupe_consecutive(points: List[Tuple[float, float]]) -> np.ndarray:
     return arr[keep]
 
 
+class UnsafeRouteError(RuntimeError):
+    """No safe concatenation exists for this node/branch sequence.
+
+    Raised instead of repairing the route: V3 never emits a connector that a
+    corner cut separates, the candidate is simply dropped.
+    """
+
+
 def _assemble_route(graph: SkeletonGraph, node_path: Sequence[int],
+                    branch_ids: Sequence[int],
                     conn_start: Sequence[Tuple[int, int]],
                     conn_goal: Sequence[Tuple[int, int]],
                     start_pixel: Sequence[float],
-                    goal_pixel: Sequence[float],
-                    start_scene: Sequence[float],
-                    goal_scene: Sequence[float]) -> SkeletonRoute:
-    """Concatenate connectors + branch polylines + in-cluster bridges."""
+                    goal_pixel: Sequence[float]) -> SkeletonRoute:
+    """Concatenate connectors + branch polylines + in-cluster bridges.
+
+    branch_ids is taken from the branch-expanded path, NOT re-derived from the
+    node pair: re-deriving would collapse parallel branches onto the shorter
+    one and silently change the topology.
+    """
+    def bridge(node_idx, a, b):
+        got = graph.in_cluster_path(int(node_idx), a, b)
+        if got is None:
+            raise UnsafeRouteError(
+                "no safe in-cluster path at node %d between %s and %s"
+                % (node_idx, a, b))
+        return got
+
     cells: List[Tuple[int, int]] = list(conn_start)
-    branch_ids: List[int] = []
+    branch_ids = [int(v) for v in branch_ids]
+    if len(branch_ids) != max(0, len(node_path) - 1):
+        raise UnsafeRouteError("branch sequence does not match the node path")
 
     if len(node_path) == 1:
-        bridge = graph.in_cluster_path(node_path[0], cells[-1], conn_goal[-1])
-        cells.extend(bridge[1:])
+        cells.extend(bridge(node_path[0], cells[-1], conn_goal[-1])[1:])
     else:
-        for a, b in zip(node_path[:-1], node_path[1:]):
-            bid = graph.branch_between(int(a), int(b))
-            if bid is None:  # pragma: no cover - defensive
-                raise ValueError("no branch between nodes %s and %s" % (a, b))
-            branch_ids.append(int(bid))
-            pix = graph.branches[bid].polyline(int(a))
-            bridge = graph.in_cluster_path(int(a), cells[-1], pix[0])
-            cells.extend(bridge[1:])
+        for j, (a, b) in enumerate(zip(node_path[:-1], node_path[1:])):
+            bid = branch_ids[j]
+            br = graph.branches[bid]
+            if {int(br.u), int(br.v)} != {int(a), int(b)}:
+                raise UnsafeRouteError("branch %d does not join %d and %d"
+                                       % (bid, a, b))
+            pix = br.polyline(int(a))
+            cells.extend(bridge(a, cells[-1], pix[0])[1:])
             cells.extend(pix[1:])
-        bridge = graph.in_cluster_path(int(node_path[-1]), cells[-1], conn_goal[-1])
-        cells.extend(bridge[1:])
+        cells.extend(bridge(node_path[-1], cells[-1], conn_goal[-1])[1:])
 
     cells.extend(list(conn_goal)[-2::-1])          # anchor -> ... -> goal cell
 
@@ -189,41 +210,49 @@ def route_between(graph: SkeletonGraph, start_scene: Sequence[float],
 def routes_k_shortest(graph: SkeletonGraph, start_scene: Sequence[float],
                       goal_scene: Sequence[float], k: int = 16,
                       anchor_candidates: int = 16) -> List[SkeletonRoute]:
-    """Yen K-shortest simple paths, assembled into full start -> goal routes."""
+    """Yen K-shortest simple paths over the BRANCH-EXPANDED graph.
+
+    Every visible start/goal anchor is wired to a super source/sink, so the
+    attachment point and the route are optimised jointly, and every parallel
+    branch keeps its own node, so two branches joining the same junctions
+    become two different candidates.
+    """
     import networkx as nx
 
-    a_s = graph.anchor_point(start_scene, anchor_candidates)
-    if a_s is None:
+    anchors_s = graph.visible_anchors(start_scene, anchor_candidates)
+    if not anchors_s:
         return []
-    a_g = graph.anchor_point(goal_scene, anchor_candidates)
-    if a_g is None:
+    anchors_g = graph.visible_anchors(goal_scene, anchor_candidates)
+    if not anchors_g:
         return []
-    v_s, conn_s = a_s
-    v_g, conn_g = a_g
+    conn_s = {int(n): c for n, c, _l in anchors_s}
+    conn_g = {int(n): c for n, c, _l in anchors_g}
     start_pixel = graph.scene_to_pixel(start_scene)
     goal_pixel = graph.scene_to_pixel(goal_scene)
 
-    node_paths: List[List[int]] = []
-    if v_s == v_g:
-        node_paths.append([v_s])
-    else:
-        g = graph.nx_graph()
-        try:
-            for i, p in enumerate(nx.shortest_simple_paths(g, v_s, v_g, weight="weight")):
-                node_paths.append([int(v) for v in p])
-                if len(node_paths) >= int(k):
-                    break
-        except nx.NetworkXNoPath:
-            return []
-        except nx.NodeNotFound:  # pragma: no cover - defensive
-            return []
+    g, src, sink = graph.expanded_graph(anchors_s, anchors_g)
+    decoded: List[Tuple[List[int], List[int]]] = []
+    try:
+        for path in nx.shortest_simple_paths(g, src, sink, weight="weight"):
+            junctions, branches = graph.decode_expanded_path(path)
+            if not junctions:
+                continue
+            decoded.append((junctions, branches))
+            if len(decoded) >= int(k):
+                break
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return []
 
     routes = []
-    for np_ in node_paths:
+    for junctions, branches in decoded:
+        v_s, v_g = junctions[0], junctions[-1]
+        if v_s not in conn_s or v_g not in conn_g:   # pragma: no cover
+            continue
         try:
-            routes.append(_assemble_route(graph, np_, conn_s, conn_g, start_pixel,
-                                          goal_pixel, start_scene, goal_scene))
-        except ValueError:  # pragma: no cover - defensive
+            routes.append(_assemble_route(graph, junctions, branches,
+                                          conn_s[v_s], conn_g[v_g],
+                                          start_pixel, goal_pixel))
+        except UnsafeRouteError:
             continue
     return routes
 
@@ -299,10 +328,16 @@ def branch_jaccard(a: Sequence[int], b: Sequence[int]) -> float:
 class CandidateSet:
     """Fixed-size padded candidate topology set for one OD pair."""
 
-    paths: np.ndarray                  # [M, L, 5] float32 features
-    coords: np.ndarray                 # [M, L, 2] float32 scene coordinates
+    paths: np.ndarray                  # [M, L, 5] float32 NETWORK features
+    coords: np.ndarray                 # [M, L, 2] float32 128-point resample
     mask: np.ndarray                   # [M] bool
-    lengths: np.ndarray                # [M] float32 scene arc length
+    lengths: np.ndarray                # [M] float32 scene arc length (feature)
+    #: Dense safe cell-chain polyline per candidate (scene coords, variable
+    #: length).  gamma_m(s) MUST interpolate on this, never on the 128-point
+    #: resample: the resampled chords can cut a corner.
+    geometry: List[np.ndarray] = field(default_factory=list)
+    geometry_lengths: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.float32))
     node_paths: List[Tuple[int, ...]] = field(default_factory=list)
     branch_ids: List[Tuple[int, ...]] = field(default_factory=list)
     raw_k: int = 0
@@ -325,7 +360,19 @@ class CandidateSet:
             coords=np.zeros((num_candidates, num_points, 2), dtype=np.float32),
             mask=np.zeros(num_candidates, dtype=bool),
             lengths=np.zeros(num_candidates, dtype=np.float32),
+            geometry=[],
+            geometry_lengths=np.zeros(num_candidates, dtype=np.float32),
         )
+
+    def metric_polyline(self, idx: int) -> np.ndarray:
+        """Polyline for GEOMETRIC METRICS (nDTW, chamfer, collision sampling).
+
+        This is the 128-point arc-length resample of the dense chain: cheap and
+        already parameterised by arc length.  The dense chain itself
+        (geometry[idx]) is reserved for gamma_m(s), where the extra points are
+        what makes the interpolation structurally safe.
+        """
+        return self.coords[idx]
 
 
 def generate_candidates(graph: SkeletonGraph, start_scene: Sequence[float],
@@ -364,6 +411,9 @@ def generate_candidates(graph: SkeletonGraph, start_scene: Sequence[float],
         out.paths[i] = path_features(coords)
         out.mask[i] = True
         out.lengths[i] = float(route.length)
+        # dense, safe, cell-chain geometry (NOT the 128-point resample)
+        out.geometry.append(np.asarray(route.scene, dtype=np.float32))
+        out.geometry_lengths[i] = float(route.length)
         out.node_paths.append(route.node_path)
         out.branch_ids.append(route.branch_ids)
     return out
@@ -418,7 +468,8 @@ def soft_topology_target(gt_traj: np.ndarray, candidates: CandidateSet,
     idx = candidates.valid_index()
     if idx.size == 0:
         return q
-    d = np.array([normalized_dtw(gt_traj, candidates.coords[i]) for i in idx])
+    d = np.array([normalized_dtw(gt_traj, candidates.metric_polyline(i))
+                  for i in idx])
     finite = np.isfinite(d)
     if not finite.any():
         q[idx] = 1.0 / float(idx.size)

@@ -225,14 +225,23 @@ def test_candidate_start_goal_connected(ring_graph, umaze_graph):
 
 
 def test_candidate_multiple_topologies(ring_graph):
-    """Opposite corners of the ring yield two equally short topologies."""
+    """Opposite corners of the ring yield several DISTINCT topologies.
+
+    V3 wires every visible anchor into a super source/sink, so the count is no
+    longer exactly two (the ring also offers a degenerate route in which both
+    ends attach to the same node).  What must hold is that every accepted
+    candidate is a genuinely different topology and respects the length and
+    Jaccard filters.
+    """
     cands = sp.generate_candidates(ring_graph, RING_START, RING_GOAL)
-    assert cands.num_valid == 2
-    j = sp.branch_jaccard(cands.branch_ids[0], cands.branch_ids[1])
-    assert j <= 0.75
-    assert set(cands.branch_ids[0]) != set(cands.branch_ids[1])
-    l0, l1 = float(cands.lengths[0]), float(cands.lengths[1])
-    assert abs(l0 - l1) / min(l0, l1) < 0.2
+    assert cands.num_valid >= 2
+    sets = [set(b) for b in cands.branch_ids]
+    assert len({frozenset(s) for s in sets}) == len(sets)
+    for i in range(len(sets)):
+        for j in range(i + 1, len(sets)):
+            assert sp.branch_jaccard(sets[i], sets[j]) <= 0.75
+    lengths = cands.lengths[cands.valid_index()]
+    assert float(lengths.max()) <= 1.5 * float(lengths.min()) + 1e-9
 
 
 def test_all_candidate_segments_collision_free(ring_graph, rooms_graph, umaze_graph):
@@ -246,7 +255,7 @@ def test_all_candidate_segments_collision_free(ring_graph, rooms_graph, umaze_gr
         cands = sp.generate_candidates(graph, start, goal)
         assert cands.num_valid >= 1
         for k in cands.valid_index():
-            dense = sp.resample_polyline(cands.coords[k], 512)
+            dense = sp.resample_polyline(cands.metric_polyline(k), 512)
             px = graph.scene_to_pixel(dense)
             ii = np.rint(px[:, 0]).astype(int)
             jj = np.rint(px[:, 1]).astype(int)

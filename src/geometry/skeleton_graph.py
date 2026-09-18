@@ -329,7 +329,7 @@ class SkeletonGraph:
             self._incident[b.u].append(b.idx)
             if b.v != b.u:
                 self._incident[b.v].append(b.idx)
-        self._nx = None
+        self._expanded = None
 
     # -------------------------------------------------------------- geometry
     @property
@@ -366,39 +366,80 @@ class SkeletonGraph:
         return self.pixel_to_scene(pix)
 
     # ---------------------------------------------------------------- networkx
-    def nx_graph(self):
-        """Simple networkx.Graph for shortest-path search.
+    def expanded_graph(self, anchors_start=None, anchors_goal=None):
+        """Branch-expanded graph, optionally with a super source / sink.
 
-        Parallel branches between the same node pair are collapsed to the
-        shortest one: the discarded ones differ only by a few pixels and would
-        be removed by the candidate de-duplication step anyway.
+        Parallel branches are PRESERVED by giving every branch its own node:
+
+            junction -- branch-node -- junction
+
+        so two branches joining the same junction pair become two distinct
+        paths and the K-shortest search can return them as separate topologies
+        (a plain nx.Graph would silently keep only the shorter one).
+
+        anchors_start / anchors_goal are lists of (node_idx, cells, length_px)
+        from visible_anchors().  When given, a super source / sink is wired to
+        EVERY visible anchor with the connector length as the edge weight, so
+        the start/goal attachment is chosen jointly with the route instead of
+        being frozen to the single nearest node.
+
+        Returns (graph, source_node_or_None, sink_node_or_None).
         """
-        if self._nx is None:
-            import networkx as nx
+        import networkx as nx
 
-            g = nx.Graph()
-            g.add_nodes_from(n.idx for n in self.nodes)
-            for br in self.branches:
-                if br.u == br.v:
-                    continue
-                key = (min(br.u, br.v), max(br.u, br.v))
-                cur = g.get_edge_data(key[0], key[1])
-                if cur is None or br.length < cur["weight"]:
-                    g.add_edge(key[0], key[1], weight=float(br.length))
-            self._nx = g
-        return self._nx
+        g = nx.Graph()
+        for n in self.nodes:
+            g.add_node(("n", int(n.idx)))
+        for br in self.branches:
+            bnode = ("b", int(br.idx))
+            g.add_node(bnode)
+            half = 0.5 * float(br.length)
+            g.add_edge(("n", int(br.u)), bnode, weight=half)
+            g.add_edge(bnode, ("n", int(br.v)), weight=half)
+
+        src = sink = None
+        if anchors_start:
+            src = ("super", "source")
+            g.add_node(src)
+            for node_idx, _cells, length in anchors_start:
+                g.add_edge(src, ("n", int(node_idx)), weight=float(length))
+        if anchors_goal:
+            sink = ("super", "sink")
+            g.add_node(sink)
+            for node_idx, _cells, length in anchors_goal:
+                g.add_edge(sink, ("n", int(node_idx)), weight=float(length))
+        return g, src, sink
+
+    @staticmethod
+    def decode_expanded_path(path):
+        """Expanded node path -> (junction node ids, branch ids)."""
+        junctions: List[int] = []
+        branches: List[int] = []
+        for item in path:
+            tag = item[0]
+            if tag == "n":
+                junctions.append(int(item[1]))
+            elif tag == "b":
+                branches.append(int(item[1]))
+        return junctions, branches
 
     # ------------------------------------------------------------------ routes
     def in_cluster_path(self, node_idx: int, a: Tuple[int, int],
-                        b: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """Shortest no-corner-cut path inside one node cluster (pixels)."""
+                        b: Tuple[int, int]) -> Optional[List[Tuple[int, int]]]:
+        """Shortest no-corner-cut path inside one node cluster (pixels).
+
+        Returns None when no safe path exists.  V3 forbids the former
+        [a, b] fallback: joining two diagonal cluster pixels that a corner cut
+        separates would emit an unsafe connector, so the whole candidate must
+        be dropped instead of silently repaired.
+        """
         if a == b:
             return [a]
         node = self.nodes[node_idx]
         cache_key = (a, b)
-        cached = node._path_cache.get(cache_key)
-        if cached is not None:
-            return list(cached)
+        if cache_key in node._path_cache:
+            cached = node._path_cache[cache_key]
+            return None if cached is None else list(cached)
         allowed = set(node.pixels)
         from collections import deque
 
@@ -415,12 +456,8 @@ class SkeletonGraph:
                     prev[nxt] = cur
                     queue.append(nxt)
         if not found:
-            # The two cluster pixels are 8-adjacent but the diagonal step is a
-            # corner cut; fall back to the direct pair (both pixels are
-            # skeleton pixels, so the deviation is at most half a cell).
-            path = [a] if a == b else [a, b]
-            node._path_cache[cache_key] = list(path)
-            return path
+            node._path_cache[cache_key] = None
+            return None
         path: List[Tuple[int, int]] = []
         cur2: Optional[Tuple[int, int]] = b
         while cur2 is not None:
@@ -431,29 +468,54 @@ class SkeletonGraph:
         return path
 
     # ------------------------------------------------------------------ anchor
-    def anchor_point(self, point_scene: Sequence[float], max_candidates: int = 16
-                     ) -> Optional[Tuple[int, List[Tuple[int, int]]]]:
-        """Nearest *visible* skeleton node for a scene point.
+    def connector(self, point_scene: Sequence[float], node_idx: int):
+        """Safe connector from a scene point to one node, or None.
 
-        Nodes are visited in ascending distance; the first whose supercover
-        connector is entirely free wins.  Returns (node_idx, connector_cells)
-        or None when no node is visible.
+        Returns (cells, length_px); the length follows exactly the polyline the
+        route assembler will emit (the exact start point plus the cell chain,
+        the first cell being the one that contains the start point).
+        """
+        p = self.scene_to_pixel(point_scene)
+        node = self.nodes[int(node_idx)]
+        cells = supercover_pixels(p, node.anchor)
+        h, w = self.free.shape
+        for cx, cy in cells:
+            if not (0 <= cx < w and 0 <= cy < h) or not self.free[cy, cx]:
+                return None
+        pts = np.vstack([p[None, :], np.asarray(cells[1:], dtype=np.float64)])             if len(cells) > 1 else p[None, :]
+        length = float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())             if len(pts) > 1 else 0.0
+        return cells, length
+
+    def visible_anchors(self, point_scene: Sequence[float],
+                        max_candidates: int = 16):
+        """ALL visible skeleton nodes for a scene point, nearest first.
+
+        Returns a list of (node_idx, connector_cells, connector_length_px).
+        Every one of them becomes an edge of the super source/sink, so several
+        start/goal attachments can compete inside the same K-shortest search.
         """
         if not self.nodes:
-            return None
+            return []
         p = self.scene_to_pixel(point_scene)
         anchors = np.asarray([n.anchor for n in self.nodes], dtype=np.float64)
         d = np.linalg.norm(anchors - p[None, :], axis=1)
-        order = np.argsort(d)
-        limit = max(1, int(max_candidates))
-        h, w = self.free.shape
-        for pos in order[:limit]:
-            node = self.nodes[int(pos)]
-            cells = supercover_pixels(p, node.anchor)
-            if all(0 <= cx < w and 0 <= cy < h and self.free[cy, cx]
-                   for cx, cy in cells):
-                return node.idx, cells
-        return None
+        out = []
+        for pos in np.argsort(d)[:max(1, int(max_candidates))]:
+            node_idx = int(pos)
+            got = self.connector(point_scene, node_idx)
+            if got is not None:
+                cells, length = got
+                out.append((node_idx, cells, length))
+        return out
+
+    def anchor_point(self, point_scene: Sequence[float], max_candidates: int = 16
+                     ) -> Optional[Tuple[int, List[Tuple[int, int]]]]:
+        """Nearest visible node (thin wrapper over visible_anchors)."""
+        anchors = self.visible_anchors(point_scene, max_candidates)
+        if not anchors:
+            return None
+        node_idx, cells, _length = anchors[0]
+        return node_idx, cells
 
 
 # ---------------------------------------------------------------------------
