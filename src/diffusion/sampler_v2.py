@@ -142,9 +142,26 @@ def sample_v2(model, schedule, cond, map_tensor, candidate_paths,
         p = endpoints(p)
 
         if return_trace:
-            trace.append({"t": int(t), "s": int(s) if int(s) >= 0 else -1,
-                          "x0_p": x0_p.detach().cpu().clone(),
-                          "committed": bool(committed)})
+            # Full per-step record for the dashboard replay.  "p" is the noisy
+            # state at the START of this step (exactly what the model consumed),
+            # and the ellipse fields are None before the topology is committed.
+            ref = last_refine if selected_path is not None else None
+            trace.append({
+                "t": int(t),
+                "s": int(s) if int(s) >= 0 else -1,
+                "p": p.detach().cpu().clone(),
+                "x0_p": x0_p.detach().cpu().clone(),
+                "x0_p_base": base["x0_p_base"].detach().cpu().clone(),
+                "committed": bool(committed),
+                "selected_idx": selected_idx.detach().cpu().clone(),
+                "pi": pi_commit.detach().cpu().clone(),
+                "progress": (ref["progress"].detach().cpu().clone()
+                             if ref is not None else None),
+                "ellipse_center": (ref["ellipse_center"].detach().cpu().clone()
+                                   if ref is not None else None),
+                "ellipse_shape4": (ref["ellipse_shape4"].detach().cpu().clone()
+                                   if ref is not None else None),
+            })
 
     out = {
         "p": p,

@@ -23,6 +23,7 @@ from src.geometry.convex_corridor import EllipseRegionBuilder
 from src.models.joint import JointPlanner
 from src.utils.checkpoint import load_checkpoint
 from src.utils.config import load_config
+from backend_v2 import V2_CHECKPOINTS, V2Engine
 
 
 CHECKPOINTS = {
@@ -30,11 +31,14 @@ CHECKPOINTS = {
     "continue100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue100/best.pt",
     "continue200": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue200/best.pt",
     "center_safe_isolated": "outputs/ckpt_v1_center_safe_isolated/best.pt",
+    # V2 (Skeleton-Topology-Grounded Trajectory Diffusion) - handled by
+    # backend_v2.V2Engine, which builds its own model class and sampler.
+    **V2_CHECKPOINTS,
 }
 MAZES = ("umaze", "medium", "large")
 CACHE_DIR = os.path.join(SITE_ROOT, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
-CACHE_FORMAT = 4
+CACHE_FORMAT = 5
 
 cfg = load_config(os.path.join(ROOT, "configs", "config_v1_continue.yaml"))
 alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml")).get("alm") or {}
@@ -65,6 +69,32 @@ def clear_generation_cache():
             os.remove(entry.path)
             removed += 1
     return removed
+
+
+v2_engine = None
+
+
+def get_v2_engine():
+    """Lazily build the V2 engine (own config, model class and sampler)."""
+    global v2_engine
+    if v2_engine is None:
+        v2_engine = V2Engine(device)
+    return v2_engine
+
+
+def apply_obstacles(maze: str, obstacles):
+    """Base occupancy of a maze plus the user drawn circular obstacles."""
+    occupancy = maps[maze].copy()
+    for obstacle in obstacles or []:
+        if len(obstacle) != 3:
+            raise ValueError("障碍点格式错误")
+        ox, oy, radius = map(float, obstacle)
+        if not (-1 <= ox <= 1 and -1 <= oy <= 1 and 0.01 <= radius <= 0.25):
+            raise ValueError("障碍点超出地图或半径无效")
+        cx, cy, pr = (ox + 1) * 127.5, (oy + 1) * 127.5, radius * 127.5
+        yy, xx = np.ogrid[:256, :256]
+        occupancy[(xx - cx) ** 2 + (yy - cy) ** 2 <= pr ** 2] = 1.0
+    return occupancy
 
 
 def get_model(model_id: str):
@@ -113,6 +143,16 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
     condition = np.asarray(custom_condition if custom_condition is not None else conditions[dataset_id], dtype=np.float32)
     if condition.shape != (2, 2) or not np.isfinite(condition).all() or np.abs(condition).max() > 1:
         raise ValueError("起终点必须是 [-1,1]² 内的两个坐标")
+    if model_id in V2_CHECKPOINTS:
+        # V2: one trajectory diffusion grounded on the skeleton topology.  The
+        # candidates are generated ONLINE with the very same function the
+        # offline preprocessing uses, so any start/goal/obstacle edit works.
+        payload = get_v2_engine().generate(
+            sample_key, dataset_id, sample["maze"],
+            apply_obstacles(sample["maze"], obstacles), condition, seed,
+            model_id=model_id, verify_regions=bool(alm_enabled))
+        payload["obstacles"] = obstacles or []
+        return payload
     cond = torch.as_tensor(condition[None], dtype=torch.float32, device=device)
     maze = MAZES[int(maze_ids[dataset_id])]
     occupancy = maps[maze].copy()
@@ -267,7 +307,7 @@ class Handler(BaseHTTPRequestHandler):
             sample_key, model_id, seed = request.get("sampleKey"), request.get("modelId"), int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
-            alm_enabled = bool(request.get("almEnabled", True))
+            alm_enabled = bool(request.get("almEnabled", True))   # V2: verify convex regions
             if sample_key not in sample_lookup: raise ValueError("未知样本")
             if model_id not in CHECKPOINTS: raise ValueError("未知模型")
             if seed < 0 or seed > 2_147_483_647: raise ValueError("seed 超出范围")
