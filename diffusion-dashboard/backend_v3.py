@@ -36,20 +36,44 @@ ROOT = os.path.abspath(os.path.join(SITE_ROOT, ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from src.diffusion.alm_guidance import alm_correct
 from src.diffusion.sampler_v3 import sample_v3
 from src.diffusion.schedule import NoiseSchedule
+from src.geometry.convex_corridor import EllipseRegionBuilder
 from src.geometry.skeleton_graph import build_skeleton_graph
 from src.geometry.skeleton_paths import CandidateConfig, generate_candidates
 from src.models.skeleton_v3 import SkeletonPlannerV3
 from src.utils.config import load_config
 
 CONFIG_PATH = os.path.join(ROOT, "configs", "config_v3_skeleton.yaml")
+ALM_CONFIG_PATH = os.path.join(ROOT, "configs", "config_v1_alm.yaml")
 MAZES = ("umaze", "medium", "large")
 V3_CHECKPOINTS = {
     "v3_best": "outputs/ckpt_v3_skeleton/best.pt",
     "v3_latest": "outputs/ckpt_v3_skeleton/latest.pt",
 }
 DEFAULT_GEOMETRY_POINTS = 1280
+
+
+def polygon_vertices(A, b, mask, tol=1e-5):
+    """Ordered vertices of a bounded 2-D halfspace intersection (scene frame)."""
+    A, b = np.asarray(A)[mask], np.asarray(b)[mask]
+    candidates = []
+    for i in range(len(A)):
+        for j in range(i + 1, len(A)):
+            matrix = np.stack((A[i], A[j]))
+            det = np.linalg.det(matrix)
+            if abs(det) <= 1e-8:
+                continue
+            point = np.linalg.solve(matrix, np.asarray((b[i], b[j])))
+            if np.all(A @ point <= b + tol):
+                candidates.append(point)
+    if len(candidates) < 3:
+        return []
+    vertices = np.unique(np.round(np.asarray(candidates), 7), axis=0)
+    center = vertices.mean(axis=0)
+    angle = np.arctan2(vertices[:, 1] - center[1], vertices[:, 0] - center[0])
+    return np.round(vertices[np.argsort(angle)], 5).tolist()
 
 
 class V3Engine:
@@ -60,6 +84,7 @@ class V3Engine:
         self.skeleton_cfg = dict(self.cfg.get("skeleton") or {})
         self.geometry_points = int(
             self.topo_cfg.get("candidate_geometry_points", DEFAULT_GEOMETRY_POINTS))
+        self.alm_cfg = (load_config(ALM_CONFIG_PATH).get("alm") or {})
         self.device = device
         self.maps = {name: np.load(os.path.join(ROOT, "data", "processed_scene_v1",
                                                 "maps", "%s.npy" % name))
@@ -160,7 +185,74 @@ class V3Engine:
             "geometry_points": int(G),
         }
 
-    # --------------------------------------------------------------- metrics
+    # ---------------------------------------------------------- ALM guidance
+    def _make_guidance(self, occupancy):
+        """Inference-time V3 ALM guidance: predicted ellipse -> verified region.
+
+        The correction is applied to the model's raw ``P0_hat`` before DDIM; the
+        network weights, training losses and the report architecture are
+        unchanged.
+        """
+        cfg = dict(self.alm_cfg)
+        start_t = int(cfg.get("start_t", 7))
+        builder = EllipseRegionBuilder(
+            torch.as_tensor(occupancy, dtype=torch.float32,
+                            device=self.device)[None, None], cfg)
+        inner_steps = int(cfg.get("inner_steps", 4))
+        rho = float(cfg.get("rho", 5.0))
+        step_size = float(cfg.get("step_size", 0.03))
+        max_grad_norm = float(cfg.get("max_grad_norm", 1.0))
+        max_correction = float(cfg.get("max_correction_per_step", 0.10))
+        proximity = float(cfg.get("proximity_weight", 1.0))
+        smooth = float(cfg.get("correction_smooth_weight", 20.0))
+
+        def guide(x0, out, p_t, t):
+            if int(t) > start_t:
+                return x0, None
+            ell = out["ellipse"]
+            shape4 = ell["shape4"]
+            e6 = torch.cat([ell["center"] - x0, shape4], dim=-1)   # [B,H,6]
+            A, b, face_mask, valid = builder(x0, e6)
+            enforce = builder.segment_needs_guidance(x0)
+            lam = torch.zeros(x0.shape[0], x0.shape[1] - 1,
+                              device=x0.device, dtype=x0.dtype)
+            corrected, _, stats = alm_correct(
+                x0, A[:, 1:], b[:, 1:], face_mask[:, 1:], valid[:, 1:],
+                lam, rho, step_size=step_size, inner_steps=inner_steps,
+                max_grad_norm=max_grad_norm,
+                max_correction_per_step=max_correction,
+                proximity_weight=proximity,
+                correction_smooth_weight=smooth,
+                enforce_mask=enforce, collect_stats=True)
+
+            horizon = x0.shape[1]
+            cpu_A, cpu_b, cpu_mask = (A[0].cpu().numpy(), b[0].cpu().numpy(),
+                                      face_mask[0].cpu().numpy())
+            enforce_cpu = enforce[0].cpu().numpy()
+            region_indices = set(range(8, horizon, 8)) | {horizon - 1}
+            if int(enforce_cpu.sum()) <= 40:
+                for s in range(horizon - 1):
+                    if bool(enforce_cpu[s]):
+                        region_indices.add(int(s) + 1)
+            regions = []
+            for j in sorted(region_indices):
+                if not bool(valid[0, j].cpu()):
+                    continue
+                polygon = polygon_vertices(cpu_A[j], cpu_b[j], cpu_mask[j])
+                if polygon:
+                    regions.append({"i": int(j), "polygon": polygon})
+            info = {
+                "regions": regions,
+                "enforced": [int(s) for s in range(horizon - 1)
+                             if bool(enforce_cpu[s])],
+                "rawP": self._rounded(x0[0]),
+                "stats": {k: float(v.detach().cpu()) for k, v in stats.items()},
+            }
+            return corrected, info
+
+        return guide
+
+
     @staticmethod
     def _traj_collision(occupancy, trajectory):
         res = occupancy.shape[0]
@@ -237,14 +329,16 @@ class V3Engine:
                                device=self.device)
         occ = torch.as_tensor(occupancy, dtype=torch.float32,
                               device=self.device)[None, None]
+        guide = self._make_guidance(occupancy) if verify_regions else None
         result = sample_v3(model, self.schedule, cond, occ,
                            packed["xy"], packed["mask"], packed["geometry"],
                            packed["geometry_lengths"], device=self.device,
-                           seed=seed, return_trace=True)
+                           seed=seed, return_trace=True, alm_guidance=guide)
         trace = result["trace"]
 
         p_history, e6_history, x0p_history, x0e6_history = [], [], [], []
         alm_frames, v3_frames = [], []
+        region_count = 0
         for step in trace:
             p = step["p"][0].numpy()
             x0 = step["final"][0].numpy()
@@ -255,8 +349,24 @@ class V3Engine:
             x0p_history.append(self._rounded(x0))
             e6_history.append(self._rounded(self._e6(center, shape4, p)))
             x0e6_history.append(self._rounded(self._e6(center, shape4, x0)))
-            alm_frames.append({"t": int(step["t"]), "rawP": self._rounded(coarse),
-                               "enforced": [], "regions": [], "stats": {}})
+            guide_info = step.get("guide")
+            if guide is None:
+                # report-faithful run: reuse the overlay for the coarse branch
+                alm_frames.append({"t": int(step["t"]),
+                                   "rawP": self._rounded(coarse),
+                                   "enforced": [], "regions": [], "stats": {}})
+            elif guide_info is not None:
+                region_count += len(guide_info["regions"])
+                alm_frames.append({
+                    "t": int(step["t"]),
+                    "rawP": guide_info["rawP"],
+                    "enforced": guide_info["enforced"],
+                    "regions": guide_info["regions"],
+                    "stats": guide_info["stats"],
+                })
+            else:
+                # guided run but this timestep is above the ALM start threshold
+                alm_frames.append(None)
             v3_frames.append({
                 "t": int(step["t"]),
                 "selectedIdx": int(step["selected_idx"][0]),
@@ -278,7 +388,7 @@ class V3Engine:
         metrics = self._ellipse_metrics(occupancy, trace)
         metrics["trajCollision"] = bool(self._traj_collision(
             occupancy, np.asarray(p_history[-2])))
-        metrics["regionCount"] = 0
+        metrics["regionCount"] = int(region_count)
         metrics["progressMonotonic"] = all(
             bool(np.all(np.diff(f["progress"]) >= -1e-6)) for f in v3_frames
             if f and f.get("progress"))
@@ -300,8 +410,12 @@ class V3Engine:
             },
             "PHistory": p_history, "E6History": e6_history,
             "X0PHistory": x0p_history, "X0E6History": x0e6_history,
-            # reuse the ALM overlay channel for the coarse backbone prediction
-            "alm": {"enabled": False, "startT": 0, "frames": alm_frames},
+            # ALM overlay channel: convex regions + the pre-correction x0, or the
+            # coarse backbone prediction when ALM guidance is disabled.
+            "alm": {"enabled": bool(verify_regions),
+                    "startT": int(self.alm_cfg.get("start_t", 7))
+                    if verify_regions else 0,
+                    "frames": alm_frames},
             "v2": {
                 "engine": "v3-skeleton-dynamic",
                 "epoch": epoch,

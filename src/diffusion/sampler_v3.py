@@ -33,9 +33,15 @@ def pick_times(T: int, steps):
 @torch.no_grad()
 def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
               geometry, geometry_lengths, device="cuda", steps=None, seed=None,
-              return_trace=False):
+              return_trace=False, alm_guidance=None):
     """cond [B,2,2]; occ [B,1,R,R]; candidate_xy [B,M,L,2];
-    candidate_mask [B,M]; geometry [B,M,G,2]; geometry_lengths [B,M]."""
+    candidate_mask [B,M]; geometry [B,M,G,2]; geometry_lengths [B,M].
+
+    ``alm_guidance`` is an optional inference-time callback
+    ``fn(x0, out, p_t, t) -> (x0_corrected, info)``.  When it is omitted the
+    sampler is exactly the report-faithful DDIM loop (only the trajectory is a
+    diffusion state).
+    """
     if seed is not None:
         torch.manual_seed(int(seed))
     model.eval()
@@ -75,6 +81,10 @@ def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
                                 candidate_mask, geometry, geometry_lengths,
                                 select_index=None)
         x0 = out["final"]
+        x0_raw = x0
+        guide_info = None
+        if alm_guidance is not None:
+            x0, guide_info = alm_guidance(x0, out, p, int(t))
         last = out
         if int(s_t) < 0:
             p = x0
@@ -91,6 +101,8 @@ def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "p": p.detach().cpu().clone(),
                 "coarse": out["coarse"].detach().cpu().clone(),
                 "final": x0.detach().cpu().clone(),
+                "final_raw": x0_raw.detach().cpu().clone(),
+                "guide": guide_info,
                 "selected_idx": out["selected_idx"].detach().cpu().clone(),
                 "pi": out["topo"]["pi"].detach().cpu().clone(),
                 "progress": out["ellipse"]["progress"].detach().cpu().clone(),

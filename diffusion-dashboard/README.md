@@ -370,3 +370,20 @@ V3 的输入就是骨架图上的搜索路径，所以 dashboard 必须和离线
 V3 当前权重下仍可能在个别 OD 上预测出贴墙/切角的轨迹（例如 `large-855` 的 waypoint 17–25），
 dashboard 会在「轨迹碰撞」里明确标红；这是模型效果检查的一部分，不是渲染错误。
 
+### 10.6 凸区域 + ALM 修正（推理期，可选）
+
+V3 开关「凸区域 + ALM 修正（较慢）」打开后，每个 `t <= start_t` 的 reverse step 会：
+
+1. 取 V3 预测椭圆 `(center = Gamma(s), shape4)`，构造成 V1 的 6 维形式
+   `[dx, dy, log a, log b, cos2t, sin2t]`（`dx,dy = center - x0`）；
+2. 用 `EllipseRegionBuilder` 为每个椭圆生成 verified convex region；
+3. 用 `alm_correct` 修正模型刚输出的 `x0`（保持端点，correction 平滑）；
+4. 修正后的 `x0` 才进入 DDIM，物理椭圆中心保持在 `Gamma(s)`。
+
+右侧会显示每帧区域数、`violation before → after`、修正量、λ、平滑度等；
+关闭开关时仍是纯报告版 DDIM，粉色虚线显示 `Head_P(H_traj)` 的 coarse 分支。
+
+该功能只发生在推理期，网络权重、训练损失和报告结构都不变；ALM 参数复用
+`configs/config_v1_alm.yaml` 的 `alm` 段（`start_t`、`rho`、`step_size` 等）。
+
+
