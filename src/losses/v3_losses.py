@@ -39,10 +39,17 @@ __all__ = [
 
 
 def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Mean over the valid entries; the mask broadcasts over trailing dims."""
+    """Mean over the valid ENTRIES; the mask broadcasts over trailing dims.
+
+    The normaliser must be the number of masked ELEMENTS, not the number of
+    masked samples.  Dividing a [B, H] tensor by mask.sum() = B inflated L_align
+    and L_gap by a factor of H (= 128), which silently made the ellipse-centre
+    alignment ~98% of the whole objective.
+    """
     mask = mask.to(values.dtype)
     while mask.dim() < values.dim():
         mask = mask.unsqueeze(-1)
+    mask = mask.expand_as(values)
     return (values * mask).sum() / mask.sum().clamp_min(1.0)
 
 

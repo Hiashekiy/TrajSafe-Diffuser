@@ -188,6 +188,8 @@ def main():
     ap.add_argument("--max-hours", type=float, default=None,
                     help="stop gracefully after the first epoch that exceeds "
                          "this wall-clock budget (keeps latest.pt/best.pt)")
+    ap.add_argument("--ckpt-dir", default=None,
+                    help="override train.ckpt_dir (so two runs can coexist)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -238,8 +240,9 @@ def main():
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
     log_interval = (args.log_interval if args.log_interval is not None
                     else int(train_cfg.get("log_interval", 20)))
-    ckpt_dir = train_cfg.get("ckpt_dir", "outputs/ckpt_v3_skeleton")
+    ckpt_dir = args.ckpt_dir or train_cfg.get("ckpt_dir", "outputs/ckpt_v3_skeleton")
     os.makedirs(ckpt_dir, exist_ok=True)
+    print("[ckpt] %s" % ckpt_dir, flush=True)
 
     optim = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]),
                               weight_decay=float(train_cfg.get("weight_decay", 0.0)))

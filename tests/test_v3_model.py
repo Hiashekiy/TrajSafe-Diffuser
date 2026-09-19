@@ -177,6 +177,26 @@ def test_area_loss_normalisation_and_mask():
         small[:1], small[:1], 0.8, 0.30))) < 1e-6
 
 
+def test_masked_mean_normalises_by_entries_not_samples():
+    """A [B] mask over a [B, H] tensor must divide by B*H, not by B.
+
+    The bug made L_align / L_gap H times too large, which turned the ellipse
+    centre alignment into ~98% of the total objective.
+    """
+    B, H = 4, 128
+    values = torch.full((B, H), 0.5)
+    mask = torch.tensor([True, True, False, False])
+    assert abs(float(v3_losses._masked_mean(values, mask)) - 0.5) < 1e-6
+    # 1-D stays what it always was
+    assert abs(float(v3_losses._masked_mean(torch.full((B,), 0.5), mask)) - 0.5) < 1e-6
+    # an all-false mask is 0, not a division blow-up
+    assert float(v3_losses._masked_mean(values, torch.zeros(B, dtype=torch.bool))) == 0.0
+    # align_loss with a constant offset 0.1 is 0.5 * 0.1^2 (SmoothL1, beta = 1)
+    centers = torch.zeros(B, H, 2)
+    gt = torch.full((B, H, 2), 0.1)
+    assert abs(float(v3_losses.align_loss(centers, gt, mask)) - 0.005) < 1e-6
+
+
 def test_safety_and_area_backpropagate_together():
     model = tiny_model()
     b = tiny_batch()
