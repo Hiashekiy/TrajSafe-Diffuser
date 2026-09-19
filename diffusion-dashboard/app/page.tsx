@@ -42,7 +42,7 @@ const layerConfig = [
   { key: 'topology', label: '选中骨架拓扑', color: '#4aa3ff' },
 ] as const;
 // V2 复用同一批图层：almRaw 变成「未条件化 x̂₀」，almRegions 变成「验证凸区域」
-const layerLabel = (key: string, label: string, isV2: boolean, isV3: boolean) => !isV2 ? label : key === 'almRaw' ? (isV3 ? '轨迹主干 x̂₀（未椭圆条件化）' : '未条件化 x̂₀（纯轨迹主干）') : key === 'almRegions' ? (isV3 ? '—' : '验证过的凸区域') : key === 'topology' ? (isV3 ? '候选搜索路径 + 选中拓扑' : label) : label;
+const layerLabel = (key: string, label: string, isV2: boolean, isV3: boolean) => !isV2 ? label : key === 'almRaw' ? (isV3 ? '修正前 x̂₀ / 轨迹主干' : '未条件化 x̂₀（纯轨迹主干）') : key === 'almRegions' ? (isV3 ? '验证凸区域（ALM 修正）' : '验证过的凸区域') : key === 'topology' ? (isV3 ? '候选搜索路径 + 选中拓扑' : label) : label;
 const xy = (point: Vec): Vec => [(point[0] + 1) * 128, (1 - point[1]) * 128];
 const points = (path: Vec[]) => path.map((point) => xy(point).join(',')).join(' ');
 const pathLength = (path: Vec[]) => path.slice(1).reduce((sum, p, i) => sum + Math.hypot(p[0] - path[i][0], p[1] - path[i][1]), 0);
