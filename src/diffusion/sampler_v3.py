@@ -98,6 +98,7 @@ def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "ellipse_a": out["ellipse"]["a"].detach().cpu().clone(),
                 "ellipse_b": out["ellipse"]["b"].detach().cpu().clone(),
                 "ellipse_theta": out["ellipse"]["theta"].detach().cpu().clone(),
+                "ellipse_shape4": out["ellipse"]["shape4"].detach().cpu().clone(),
             })
 
     result = {"p": p, "has_candidate": has_cand}

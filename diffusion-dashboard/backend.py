@@ -24,6 +24,7 @@ from src.models.joint import JointPlanner
 from src.utils.checkpoint import load_checkpoint
 from src.utils.config import load_config
 from backend_v2 import V2_CHECKPOINTS, V2Engine
+from backend_v3 import V3_CHECKPOINTS, V3Engine
 
 
 CHECKPOINTS = {
@@ -34,6 +35,8 @@ CHECKPOINTS = {
     # V2 (Skeleton-Topology-Grounded Trajectory Diffusion) - handled by
     # backend_v2.V2Engine, which builds its own model class and sampler.
     **V2_CHECKPOINTS,
+    # V3 (TrajSafe-Diffuser report-faithful) - handled by backend_v3.V3Engine.
+    **V3_CHECKPOINTS,
 }
 MAZES = ("umaze", "medium", "large")
 CACHE_DIR = os.path.join(SITE_ROOT, "cache")
@@ -72,6 +75,7 @@ def clear_generation_cache():
 
 
 v2_engine = None
+v3_engine = None
 
 
 def get_v2_engine():
@@ -80,6 +84,14 @@ def get_v2_engine():
     if v2_engine is None:
         v2_engine = V2Engine(device)
     return v2_engine
+
+
+def get_v3_engine():
+    """Lazily build the V3 engine (report-faithful, online candidate search)."""
+    global v3_engine
+    if v3_engine is None:
+        v3_engine = V3Engine(device)
+    return v3_engine
 
 
 def apply_obstacles(maze: str, obstacles):
@@ -143,6 +155,17 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, o
     condition = np.asarray(custom_condition if custom_condition is not None else conditions[dataset_id], dtype=np.float32)
     if condition.shape != (2, 2) or not np.isfinite(condition).all() or np.abs(condition).max() > 1:
         raise ValueError("起终点必须是 [-1,1]² 内的两个坐标")
+    if model_id in V3_CHECKPOINTS:
+        # V3: the report-faithful dynamic Skeleton model.  Candidates are
+        # generated ONLINE on the current occupancy (including user drawn
+        # obstacles) with the same generator as the offline preprocessing; all
+        # candidate search paths are returned so the UI can show them.
+        payload = get_v3_engine().generate(
+            sample_key, dataset_id, sample["maze"],
+            apply_obstacles(sample["maze"], obstacles), condition, seed,
+            model_id=model_id, verify_regions=bool(alm_enabled))
+        payload["obstacles"] = obstacles or []
+        return payload
     if model_id in V2_CHECKPOINTS:
         # V2: one trajectory diffusion grounded on the skeleton topology.  The
         # candidates are generated ONLINE with the very same function the

@@ -313,3 +313,60 @@ V2 的候选路径是**在线**生成的，与离线预处理用的是同一个�
 选 V2 时右栏显示 `V2 安全诊断`：commit timestep、选中的 `m`、
 `pi(m)`、候选数、**CenterFree 中心安全率**、中心最小余量（格）、轨迹碰撞、
 椭圆点碰撞率、本帧验证凸区域数、进度单调性、骨架 nodes/branches。
+
+---
+
+## 10. V3 模型：TrajSafe-Diffuser（每步重选动态骨架）
+
+模型下拉新增两项（后端由 `backend_v3.py` 提供）：
+
+- `V3 TrajSafe · Best (ep 19)` → `outputs/ckpt_v3_skeleton/best.pt`
+- `V3 TrajSafe · Latest (ep 90)` → `outputs/ckpt_v3_skeleton/latest.pt`
+
+### 10.1 与 V2 的关键差异
+
+| | V2 | V3 |
+|---|---|---|
+| diffusion state | 只有 `P_t` | 只有 `P_t` |
+| 椭圆中心 | `c_i = gamma_m(s_i)` | `c_i = gamma_m(s_i)` |
+| topology | `t=commit_t` 采样一次后锁定 | **每个 reverse timestep 重新 argmax(pi)** |
+| topology feature | selector 的 handcrafted 特征 | **一次共享 MatchBlock 输出的 `R_m`** |
+| progress | 来自 selected path | `ProgressHead -> s -> c = Gamma(s)` |
+| 椭圆参数 | 4 维 shape | 4 维 shape，`L_shape` 只监督 shape head |
+| 中心监督 | 无独立中心回归 | `L_align = SmoothL1(Gamma(s), p_GT)`（不经过 GT 投影） |
+| 候选搜索路径 | 在线生成 | **在线生成，且把全部候选 `Gamma_m` 返回给 UI** |
+
+### 10.2 候选搜索路径的配套设计
+
+V3 的输入就是骨架图上的搜索路径，所以 dashboard 必须和离线预处理使用**同一个生成器**：
+
+1. `V3Engine.get_graph` 按当前 occupancy（含用户画的自定义障碍）哈希缓存骨架图；
+2. `generate_candidates(graph, start, goal, CandidateConfig)` 生成候选，参数与 `configs/config_v3_skeleton.yaml` 的 `topology` 段一致；
+3. `V3Engine._pack_candidates` 把 `coords`（128 点 `S_m`）和 `geometry`（dense `Gamma_m`）打包成 V3 模型需要的张量；
+4. 返回 `v2.candidatePaths`、`v2.candidateMask`、`v2.topologyPath`，前端在「选中骨架拓扑」图层里把**所有候选搜索路径画成浅蓝虚线**，选中的那条画成深蓝实线。
+
+因此画布上修改起终点、添加/擦除障碍后，候选搜索路径会重新生成；如果障碍截断通路，接口返回：
+`该起终点在骨架图上没有合法候选路径…`。
+
+### 10.3 图层含义（选 V3 时）
+
+- **选中骨架拓扑**：浅蓝虚线 = 当前 occupancy/起终点下的全部候选搜索路径；深蓝实线 = 每步 `argmax(pi)` 选中的 `m`。
+- **轨迹主干 x̂₀（未椭圆条件化）**（原 `ALM 修正前 x̂₀`）：`Head_P(H_traj)` 的 coarse 分支，粉色虚线。
+- **对应椭圆状态**：V3 预测的 `center = Gamma(s)` / `shape4`，后端换算回 V1 的 6 维 `[dx,dy,loga,logb,cos2t,sin2t]`，所以回放器无需改动。
+
+### 10.4 右侧诊断面板
+
+选 V3 时右栏显示 `V3 安全诊断`：
+
+- 每步重选 `m`（不是 commit timestep）、当前 `pi(m)`；
+- 候选数 valid / total；
+- CenterFree 中心安全率、中心最小余量（格）；
+- 轨迹碰撞、椭圆点碰撞率；
+- 进度单调性、每步选择抖动 `stepJitter`、是否发生过拓扑切换；
+- 骨架 nodes / branches。
+
+### 10.5 已知限制
+
+V3 当前权重下仍可能在个别 OD 上预测出贴墙/切角的轨迹（例如 `large-855` 的 waypoint 17–25），
+dashboard 会在「轨迹碰撞」里明确标红；这是模型效果检查的一部分，不是渲染错误。
+
