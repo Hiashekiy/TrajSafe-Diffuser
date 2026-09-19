@@ -17,7 +17,7 @@ sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.models.skeleton_v3 import SkeletonPlannerV3
-from src.losses.v3_losses import (ellipse_center_loss, ellipse_shape_loss,
+from src.losses.v3_losses import (center_alignment_loss, ellipse_shape_loss,
                                   ellipse_safety_loss, trajectory_x0_loss)
 
 
@@ -48,7 +48,6 @@ def main():
     mask = torch.ones(B, M, dtype=torch.bool, device=device)
     geom = torch.randn(B, M, G, 2, device=device) * 0.5
     glen = torch.full((B, M), G, dtype=torch.long, device=device)
-    center_gt = torch.randn(B, H, 2, device=device) * 0.1
     shape_gt = torch.zeros(B, H, 4, device=device)
     shape_gt[..., 0] = torch.log(torch.tensor(0.1))
     shape_gt[..., 1] = torch.log(torch.tensor(0.05))
@@ -92,7 +91,7 @@ def main():
         def _losses():
             loss = (trajectory_x0_loss(out["final"], p0)
                     + trajectory_x0_loss(out["coarse"], p0))
-            loss = loss + ellipse_center_loss(ell["center"], center_gt, has_cand)
+            loss = loss + center_alignment_loss(ell["center"], p0, has_cand)
             loss = loss + ellipse_shape_loss(ell["shape4"], shape_gt, valid,
                                              has_cand)
             safe, _, _ = ellipse_safety_loss(

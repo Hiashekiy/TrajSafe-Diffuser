@@ -278,18 +278,20 @@ def test_iou_loss_ignores_invalid_locations():
     assert torch.allclose(l1, l2)
 
 
-def test_center_loss_gives_gradient_to_progress_head():
+def test_align_loss_gives_gradient_to_progress_head_only():
     model = tiny_model()
     b = tiny_batch()
     out = _forward(model, b)
     model.zero_grad()
-    loss = v3_losses.ellipse_center_loss(out["ellipse"]["center"],
-                                         b["ellipse_center_gt"],
-                                         b["has_candidate"])
+    loss = v3_losses.center_alignment_loss(out["ellipse"]["center"], b["pos"],
+                                           b["has_candidate"])
     loss.backward()
     g = model.progress_head.mlp_prog[1].weight.grad
     assert g is not None and torch.isfinite(g).all()
     assert float(g.abs().sum()) > 0.0
+    # L_align compares Gamma(s) with the GT trajectory: the shape head is not
+    # involved at all.
+    assert model.ellipse_shape_head.mlp[0].weight.grad is None
 
 
 def test_shape_loss_gives_gradient_to_ellipse_head():

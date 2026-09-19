@@ -63,10 +63,10 @@ def plot_one(ds, idx, out_png, stride=4):
     glen = item["candidate_geometry_lengths"].numpy()
     mask = item["candidate_mask"].numpy()
     best = int(item["topology_best"])
-    center = item["ellipse_center_gt"].numpy()
+    # The ellipse centre target is the GT trajectory waypoint itself.
+    center = pos
     shape4 = item["ellipse_shape4_gt"].numpy()
     valid = item["shape_valid"].numpy()
-    progress = item["progress_gt"].numpy()
     gt_mask = item["ellipse_mask"].numpy()
     a, b, theta = shape4_to_abtheta(torch.as_tensor(shape4))
 
@@ -104,16 +104,17 @@ def plot_one(ds, idx, out_png, stride=4):
     ax.set_title("GT ellipses (a >= b > 0), invalid = orange", fontsize=10)
 
     ax = axes[1, 0]
-    ax.plot(np.arange(len(progress)), progress, color="#2ca02c", lw=1.4)
-    ax.scatter(np.arange(len(progress))[valid], progress[valid], s=4,
-               c="#2ca02c")
+    ax.step(np.arange(len(valid)), valid.astype(np.float32), where="mid",
+            color="#2ca02c", lw=1.2)
     if len(bad):
-        ax.scatter(bad, progress[bad], s=14, facecolors="none",
-                   edgecolors="#ff9800")
-    ax.set_ylim(-0.02, 1.02)
+        ax.scatter(bad, np.ones_like(bad, dtype=np.float32), s=18,
+                   facecolors="none", edgecolors="#ff9800",
+                   label="ShapeValid=False")
+        ax.legend(loc="lower right", fontsize=7)
+    ax.set_ylim(-0.05, 1.05)
     ax.set_xlabel("waypoint index")
-    ax.set_ylabel("progress_gt")
-    ax.set_title("progress_gt (must start 0, end 1, monotone); invalid orange",
+    ax.set_ylabel("shape_valid")
+    ax.set_title("ShapeValid per waypoint (no progress_gt dependency)",
                  fontsize=10)
     ax.grid(alpha=0.3)
 
@@ -140,15 +141,12 @@ def plot_one(ds, idx, out_png, stride=4):
 
     np.savez_compressed(
         os.path.splitext(out_png)[0] + ".npz",
-        center_gt=center, shape4_gt=shape4, progress_gt=progress,
+        center_gt=center, shape4_gt=shape4,
         shape_valid=valid, best=best, cond=cond, pos=pos)
     return {
         "idx": idx, "maze": MAZE_NAMES[maze], "best": best,
         "n_valid_candidates": int(mask.sum()),
         "shape_valid_fraction": float(valid.mean()),
-        "progress_first": float(progress[0]),
-        "progress_last": float(progress[-1]),
-        "progress_monotone": bool(np.all(np.diff(progress) >= -1e-6)),
     }
 
 

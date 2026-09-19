@@ -84,8 +84,11 @@ loss:
 
   lambda_topology: 0.5
 
-  # L_E = (2 L_center + 4 L_shape) / 6
-  lambda_E: 1.0
+  # L_align: SmoothL1(Gamma(s), p_GT) -> Progress Head only
+  # L_shape: 4-parameter ellipse shape -> Ellipse Shape Head only
+  # default weights preserve the old effective scale of (2*center+4*shape)/6
+  lambda_align: 0.3333333333333333
+  lambda_shape: 0.6666666666666666
   lambda_iou: 0.25
   lambda_safe: 0.1
 

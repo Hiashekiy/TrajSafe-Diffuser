@@ -22,19 +22,18 @@ from src.datasets.skeleton_dataset_v3 import (MAZE_NAMES,  # noqa: E402
 from src.diffusion.schedule import NoiseSchedule  # noqa: E402
 from src.geometry.ellipse_raster import ellipse_soft_mask  # noqa: E402
 from src.geometry.ellipse_shape import shape4_to_abtheta  # noqa: E402
-from src.geometry.skeleton_paths import nearest_arclength  # noqa: E402
 
 from v3_utils import tiny_batch, tiny_model  # noqa: E402
 
 V3_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v3")
 SOURCE_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v1")
-HAS_DATA = os.path.exists(os.path.join(V3_ROOT, "test", "ellipse_center_gt.npy"))
+HAS_DATA = os.path.exists(os.path.join(V3_ROOT, "test", "ellipse_shape4_gt.npy"))
 
-needs_data = pytest.mark.skipif(not HAS_DATA, reason="V3 ellipse labels not built")
+needs_data = pytest.mark.skipif(not HAS_DATA, reason="V3 ellipse shape labels not built")
 
 
 @needs_data
-def test_dataset_provides_the_report_fields():
+def test_dataset_provides_the_training_fields():
     ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
                            ellipse_mask_res=32, mazes=["large"])
     item = ds[0]
@@ -42,14 +41,14 @@ def test_dataset_provides_the_report_fields():
     G = ds.geometry_points
     assert item["candidate_xy"].shape == (M, L, 2)
     assert item["candidate_geometry"].shape == (M, G, 2)
-    assert item["ellipse_center_gt"].shape == (H, 2)
     assert item["ellipse_shape4_gt"].shape == (H, 4)
     assert item["shape_valid"].shape == (H,)
     assert item["shape_valid"].dtype == torch.bool
-    assert item["progress_gt"].shape == (H,)
     assert item["ellipse_mask"].shape == (H, 32, 32)
-    assert torch.isfinite(item["ellipse_center_gt"]).all()
     assert torch.isfinite(item["ellipse_shape4_gt"]).all()
+    # The projection chain must not be a training dependency any more.
+    assert "ellipse_center_gt" not in item
+    assert "progress_gt" not in item
 
 
 @needs_data
@@ -62,34 +61,16 @@ def test_maze_filter_keeps_only_large():
 
 
 @needs_data
-def test_gt_progress_is_monotone_and_pinned():
+def test_align_target_is_the_gt_trajectory():
     ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
-                           ellipse_mask_res=32, mazes=["large"])
-    checked = 0
-    for idx in range(min(len(ds), 20)):
-        item = ds[idx]
-        if not bool(item["has_candidate"]):
-            continue
-        s = item["progress_gt"].numpy()
-        assert abs(float(s[0])) < 1e-6
-        assert abs(float(s[-1] - 1.0)) < 1e-5
-        assert np.all(np.diff(s) >= -1e-6)
-        checked += 1
-    assert checked > 0
-
-
-@needs_data
-def test_gt_center_lies_on_the_selected_dense_curve():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
-                           ellipse_mask_res=32, mazes=["large"])
+                           ellipse_mask_res=16, mazes=["large"])
     item = ds[0]
-    best = int(item["topology_best"])
-    geom = item["candidate_geometry"].numpy()[best]
-    n = int(item["candidate_geometry_lengths"][best])
-    gamma = geom[:n]
-    center = item["ellipse_center_gt"].numpy()
-    _, dist = nearest_arclength(center, gamma)
-    assert float(np.max(dist)) < 1e-5
+    pos = item["pos"]
+    assert pos.shape == (ds.horizon, 2)
+    assert torch.isfinite(pos).all()
+    # endpoints of the GT trajectory are the conditioning endpoints
+    assert torch.allclose(pos[0], item["cond"][0], atol=1e-6)
+    assert torch.allclose(pos[-1], item["cond"][1], atol=1e-6)
 
 
 @needs_data
@@ -97,7 +78,7 @@ def test_lazy_mask_matches_the_shared_rasteriser_and_masks_invalid():
     ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
                            ellipse_mask_res=32, mazes=["large"])
     item = ds[0]
-    center = item["ellipse_center_gt"]
+    center = item["pos"]              # GT trajectory waypoint = mask centre
     shape4 = item["ellipse_shape4_gt"]
     valid = item["shape_valid"]
     a, b, theta = shape4_to_abtheta(shape4)

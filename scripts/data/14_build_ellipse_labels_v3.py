@@ -39,13 +39,13 @@ import time
 
 import numpy as np
 from scipy.ndimage import binary_dilation
+from scipy.spatial import cKDTree
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.geometry.skeleton_graph import load_graph_npz
-from src.geometry.skeleton_paths import (interpolate_path, progress_target)
 
 MAZE_NAMES = ["umaze", "medium", "large"]
 CELL = 2.0 / 256.0
@@ -299,41 +299,19 @@ def build_shape_table(occ, graph, points_yx, num_orientations=36,
 # ---------------------------------------------------------------------------
 
 
-def reconstruct_dense_geometry(geometry, offsets, lengths, cond,
-                               geometry_points):
-    """Mirror SkeletonDatasetV3._dense_geometry exactly."""
-    M = lengths.shape[0]
-    G = int(geometry_points)
-    geom = np.zeros((M, G, 2), dtype=np.float32)
-    glen = lengths.astype(np.int64).copy()
-    cell = 2.0 / 256.0
-    for m in range(M):
-        n = int(glen[m])
-        if n <= 0:
-            glen[m] = 0
-            continue
-        lo, hi = int(offsets[m]), int(offsets[m + 1])
-        px = np.asarray(geometry[lo:hi], dtype=np.float32)
-        geom[m, :n] = (px + 0.5) * cell - 1.0
-        if n >= 2:
-            geom[m, 0] = cond[0]
-            geom[m, n - 1] = cond[1]
-    return geom, glen
+def build_shape_kdtree(shape4_lut, valid_lut):
+    """KD-tree over the valid ShapeTable points (scene coordinates).
 
-
-def lookup_shape(shape4_lut, valid_lut, q_scene):
-    """Exact nearest dense-point ShapeTable lookup (no angular interpolation).
-
-    The report fixes the first version to a nearest lookup; if the nearest
-    dense point has no valid safe ellipse, the waypoint is marked invalid
-    instead of silently snapping to a different skeleton location.
+    The GT trajectory waypoint is used directly as the ellipse centre; its
+    shape label is the nearest valid safe-ShapeTable entry.  No GT skeleton
+    projection and no progress label are involved.
     """
-    h, w = valid_lut.shape
-    px = int(np.floor((q_scene[0] + 1.0) / CELL))
-    py = int(np.floor((q_scene[1] + 1.0) / CELL))
-    if 0 <= px < w and 0 <= py < h and valid_lut[py, px]:
-        return shape4_lut[py, px], True
-    return np.zeros(4, dtype=np.float32), False
+    ys, xs = np.nonzero(valid_lut)
+    if len(ys) == 0:
+        return None, None, None
+    pts = np.stack([(xs + 0.5) * CELL - 1.0,
+                    (ys + 0.5) * CELL - 1.0], axis=1)
+    return cKDTree(pts), ys, xs
 
 
 def collect_dense_points(base, source, splits, geometry_points):
@@ -369,25 +347,23 @@ def collect_dense_points(base, source, splits, geometry_points):
 
 
 def build_split(split, source_dir, v3_dir, graphs, shape_luts, valid_luts,
-                geometry_points, maze_names=None, limit=None):
+                geometry_points, maze_names=None, limit=None,
+                max_distance_cells=3.0):
+    """Write the per-waypoint shape label.
+
+    GT trajectory waypoint p_i^GT is used directly as the ellipse centre; the
+    shape label is the nearest valid safe ShapeTable entry.  There is no GT
+    skeleton projection, no s*, no ellipse_center_gt and no progress_gt.
+    """
     pos = np.load(os.path.join(source_dir, split, "positions.npy"))
-    cond = np.load(os.path.join(source_dir, split, "conditions.npy"))
     mid = np.load(os.path.join(source_dir, split, "maze_id.npy"))
     split_dir = os.path.join(v3_dir, split)
-    geometry = np.load(os.path.join(split_dir, "candidate_geometry.npy"),
-                       mmap_mode="r")
-    offsets = np.load(os.path.join(split_dir,
-                                   "candidate_geometry_offsets.npy"))
-    glens = np.load(os.path.join(split_dir, "candidate_geometry_lengths.npy"))
     cmask = np.load(os.path.join(split_dir, "candidate_mask.npy"))
-    best = np.load(os.path.join(split_dir, "topology_best.npy"))
 
     n = len(pos) if limit is None else min(int(limit), len(pos))
     H = int(pos.shape[1])
-    center_gt = np.zeros((n, H, 2), dtype=np.float32)
     shape4_gt = np.zeros((n, H, 4), dtype=np.float32)
     shape_valid = np.zeros((n, H), dtype=bool)
-    progress_gt = np.zeros((n, H), dtype=np.float32)
     n_empty = 0
     n_shape = 0
     t0 = time.time()
@@ -395,43 +371,41 @@ def build_split(split, source_dir, v3_dir, graphs, shape_luts, valid_luts,
     if maze_names:
         selected = {MAZE_NAMES.index(m) if isinstance(m, str) else int(m)
                     for m in maze_names}
+    trees = {}
+    for maze in range(len(MAZE_NAMES)):
+        trees[maze] = build_shape_kdtree(shape_luts[maze], valid_luts[maze])
+    max_dist = float(max_distance_cells) * CELL
 
     for i in range(n):
         maze = int(mid[i])
         if selected is not None and maze not in selected:
             continue
-        c = np.asarray(cond[i], dtype=np.float64).reshape(2, 2)
-        geom, glen = reconstruct_dense_geometry(
-            geometry, offsets[i], glens[i], c, geometry_points)
-        mask = cmask[i].astype(bool)
-        m = int(best[i]) if mask.any() else -1
-        if m < 0 or not mask[m] or int(glen[m]) < 2:
+        if not bool(cmask[i].any()):
             n_empty += 1
-            progress_gt[i] = np.linspace(0.0, 1.0, H)
             continue
-        gamma = geom[m, :int(glen[m])]
-        s = progress_target(pos[i], gamma, H)
-        center = interpolate_path(gamma, s)
-        center_gt[i] = center.astype(np.float32)
-        progress_gt[i] = s.astype(np.float32)
-        lut4, lut_valid = shape_luts[maze], valid_luts[maze]
-        for k in range(H):
-            d = np.linalg.norm(gamma - center[k][None, :], axis=1)
-            q = gamma[int(np.argmin(d))]
-            s4, ok = lookup_shape(lut4, lut_valid, q)
-            if ok:
-                shape4_gt[i, k] = s4
-                shape_valid[i, k] = True
-                n_shape += 1
+        tree, ys, xs = trees[maze]
+        if tree is None:
+            n_empty += 1
+            continue
+        dist, nn = tree.query(np.asarray(pos[i], dtype=np.float64), k=1)
+        ok = np.asarray(dist) <= max_dist
+        if bool(ok.any()):
+            kk = np.asarray(nn)[ok]
+            shape4_gt[i, ok] = shape_luts[maze][ys[kk], xs[kk]]
+            shape_valid[i, ok] = True
+            n_shape += int(ok.sum())
         if (i + 1) % 2000 == 0:
             el = time.time() - t0
             print("  %d/%d %.0fs (%.1f ms/sample)"
                   % (i + 1, n, el, el / (i + 1) * 1000.0), flush=True)
 
-    np.save(os.path.join(split_dir, "ellipse_center_gt.npy"), center_gt)
     np.save(os.path.join(split_dir, "ellipse_shape4_gt.npy"), shape4_gt)
     np.save(os.path.join(split_dir, "shape_valid.npy"), shape_valid)
-    np.save(os.path.join(split_dir, "progress_gt.npy"), progress_gt)
+    # Remove the projection-chain artifacts if an older run left them behind.
+    for stale in ("ellipse_center_gt.npy", "progress_gt.npy"):
+        path = os.path.join(split_dir, stale)
+        if os.path.exists(path):
+            os.remove(path)
     stats = {
         "n": int(n),
         "empty_or_invalid_candidate": int(n_empty),
@@ -460,6 +434,7 @@ def main():
     ap.add_argument("--interior-angles", type=int, default=32)
     ap.add_argument("--binary-iters", type=int, default=12)
     ap.add_argument("--min-semi-axis", type=float, default=1e-3)
+    ap.add_argument("--max-shape-distance-cells", type=float, default=3.0)
     ap.add_argument("--mazes", nargs="*", default=MAZE_NAMES)
     ap.add_argument("--point-splits", nargs="*", default=["train", "val", "test"])
     ap.add_argument("--workers", type=int, default=0,
@@ -543,7 +518,8 @@ def main():
         for split in args.splits:
             report["splits"][split] = build_split(
                 split, source, base, graphs, shape_luts, valid_luts,
-                geo_points, maze_names=args.mazes, limit=args.limit)
+                geo_points, maze_names=args.mazes, limit=args.limit,
+                max_distance_cells=args.max_shape_distance_cells)
 
     with open(os.path.join(base, "ellipse_labels_report.json"), "w",
               encoding="utf-8") as f:

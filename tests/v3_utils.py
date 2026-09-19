@@ -56,7 +56,7 @@ def tiny_batch(B=2, H=8, M=3, L=8, G=24, res=64, mask_res=32, seed=0):
     glen = torch.where(mask, glen, torch.zeros_like(glen))
 
     idx = torch.linspace(0, G - 1, H).long()
-    center_gt = geometry[:, 0][:, idx]
+    pos = geometry[:, 0][:, idx]
 
     shape4_gt = torch.zeros(B, H, 4)
     shape4_gt[..., 0] = torch.log(torch.tensor(0.10))
@@ -64,11 +64,11 @@ def tiny_batch(B=2, H=8, M=3, L=8, G=24, res=64, mask_res=32, seed=0):
     shape4_gt[..., 2] = 1.0
     shape_valid = torch.ones(B, H, dtype=torch.bool)
     a, b, theta = shape4_to_abtheta(shape4_gt)
-    ellipse_mask = ellipse_soft_mask(center_gt, a, b, theta, mask_res, 10.0)
+    # GT mask is centred on the GT trajectory waypoint (no centre label).
+    ellipse_mask = ellipse_soft_mask(pos, a, b, theta, mask_res, 10.0)
 
-    progress_gt = torch.linspace(0.0, 1.0, H)[None].expand(B, H).clone()
     return dict(
-        pos=center_gt.clone(),
+        pos=pos.clone(),
         cond=cond, occ=occ,
         features=candidate_xy, candidate_xy=candidate_xy,
         geom=geometry, geom_len=glen, mask=mask,
@@ -76,10 +76,8 @@ def tiny_batch(B=2, H=8, M=3, L=8, G=24, res=64, mask_res=32, seed=0):
         candidate_geometry_lengths=glen,
         topology_best=torch.zeros(B, dtype=torch.long),
         has_candidate=mask.any(dim=-1),
-        ellipse_center_gt=center_gt,
         ellipse_shape4_gt=shape4_gt,
         shape_valid=shape_valid,
-        progress_gt=progress_gt,
         ellipse_mask=ellipse_mask,
         t=torch.full((B,), 5, dtype=torch.long),
         ab=torch.full((B,), 0.5),

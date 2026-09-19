@@ -1,9 +1,13 @@
-"""Train V3 (report section 25).
+"""Train V3.
 
     L = lam_traj L_traj + lam_coarse L_coarse + lam_smooth L_smooth
-      + lam_topo L_topo + lam_E L_E + lam_iou L_iou + lam_safe L_safe
+      + lam_topo L_topo + lam_align L_align + lam_shape L_shape
+      + lam_iou L_iou + lam_safe L_safe
 
-with L_E = (2 L_center + 4 L_shape) / 6.
+``L_align`` compares the decoded ellipse centre c_i = Gamma(s_i) directly with
+the GT trajectory p_i^GT (SmoothL1).  There is no GT skeleton projection, no s*,
+no ellipse_center_gt and no progress_gt in the training dependency chain.
+``L_shape`` regulates only the 4 ellipse parameters.
 
 One forward per batch runs the WHOLE report pipeline.  Training routing uses
 m* = argmin_m nDTW(P0, S_m) (the cached topology_best label); inference routing
@@ -32,13 +36,13 @@ from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.diffusion.schedule import NoiseSchedule
 from src.models.skeleton_v3 import SkeletonPlannerV3
 from src.datasets.skeleton_dataset_v3 import make_loader
-from src.losses.v3_losses import (ellipse_center_loss, ellipse_iou_loss,
+from src.losses.v3_losses import (center_alignment_loss, ellipse_iou_loss,
                                   ellipse_safety_loss, ellipse_shape_loss,
                                   topology_ce, trajectory_smoothness_loss,
                                   trajectory_x0_loss)
 
-LOSS_KEYS = ["Ltraj", "Lcoarse", "Lsmooth", "Ltopo", "Lcenter", "Lshape",
-             "LE", "Liou", "Lsafe"]
+LOSS_KEYS = ["Ltraj", "Lcoarse", "Lsmooth", "Ltopo", "Lalign", "Lshape",
+             "Liou", "Lsafe"]
 
 
 def _broadcast(x0, v):
@@ -62,7 +66,6 @@ def batch_losses(batch, model, schedule, lcfg, device):
     gl = batch["candidate_geometry_lengths"].to(device)
     best = batch["topology_best"].to(device)
     has_cand = batch["has_candidate"].to(device)
-    center_gt = batch["ellipse_center_gt"].to(device)
     shape_gt = batch["ellipse_shape4_gt"].to(device)
     shape_valid = batch["shape_valid"].to(device).bool()
     gt_mask = batch["ellipse_mask"].to(device)
@@ -83,9 +86,8 @@ def batch_losses(batch, model, schedule, lcfg, device):
         out["final"], p0, acc_weight=float(lcfg.get("smooth_acc_weight", 0.25)),
         jerk_weight=float(lcfg.get("smooth_jerk_weight", 1.0)))
     l_topo = topology_ce(out["topo"]["pi"], best, has_cand)
-    l_center = ellipse_center_loss(ell["center"], center_gt, has_cand)
+    l_align = center_alignment_loss(ell["center"], p0, has_cand)
     l_shape = ellipse_shape_loss(ell["shape4"], shape_gt, shape_valid, has_cand)
-    l_E = (2.0 * l_center + 4.0 * l_shape) / 6.0
     l_iou = ellipse_iou_loss(
         ell["center"], ell["a"], ell["b"], ell["theta"], gt_mask,
         shape_valid, has_cand,
@@ -101,15 +103,14 @@ def batch_losses(batch, model, schedule, lcfg, device):
         sample_mask=has_cand)
 
     raw = {"Ltraj": l_traj, "Lcoarse": l_coarse, "Lsmooth": l_smooth,
-           "Ltopo": l_topo, "Lcenter": l_center, "Lshape": l_shape, "LE": l_E,
+           "Ltopo": l_topo, "Lalign": l_align, "Lshape": l_shape,
            "Liou": l_iou, "Lsafe": l_safe}
     weights = {"Ltraj": float(lcfg.get("lambda_traj", 1.0)),
                "Lcoarse": float(lcfg.get("lambda_coarse", 0.25)),
                "Lsmooth": float(lcfg.get("lambda_smooth", 0.1)),
                "Ltopo": float(lcfg.get("lambda_topology", 0.5)),
-               "Lcenter": 0.0,          # included through L_E
-               "Lshape": 0.0,           # included through L_E
-               "LE": float(lcfg.get("lambda_E", 1.0)),
+               "Lalign": float(lcfg.get("lambda_align", 1.0 / 3.0)),
+               "Lshape": float(lcfg.get("lambda_shape", 2.0 / 3.0)),
                "Liou": float(lcfg.get("lambda_iou", 0.25)),
                "Lsafe": float(lcfg.get("lambda_safe", 0.1))}
     total = sum(weights[k] * raw[k] for k in LOSS_KEYS)

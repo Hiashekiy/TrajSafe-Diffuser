@@ -1,21 +1,25 @@
-"""V3 dataset for the report-faithful TrajSafe-Diffuser.
+"""V3 dataset for the TrajSafe-Diffuser.
 
-Vocabulary is the report's vocabulary:
+Vocabulary:
 
     candidate_xy          [M, L, 2]   fixed-length network Skeleton S_m
     candidate_geometry    [M, G, 2]   dense safe Skeleton Curve Gamma_m
-    ellipse_center_gt     [H, 2]      c_i^* = Gamma*(s_i^*)
     ellipse_shape4_gt     [H, 4]      [log a*, log b*, cos 2t*, sin 2t*]
     shape_valid           [H]         whether a safe shape label exists
-    progress_gt           [H]         monotone GT progress (debug/evaluation)
     ellipse_mask          [H, R_e, R_e]  soft GT mask from the SAME rasteriser
-                                      used by the loss
+                                      used by the loss, centred on the GT
+                                      trajectory waypoint p_i^GT
+
+There is intentionally NO ``ellipse_center_gt`` and NO ``progress_gt`` in the
+training dependency chain: the Progress Head is supervised by comparing the
+decoded centre c_i = Gamma(s_i) directly with p_i^GT (SmoothL1), not with a
+projected skeleton label.
 
 The full soft masks are generated lazily in ``__getitem__`` from the compact
-``(center_gt, shape4_gt)`` labels.  They are numerically identical to a stored
-pre-computation because :func:`ellipse_soft_mask` is deterministic, and lazy
-generation avoids the ~18 GB that a stored [17295, 128, 64, 64] float tensor
-would require on this machine.
+``shape4_gt`` labels and the GT trajectory.  They are numerically identical to a
+stored pre-computation because :func:`ellipse_soft_mask` is deterministic, and
+lazy generation avoids the ~18 GB that a stored [17295, 128, 64, 64] float
+tensor would require on this machine.
 """
 
 from __future__ import annotations
@@ -33,10 +37,8 @@ MAZE_NAMES = ["umaze", "medium", "large"]
 RES = 256
 
 _LABEL_FILES = {
-    "ellipse_center_gt": "ellipse_center_gt.npy",
     "ellipse_shape4_gt": "ellipse_shape4_gt.npy",
     "shape_valid": "shape_valid.npy",
-    "progress_gt": "progress_gt.npy",
 }
 
 
@@ -90,10 +92,8 @@ class SkeletonDatasetV3(Dataset):
                     "  python scripts/data/14_build_ellipse_labels_v3.py "
                     "--config <config>" % path)
             labels[key] = np.load(path)
-        self.center_gt = labels["ellipse_center_gt"]
         self.shape4_gt = labels["ellipse_shape4_gt"]
         self.shape_valid = labels["shape_valid"].astype(bool)
-        self.progress_gt = labels["progress_gt"]
 
         if self.geom_lengths.size and int(self.geom_lengths.max()) > self.geometry_points:
             raise ValueError(
@@ -166,12 +166,12 @@ class SkeletonDatasetV3(Dataset):
         glen = np.where(mask, glen, 0)
         shape_valid = self.shape_valid[i].copy()
         shape_valid = np.logical_and(shape_valid, mask.any())
-        center_gt = np.asarray(self.center_gt[i], dtype=np.float32)
+        pos = np.asarray(self.pos[i], dtype=np.float32)
         shape4_gt = np.asarray(self.shape4_gt[i], dtype=np.float32)
-        ellipse_mask = self._ellipse_mask(center_gt, shape4_gt, shape_valid,
-                                          maze_id)
+        # GT mask is centred on the GT trajectory waypoint; no centre label.
+        ellipse_mask = self._ellipse_mask(pos, shape4_gt, shape_valid, maze_id)
         return {
-            "pos": torch.as_tensor(self.pos[i], dtype=torch.float32),
+            "pos": torch.as_tensor(pos, dtype=torch.float32),
             "cond": torch.from_numpy(cond),
             "maze_id": maze_id,
             "candidate_xy": torch.from_numpy(self._candidate_xy(i)),
@@ -180,11 +180,8 @@ class SkeletonDatasetV3(Dataset):
             "candidate_geometry_lengths": torch.as_tensor(glen, dtype=torch.long),
             "topology_best": int(self.best[i]),
             "has_candidate": bool(mask.any()),
-            "ellipse_center_gt": torch.from_numpy(center_gt),
             "ellipse_shape4_gt": torch.from_numpy(shape4_gt),
             "shape_valid": torch.from_numpy(shape_valid),
-            "progress_gt": torch.as_tensor(self.progress_gt[i],
-                                           dtype=torch.float32),
             "ellipse_mask": ellipse_mask,
         }
 
@@ -207,12 +204,9 @@ def make_collate(ds):
                                           dtype=torch.long),
             "has_candidate": torch.tensor([b["has_candidate"] for b in batch],
                                           dtype=torch.bool),
-            "ellipse_center_gt": torch.stack(
-                [b["ellipse_center_gt"] for b in batch]),
             "ellipse_shape4_gt": torch.stack(
                 [b["ellipse_shape4_gt"] for b in batch]),
             "shape_valid": torch.stack([b["shape_valid"] for b in batch]),
-            "progress_gt": torch.stack([b["progress_gt"] for b in batch]),
             "ellipse_mask": torch.stack([b["ellipse_mask"] for b in batch]),
         }
     return collate
