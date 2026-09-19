@@ -114,3 +114,45 @@ train:
 eval:
   num_candidates_ablation: [1, 2, 4]
   samples_per_od: 4
+
+# --- inference-only ALM (augmented Lagrangian) guidance ------------------
+# Strictly inference-time: the network, the checkpoint and the training losses
+# are untouched.  It consumes the V3 prediction (center = Gamma(s), shape4)
+# and first-order corrects x0 inside verified convex regions built online from
+# the current occupancy.  The dashboard reads this section; training ignores it.
+alm:
+  enabled: true
+  log_per_step: true
+
+  # Apply ALM only to the final eight levels of the 16-step reverse process.
+  start_t: 7
+  inner_steps: 4
+
+  # Constraints use exact max + active-face subgradient. This avoids the
+  # positive tau*log(N) bias of an unnormalised smooth maximum.
+
+  # Each reverse step rebuilds corridors and starts fresh dual variables. The
+  # primal objective also keeps corrections close to and as smooth as raw P0.
+  step_size: 0.03
+  rho: 5.0
+  proximity_weight: 1.0
+  correction_smooth_weight: 20.0
+  max_grad_norm: 1.0
+  max_correction_per_step: 0.10
+
+  # One predicted ellipse -> one local Neural-IRIS convex region. A dense ring
+  # of local-map border points prevents unbounded regions. All real and border
+  # obstacle points use the same Mahalanobis ordering/filtering, without caps.
+  safety_margin: 0.02
+  obstacle_window_half: 0.35
+  obstacle_dilation: 0
+  # Do not move physically safe waypoints merely because a predicted local
+  # convex region is conservative. One-cell dilation supplies a small margin.
+  guidance_dilation_cells: 1
+  guidance_occupancy_threshold: 1.0e-3
+  segment_collision_samples: 8
+  corridor_chunk_size: 512
+  ellipse_axis_min: 0.002
+  ellipse_axis_max: 2.0
+  # filter_eps defaults to Neural-IRIS's 1e-3 pixel tolerance converted to
+  # scene coordinates.

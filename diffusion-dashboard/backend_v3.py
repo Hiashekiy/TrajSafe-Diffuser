@@ -46,7 +46,6 @@ from src.models.skeleton_v3 import SkeletonPlannerV3
 from src.utils.config import load_config
 
 CONFIG_PATH = os.path.join(ROOT, "configs", "config_v3_skeleton.yaml")
-ALM_CONFIG_PATH = os.path.join(ROOT, "configs", "config_v3_alm.yaml")
 MAZES = ("umaze", "medium", "large")
 V3_CHECKPOINTS = {
     "v3_best": "outputs/ckpt_v3_skeleton/best.pt",
@@ -84,7 +83,7 @@ class V3Engine:
         self.skeleton_cfg = dict(self.cfg.get("skeleton") or {})
         self.geometry_points = int(
             self.topo_cfg.get("candidate_geometry_points", DEFAULT_GEOMETRY_POINTS))
-        self.alm_cfg = (load_config(ALM_CONFIG_PATH).get("alm") or {})
+        self.alm_cfg = (self.cfg.get("alm") or {})
         self.device = device
         self.maps = {name: np.load(os.path.join(ROOT, "data", "processed_scene_v1",
                                                 "maps", "%s.npy" % name))

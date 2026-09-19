@@ -56,8 +56,7 @@ E:/CondaEnvData/envs/GGMPC/python.exe --version    # Python 3.10 + torch 2.9.1+c
 
 ```
 configs/
-    config_v3_skeleton.yaml     训练 / 数据 / 模型 / 损失
-    config_v3_alm.yaml          推理期凸区域 + ALM 引导参数
+    config_v3_skeleton.yaml     训练 / 数据 / 模型 / 损失 + 推理期 ALM 段
 src/
     models/skeleton_v3/         V3 网络（planner / blocks / encoders / ellipse / fusion / geometry / heads）
     models/joint/               共享 AdaLN / MHA（joint_blocks）与 SceneCNN（scene_cnn）
@@ -129,6 +128,6 @@ python -m pytest tests/test_v3_model.py tests/test_v3_dataset.py tests/test_v3_g
 
 ## 8. 推理期扩展：凸区域 + ALM 修正
 
-可选开启（`configs/config_v3_alm.yaml`）：对 `t <= start_t` 的帧，用预测椭圆在线构造
-verified convex region，并用 `alm_correct` 一阶修正 `x0` 后再走 DDIM。该扩展只发生在
-推理期，不改变网络、checkpoint 与训练损失。
+可选开启（`configs/config_v3_skeleton.yaml` 的 `alm` 段）：对 `t <= start_t` 的帧，
+用预测椭圆在线构造 verified convex region，并用 `alm_correct` 一阶修正 `x0` 后再走
+DDIM。该扩展只发生在推理期，不改变网络、checkpoint 与训练损失。

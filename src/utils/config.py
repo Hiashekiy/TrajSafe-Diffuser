@@ -1,9 +1,7 @@
 """Load configs/*.yaml as the single source of hyperparameters.
 
-The project keeps two configs:
-
-    configs/config_v3_skeleton.yaml    training / data / model / loss
-    configs/config_v3_alm.yaml         inference-time ALM guidance
+The project keeps one config: configs/config_v3_skeleton.yaml (training, data,
+model, loss and the inference-time `alm` section used by the dashboard).
 
 Base inheritance is still supported (a config with a 'base:' key is deep-merged
 on top of its parent), but no shipped config depends on it.

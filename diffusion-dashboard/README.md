@@ -25,8 +25,7 @@ Maze2D 数据、occupancy map 和 V3 checkpoint，在本地 GPU 上运行报告�
 ```text
 Neural-IRISDiffuser/
 ├─ configs/
-│  ├─ config_v3_skeleton.yaml     模型 / 采样 / 候选生成参数
-│  └─ config_v3_alm.yaml          推理期 ALM 参数
+│  └─ config_v3_skeleton.yaml     模型 / 采样 / 候选生成参数 + 推理期 ALM 段
 ├─ data/
 │  └─ processed_scene_v1/         test 样本 + 三张地图
 ├─ outputs/
@@ -45,7 +44,7 @@ Neural-IRISDiffuser/
 
 - `data/processed_scene_v1/test/positions.npy`、`conditions.npy`、`maze_id.npy`
 - `data/processed_scene_v1/maps/{umaze,medium,large}.npy`
-- `configs/config_v3_skeleton.yaml` 与 `configs/config_v3_alm.yaml`
+- `configs/config_v3_skeleton.yaml`（含推理期 `alm` 段）
 - `outputs/ckpt_v3_skeleton/{best,latest}.pt`
 
 ## 3. 环境要求
@@ -216,8 +215,8 @@ dashboard 会在「轨迹碰撞」中明确标红；这是模型效果检查的�
 右侧显示每帧区域数、`violation before → after`、修正量、λ、平滑度等；关闭开关时
 仍是纯 DDIM，粉色虚线显示 coarse 分支。
 
-该功能只发生在推理期，网络权重与训练损失不变；参数在 `configs/config_v3_alm.yaml`
-的 `alm` 段（`start_t`、`rho`、`step_size` 等）。
+该功能只发生在推理期，网络权重与训练损失不变；参数在
+`configs/config_v3_skeleton.yaml` 的 `alm` 段（`start_t`、`rho`、`step_size` 等）。
 
 ## 9. 常见问题
 
