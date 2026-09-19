@@ -1,6 +1,9 @@
-# Inference-only ALM guidance. The network/checkpoint and training losses are
-# inherited unchanged from the frozen centre-balanced V1 configuration.
-base: configs/config_v1.yaml
+# Inference-only ALM (augmented Lagrangian) guidance for the V3 TrajSafe-Diffuser.
+#
+# This is a strictly inference-time extension: the network, the checkpoint and
+# the training losses are untouched.  It consumes the V3 prediction
+# (center = Gamma(s), shape4) and first-order corrects x0 inside verified convex
+# regions built online from the current occupancy.
 
 alm:
   enabled: true

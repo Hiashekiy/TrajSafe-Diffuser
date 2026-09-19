@@ -1,11 +1,11 @@
-"""10_build_skeletons.py - V2 step 1: occupancy map -> skeleton branch graph.
+"""10_build_skeletons.py - V3 step 1: occupancy map -> skeleton branch graph.
 
 For every maze map it writes the cached free mask, skeleton and compressed
 branch graph, plus an overlay figure for visual inspection.
 
-    python scripts/data/10_build_skeletons.py --config configs/config_v2_skeleton.yaml
+    python scripts/data/10_build_skeletons.py --config configs/config_v3_skeleton.yaml
 
-Outputs (data.processed_scene_v2/skeletons by default):
+Outputs (data.processed_scene_v3/skeletons by default):
 
     <maze>.npz            free / skeleton / nodes / branches (load_graph_npz)
     <maze>_overlay.png    occupancy + skeleton + graph
@@ -59,7 +59,7 @@ def plot_graph(occ, graph, path, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v2_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
     ap.add_argument("--source", default=None,
                     help="directory holding maps/<maze>.npy (default data.source)")
     ap.add_argument("--out", default=None,
@@ -69,7 +69,7 @@ def main():
 
     cfg = load_config(args.config)
     source = args.source or cfg["data"].get("source", "data/processed_scene_v1")
-    out = args.out or os.path.join(cfg["data"].get("base", "data/processed_scene_v2"),
+    out = args.out or os.path.join(cfg["data"].get("base", "data/processed_scene_v3"),
                                    "skeletons")
     sk_cfg = cfg.get("skeleton", {})
     maps_dir = os.path.join(source, "maps")

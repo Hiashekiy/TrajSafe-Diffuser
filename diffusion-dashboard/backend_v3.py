@@ -46,7 +46,7 @@ from src.models.skeleton_v3 import SkeletonPlannerV3
 from src.utils.config import load_config
 
 CONFIG_PATH = os.path.join(ROOT, "configs", "config_v3_skeleton.yaml")
-ALM_CONFIG_PATH = os.path.join(ROOT, "configs", "config_v1_alm.yaml")
+ALM_CONFIG_PATH = os.path.join(ROOT, "configs", "config_v3_alm.yaml")
 MAZES = ("umaze", "medium", "large")
 V3_CHECKPOINTS = {
     "v3_best": "outputs/ckpt_v3_skeleton/best.pt",

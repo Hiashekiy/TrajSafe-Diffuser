@@ -1,13 +1,16 @@
 """Load configs/*.yaml as the single source of hyperparameters.
 
-The project now keeps one config: configs/config.yaml.
+The project keeps two configs:
+
+    configs/config_v3_skeleton.yaml    training / data / model / loss
+    configs/config_v3_alm.yaml         inference-time ALM guidance
 
 Base inheritance is still supported (a config with a 'base:' key is deep-merged
-on top of its parent), but no config currently depends on it.
+on top of its parent), but no shipped config depends on it.
 
 Usage:
     from src.utils.config import load_config
-    cfg = load_config("configs/config.yaml")         # dict
+    cfg = load_config("configs/config_v3_skeleton.yaml")     # dict
 """
 import os
 import copy
@@ -31,7 +34,7 @@ def _deep_merge(base, override):
     return out
 
 
-def load_config(path: str = "configs/config.yaml"):
+def load_config(path: str = "configs/config_v3_skeleton.yaml"):
     """Read a YAML config (always UTF-8).  If it has a 'base' key, deep-merge
     that base first, then apply this file's own keys on top."""
     with open(_resolve(path), "r", encoding="utf-8") as f:

@@ -1,8 +1,21 @@
-"""Local GPU inference and cache service for the diffusion dashboard."""
+"""Local GPU inference and cache service for the diffusion dashboard.
+
+This server exposes the report-faithful **V3 TrajSafe-Diffuser only**:
+
+    P_t -> H_traj -> {R_m} -> m = argmax(pi) -> H_prog -> s
+        -> c = Gamma_m(s) -> H_ell -> H_clean -> P0_hat -> DDIM
+
+The model class, the online skeleton/candidate search, the sampler and the
+optional inference-time ALM guidance all live in ``backend_v3.V3Engine``.  This
+module only owns the HTTP layer, the per-request obstacle overlay and the JSON
+cache.
+
+    python backend.py     # http://localhost:8765
+"""
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import sys
 import threading
@@ -17,46 +30,36 @@ SITE_ROOT = os.path.abspath(os.path.dirname(__file__))
 ROOT = os.path.abspath(os.path.join(SITE_ROOT, ".."))
 sys.path.insert(0, ROOT)
 
-from src.diffusion.alm_guidance import alm_correct
-from src.diffusion.schedule import NoiseSchedule
-from src.geometry.convex_corridor import EllipseRegionBuilder
-from src.models.joint import JointPlanner
-from src.utils.checkpoint import load_checkpoint
-from src.utils.config import load_config
-from backend_v2 import V2_CHECKPOINTS, V2Engine
 from backend_v3 import V3_CHECKPOINTS, V3Engine
 
 
-CHECKPOINTS = {
-    "epoch100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced/epoch_100.pt",
-    "continue100": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue100/best.pt",
-    "continue200": "outputs/ckpt_v1_smooth_iou_free_cvar_center_balanced_continue200/best.pt",
-    "center_safe_isolated": "outputs/ckpt_v1_center_safe_isolated/best.pt",
-    # V2 (Skeleton-Topology-Grounded Trajectory Diffusion) - handled by
-    # backend_v2.V2Engine, which builds its own model class and sampler.
-    **V2_CHECKPOINTS,
-    # V3 (TrajSafe-Diffuser report-faithful) - handled by backend_v3.V3Engine.
-    **V3_CHECKPOINTS,
-}
+CHECKPOINTS = dict(V3_CHECKPOINTS)
 MAZES = ("umaze", "medium", "large")
 CACHE_DIR = os.path.join(SITE_ROOT, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_FORMAT = 5
 
-cfg = load_config(os.path.join(ROOT, "configs", "config_v1_continue.yaml"))
-alm_cfg = load_config(os.path.join(ROOT, "configs", "config_v1_alm.yaml")).get("alm") or {}
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+maps = {name: np.load(os.path.join(ROOT, "data", "processed_scene_v1",
+                                   "maps", f"{name}.npy")) for name in MAZES}
 test_dir = os.path.join(ROOT, "data", "processed_scene_v1", "test")
 conditions = np.load(os.path.join(test_dir, "conditions.npy"))
-maze_ids = np.load(os.path.join(test_dir, "maze_id.npy"))
-maps = {name: np.load(os.path.join(ROOT, "data", "processed_scene_v1", "maps", f"{name}.npy")) for name in MAZES}
-schedule = NoiseSchedule(cfg["diffusion"]["timesteps"], beta_schedule=cfg["diffusion"]["beta_schedule"]).to(device)
-models: dict[str, JointPlanner] = {}
-inference_lock = threading.Lock()
 
-with open(os.path.join(SITE_ROOT, "lib", "dashboard-catalog.json"), "r", encoding="utf-8") as handle:
+with open(os.path.join(SITE_ROOT, "lib", "dashboard-catalog.json"), "r",
+          encoding="utf-8") as handle:
     catalog = json.load(handle)
 sample_lookup = {sample["key"]: sample for sample in catalog["samples"]}
+
+v3_engine = None
+inference_lock = threading.Lock()
+
+
+def get_v3_engine() -> V3Engine:
+    """Lazily build the V3 engine (own config, model class and sampler)."""
+    global v3_engine
+    if v3_engine is None:
+        v3_engine = V3Engine(device)
+    return v3_engine
 
 
 def clear_generation_cache():
@@ -74,26 +77,6 @@ def clear_generation_cache():
     return removed
 
 
-v2_engine = None
-v3_engine = None
-
-
-def get_v2_engine():
-    """Lazily build the V2 engine (own config, model class and sampler)."""
-    global v2_engine
-    if v2_engine is None:
-        v2_engine = V2Engine(device)
-    return v2_engine
-
-
-def get_v3_engine():
-    """Lazily build the V3 engine (report-faithful, online candidate search)."""
-    global v3_engine
-    if v3_engine is None:
-        v3_engine = V3Engine(device)
-    return v3_engine
-
-
 def apply_obstacles(maze: str, obstacles):
     """Base occupancy of a maze plus the user drawn circular obstacles."""
     occupancy = maps[maze].copy()
@@ -109,194 +92,29 @@ def apply_obstacles(maze: str, obstacles):
     return occupancy
 
 
-def get_model(model_id: str):
-    if model_id not in models:
-        model = JointPlanner(cfg["model"]).to(device)
-        load_checkpoint(os.path.join(ROOT, CHECKPOINTS[model_id]), model, map_location=device)
-        model.eval()
-        models[model_id] = model
-    return models[model_id]
-
-
-def rounded(tensor: torch.Tensor):
-    return np.round(tensor.detach().cpu().numpy().astype(np.float64), 5).tolist()
-
-
-def polygon_vertices(A, b, mask, tol=1e-5):
-    """Ordered vertices of a bounded 2-D halfspace intersection (scene frame).
-
-    ``A/b/mask`` are the per-region face matrix / rhs / active-face mask of one
-    ellipse region.  Returns [] when fewer than three feasible vertices exist.
-    """
-    A, b = np.asarray(A)[mask], np.asarray(b)[mask]
-    candidates = []
-    for i in range(len(A)):
-        for j in range(i + 1, len(A)):
-            matrix = np.stack((A[i], A[j]))
-            det = np.linalg.det(matrix)
-            if abs(det) <= 1e-8:
-                continue
-            point = np.linalg.solve(matrix, np.asarray((b[i], b[j])))
-            if np.all(A @ point <= b + tol):
-                candidates.append(point)
-    if len(candidates) < 3:
-        return []
-    vertices = np.unique(np.round(np.asarray(candidates), 7), axis=0)
-    center = vertices.mean(axis=0)
-    angle = np.arctan2(vertices[:, 1] - center[1], vertices[:, 0] - center[0])
-    return np.round(vertices[np.argsort(angle)], 5).tolist()
-
-
 @torch.no_grad()
-def generate(sample_key: str, model_id: str, seed: int, custom_condition=None, obstacles=None,
-             alm_enabled: bool | None = None):
+def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
+             obstacles=None, alm_enabled: bool | None = None):
+    """Run one V3 reverse diffusion and return the dashboard payload."""
     sample = sample_lookup[sample_key]
     dataset_id = int(sample["datasetId"])
-    condition = np.asarray(custom_condition if custom_condition is not None else conditions[dataset_id], dtype=np.float32)
+    condition = np.asarray(
+        custom_condition if custom_condition is not None else conditions[dataset_id],
+        dtype=np.float32)
     if condition.shape != (2, 2) or not np.isfinite(condition).all() or np.abs(condition).max() > 1:
         raise ValueError("起终点必须是 [-1,1]² 内的两个坐标")
-    if model_id in V3_CHECKPOINTS:
-        # V3: the report-faithful dynamic Skeleton model.  Candidates are
-        # generated ONLINE on the current occupancy (including user drawn
-        # obstacles) with the same generator as the offline preprocessing; all
-        # candidate search paths are returned so the UI can show them.
-        payload = get_v3_engine().generate(
-            sample_key, dataset_id, sample["maze"],
-            apply_obstacles(sample["maze"], obstacles), condition, seed,
-            model_id=model_id, verify_regions=bool(alm_enabled))
-        payload["obstacles"] = obstacles or []
-        return payload
-    if model_id in V2_CHECKPOINTS:
-        # V2: one trajectory diffusion grounded on the skeleton topology.  The
-        # candidates are generated ONLINE with the very same function the
-        # offline preprocessing uses, so any start/goal/obstacle edit works.
-        payload = get_v2_engine().generate(
-            sample_key, dataset_id, sample["maze"],
-            apply_obstacles(sample["maze"], obstacles), condition, seed,
-            model_id=model_id, verify_regions=bool(alm_enabled))
-        payload["obstacles"] = obstacles or []
-        return payload
-    cond = torch.as_tensor(condition[None], dtype=torch.float32, device=device)
-    maze = MAZES[int(maze_ids[dataset_id])]
-    occupancy = maps[maze].copy()
-    for obstacle in obstacles or []:
-        if len(obstacle) != 3: raise ValueError("障碍点格式错误")
-        ox, oy, radius = map(float, obstacle)
-        if not (-1 <= ox <= 1 and -1 <= oy <= 1 and 0.01 <= radius <= 0.25): raise ValueError("障碍点超出地图或半径无效")
-        cx, cy, pr = (ox + 1) * 127.5, (oy + 1) * 127.5, radius * 127.5
-        yy, xx = np.ogrid[:256, :256]
-        occupancy[(xx - cx) ** 2 + (yy - cy) ** 2 <= pr ** 2] = 1.0
-    map_tensor = torch.as_tensor(occupancy, dtype=torch.float32, device=device)[None, None]
-    model = get_model(model_id)
-    torch.manual_seed(seed)
-    start, goal = cond[:, 0], cond[:, 1]
-    p = torch.randn(1, model.horizon, 2, device=device)
-    e = torch.randn(1, model.horizon, 6, device=device)
-    p[:, 0], p[:, -1] = start, goal
-    sqrt_ab = schedule.sqrt_alphas_cumprod.detach().cpu().tolist()
-    sqrt_1ma = schedule.sqrt_one_minus_alphas_cumprod.detach().cpu().tolist()
+    engine = get_v3_engine()
     if alm_enabled is None:
-        alm_enabled = bool(alm_cfg.get("enabled", False))
-    else:
-        alm_enabled = bool(alm_enabled)
-    alm_start_t = int(alm_cfg.get("start_t", 7))
-    alm_rho = float(alm_cfg.get("rho", 5.0))
-    corridor_builder = EllipseRegionBuilder(map_tensor, alm_cfg) if alm_enabled else None
-    horizon = int(model.horizon)
-    p_history, e_history, x0_p_history, x0_e_history, labels = [], [], [], [], []
-    alm_frames: list[dict | None] = []
-    for t in reversed(range(schedule.num_timesteps)):
-        p_history.append(rounded(p[0])); e_history.append(rounded(e[0])); labels.append(f"t={t}")
-        tb = torch.full((1,), t, device=device, dtype=torch.long)
-        ab = torch.full((1,), float(sqrt_ab[t]), device=device)
-        out = model(p, e, map_tensor, cond, tb, ab)
-        x0_p, x0_e = out["x0_p"], out["x0_e"]
-        x0_p[:, 0], x0_p[:, -1] = start, goal
-        alm_frame = None
-        if alm_enabled and t <= alm_start_t:
-            # Same guidance as sampler_v1.guide_clean_prediction: one predicted
-            # ellipse -> one convex region; ALM corrects the x0 trajectory.
-            raw_p = x0_p.clone()
-            point_A, point_b, point_mask, point_valid = corridor_builder(x0_p, x0_e)
-            enforce_mask = corridor_builder.segment_needs_guidance(x0_p)
-            step_lam = torch.zeros(1, horizon - 1, device=device, dtype=x0_p.dtype)
-            corrected, _, stats = alm_correct(
-                x0_p, point_A[:, 1:], point_b[:, 1:],
-                point_mask[:, 1:], point_valid[:, 1:], step_lam, alm_rho,
-                step_size=float(alm_cfg.get("step_size", 0.03)),
-                inner_steps=int(alm_cfg.get("inner_steps", 4)),
-                max_grad_norm=float(alm_cfg.get("max_grad_norm", 1.0)),
-                max_correction_per_step=float(
-                    alm_cfg.get("max_correction_per_step", 0.10)),
-                proximity_weight=float(alm_cfg.get("proximity_weight", 1.0)),
-                correction_smooth_weight=float(
-                    alm_cfg.get("correction_smooth_weight", 4.0)),
-                enforce_mask=enforce_mask,
-                collect_stats=True,
-            )
-            # E stores centre offsets (c = p + delta_c): preserve the physical
-            # ellipse centres after moving P so P/E stay coherent (as sampler).
-            x0_e = x0_e.clone()
-            x0_e[..., :2] += raw_p - corrected
-            # Convex regions actually used at this guided level: decimate to
-            # every 8th waypoint (same rhythm as the ellipse overlay) plus the
-            # region of each segment the physical gate asked to correct.
-            cpu_A, cpu_b, cpu_mask = (point_A[0].cpu().numpy(),
-                                      point_b[0].cpu().numpy(),
-                                      point_mask[0].cpu().numpy())
-            enforce_cpu = enforce_mask[0].cpu().numpy()
-            region_indices = set(range(8, horizon, 8)) | {horizon - 1}
-            if int(enforce_cpu.sum()) <= 40:
-                for s in range(horizon - 1):
-                    if bool(enforce_cpu[s]):
-                        region_indices.add(int(s) + 1)
-            regions = []
-            for j in sorted(region_indices):
-                if not bool(point_valid[0, j].cpu()):
-                    continue
-                polygon = polygon_vertices(cpu_A[j], cpu_b[j], cpu_mask[j])
-                if polygon:
-                    regions.append({"i": int(j), "polygon": polygon})
-            alm_frame = {
-                "t": int(t),
-                "rawP": rounded(raw_p[0]),
-                "enforced": [int(s) for s in range(horizon - 1)
-                             if bool(enforce_cpu[s])],
-                "regions": regions,
-                "stats": {key: float(value.cpu())
-                          for key, value in stats.items()},
-            }
-            x0_p = corrected
-        x0_p_history.append(rounded(x0_p[0]))
-        x0_e_history.append(rounded(x0_e[0]))
-        alm_frames.append(alm_frame)
-        if t == 0:
-            p, e = x0_p, x0_e
-        else:
-            eps_p = (p - float(sqrt_ab[t]) * x0_p) / float(sqrt_1ma[t])
-            eps_e = (e - float(sqrt_ab[t]) * x0_e) / float(sqrt_1ma[t])
-            p = float(sqrt_ab[t - 1]) * x0_p + float(sqrt_1ma[t - 1]) * eps_p
-            e = float(sqrt_ab[t - 1]) * x0_e + float(sqrt_1ma[t - 1]) * eps_e
-        p[:, 0], p[:, -1] = start, goal
-    p_history.append(rounded(p[0])); e_history.append(rounded(e[0])); labels.append("x0")
-    x0_p_history.append(rounded(p[0])); x0_e_history.append(rounded(e[0]))
-    alm_frames.append(None)
-    result = {
-        "sampleKey": sample_key, "modelId": model_id, "seed": seed, "cacheHit": False,
-        "condition": condition.tolist(), "obstacles": obstacles or [],
-        "stateLabels": labels,
-        "schedule": {
-            "sqrtAlphaBar": np.round(schedule.sqrt_alphas_cumprod.cpu().numpy(), 8).tolist(),
-            "sqrtOneMinusAlphaBar": np.round(schedule.sqrt_one_minus_alphas_cumprod.cpu().numpy(), 8).tolist(),
-        },
-        "PHistory": p_history, "E6History": e_history,
-        "X0PHistory": x0_p_history, "X0E6History": x0_e_history,
-    }
-    if alm_enabled:
-        result["alm"] = {"enabled": True, "startT": alm_start_t, "frames": alm_frames}
-    else:
-        result["alm"] = None
-    return result
+        alm_enabled = bool(engine.alm_cfg.get("enabled", False))
+    # Candidates are generated ONLINE on the current occupancy (including user
+    # drawn obstacles) with the same generator as the offline preprocessing, so
+    # every candidate search path is returned for the UI to draw.
+    payload = engine.generate(
+        sample_key, dataset_id, sample["maze"],
+        apply_obstacles(sample["maze"], obstacles), condition, seed,
+        model_id=model_id, verify_regions=bool(alm_enabled))
+    payload["obstacles"] = obstacles or []
+    return payload
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -307,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "http://localhost:3000")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers(); self.wfile.write(body)
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -318,32 +137,42 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self.send_json(200, {"status": "ready", "device": str(device), "cached": len(os.listdir(CACHE_DIR))})
+            self.send_json(200, {"status": "ready", "device": str(device),
+                                 "cached": len(os.listdir(CACHE_DIR))})
         else:
             self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/generate": return self.send_json(404, {"error": "not found"})
+        if self.path != "/generate":
+            return self.send_json(404, {"error": "not found"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
-            sample_key, model_id, seed = request.get("sampleKey"), request.get("modelId"), int(request.get("seed", 42))
+            sample_key = request.get("sampleKey")
+            model_id = request.get("modelId")
+            seed = int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
-            alm_enabled = bool(request.get("almEnabled", True))   # V2: verify convex regions
-            if sample_key not in sample_lookup: raise ValueError("未知样本")
-            if model_id not in CHECKPOINTS: raise ValueError("未知模型")
-            if seed < 0 or seed > 2_147_483_647: raise ValueError("seed 超出范围")
-            cache_payload = json.dumps({"format": CACHE_FORMAT, "alm": alm_enabled, "sample": sample_key, "model": model_id, "seed": seed, "condition": custom_condition, "obstacles": obstacles}, sort_keys=True, separators=(",", ":"))
+            alm_enabled = bool(request.get("almEnabled", True))
+            if sample_key not in sample_lookup:
+                raise ValueError("未知样本")
+            if model_id not in CHECKPOINTS:
+                raise ValueError("未知模型")
+            if seed < 0 or seed > 2_147_483_647:
+                raise ValueError("seed 超出范围")
+            cache_payload = json.dumps(
+                {"format": CACHE_FORMAT, "alm": alm_enabled, "sample": sample_key,
+                 "model": model_id, "seed": seed, "condition": custom_condition,
+                 "obstacles": obstacles},
+                sort_keys=True, separators=(",", ":"))
             cache_key = hashlib.sha1(cache_payload.encode()).hexdigest()[:12]
-            cache_path = os.path.join(CACHE_DIR, f"{model_id}__{sample_key}__seed{seed}__{cache_key}.json")
+            cache_path = os.path.join(
+                CACHE_DIR, f"{model_id}__{sample_key}__seed{seed}__{cache_key}.json")
             started = time.perf_counter()
             with inference_lock:
                 clear_generation_cache()
-                result = generate(
-                    sample_key, model_id, seed, custom_condition, obstacles,
-                    alm_enabled,
-                )
+                result = generate(sample_key, model_id, seed, custom_condition,
+                                  obstacles, alm_enabled)
                 with open(cache_path, "w", encoding="utf-8") as handle:
                     json.dump(result, handle, separators=(",", ":"))
             result["elapsedMs"] = round((time.perf_counter() - started) * 1000, 1)
@@ -356,5 +185,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Diffusion dashboard API on http://localhost:8765 ({device})", flush=True)
+    print(f"V3 diffusion dashboard API on http://localhost:8765 ({device})",
+          flush=True)
     ThreadingHTTPServer(("127.0.0.1", 8765), Handler).serve_forever()

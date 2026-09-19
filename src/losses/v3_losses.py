@@ -30,7 +30,6 @@ import torch
 import torch.nn.functional as F
 
 from src.geometry.ellipse_raster import ellipse_soft_mask
-from src.losses.v2_losses import trajectory_smoothness_loss
 
 __all__ = [
     "trajectory_smoothness_loss",
@@ -55,6 +54,32 @@ def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 def trajectory_x0_loss(p_hat: torch.Tensor, p_gt: torch.Tensor) -> torch.Tensor:
     """MSE on the interior waypoints (endpoints are hard-conditioned)."""
     return F.mse_loss(p_hat[:, 1:-1], p_gt[:, 1:-1])
+
+
+def trajectory_smoothness_loss(p_pred: torch.Tensor, p_gt: torch.Tensor,
+                               acc_weight: float = 0.25,
+                               jerk_weight: float = 1.0,
+                               eps: float = 1e-3) -> torch.Tensor:
+    """Penalise geometric acceleration and high-frequency jerk.
+
+    Both finite differences are scaled by the detached mean GT step length,
+    so the regulariser is resolution independent.
+    """
+    velocity = p_pred[:, 1:] - p_pred[:, :-1]
+    acceleration = velocity[:, 1:] - velocity[:, :-1]
+    jerk = acceleration[:, 1:] - acceleration[:, :-1]
+
+    gt_velocity = p_gt[:, 1:] - p_gt[:, :-1]
+    step_scale = gt_velocity.norm(dim=-1).mean(dim=1, keepdim=True)
+    step_scale = step_scale.detach().clamp_min(1e-4)[:, :, None]
+    acceleration = acceleration / step_scale
+    jerk = jerk / step_scale
+
+    acc_norm = (acceleration.square().sum(dim=-1) + eps ** 2).sqrt().sub(eps)
+    jerk_norm = (jerk.square().sum(dim=-1) + eps ** 2).sqrt().sub(eps)
+    loss_acc = torch.log1p(acc_norm).mean()
+    loss_jerk = torch.log1p(jerk_norm).mean()
+    return acc_weight * loss_acc + jerk_weight * loss_jerk
 
 
 def topology_ce(pi: torch.Tensor, best: torch.Tensor,

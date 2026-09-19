@@ -24,14 +24,8 @@ const data = rawCatalog as unknown as Catalog;
 const API = 'http://localhost:8765';
 
 const models = [
-  { id: 'epoch100', name: 'Epoch 100', source: 'center_balanced / epoch_100.pt', engine: 'v1' },
-  { id: 'continue100', name: 'Continue 100 · Best', source: 'continue100 / best.pt', engine: 'v1' },
-  { id: 'continue200', name: 'Continue 200 · Best', source: 'continue200 / best.pt', engine: 'v1' },
-  { id: 'center_safe_isolated', name: 'Center-Safe Isolated · Best', source: 'center_safe_isolated / best.pt · ep 260', engine: 'v1' },
-  { id: 'v2_best', name: 'V2 Skeleton-Grounded · Best (ep 69)', source: 'ckpt_v2_skeleton / best.pt', engine: 'v2' },
-  { id: 'v2_latest', name: 'V2 Skeleton-Grounded · Latest (ep 88)', source: 'ckpt_v2_skeleton / latest.pt', engine: 'v2' },
   { id: 'v3_best', name: 'V3 TrajSafe · Best (ep 19)', source: 'ckpt_v3_skeleton / best.pt', engine: 'v3' },
-  { id: 'v3_latest', name: 'V3 TrajSafe · Latest (ep 90)', source: 'ckpt_v3_skeleton / latest.pt', engine: 'v3' },
+  { id: 'v3_latest', name: 'V3 TrajSafe · Latest (ep 100)', source: 'ckpt_v3_skeleton / latest.pt', engine: 'v3' },
 ];
 const mazeNames: Record<string, string> = { umaze: 'U-Maze', medium: 'Medium', large: 'Large' };
 const layerConfig = [
