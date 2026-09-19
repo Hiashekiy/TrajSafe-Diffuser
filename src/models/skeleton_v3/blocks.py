@@ -1,34 +1,39 @@
-"""V3 network blocks.
+"""Transformer blocks for the report-faithful TrajSafe-Diffuser.
 
-Reuses the frozen V1 conditioning design (AdaLN + the manual multi-head
-attention core) and the V1 Joint Transformer idea, but the timestep enters as a
-GLOBAL conditioning signal in every sublayer - never as a token that is simply
-added:
+Only the blocks that the implementation report actually defines live here:
 
-    AdaLN(x, h_t) = (1 + gamma(h_t)) LN(x) + beta(h_t)
+    TrajSelfAttention   self-attention over H trajectory tokens with a
+                        learnable per-head relative waypoint-index bias
+                        B_ij^h = b_h(|i - j|)  (report section 8.1)
+    CrossAttention      plain Q/KV attention (no spatial bias)
+    TrajBlock           AdaLN(self) -> AdaLN(global-map cross) -> AdaLN(FFN),
+                        each sublayer residual (report section 8.1 / 22.1)
+    MatchBlock          the ONE shared trajectory-skeleton cross-attention plus
+                        the LN -> FFN_match residual (report section 12.1)
 
-Modules here:
-    TrajSelfAttention   relative horizon bias over H trajectory tokens
-    CrossAttention      plain Q/KV attention
-    TrajBlock           self-attn -> scene cross-attn -> FFN   (backbone)
-    JointFusionBlock    interleaved [T1,E1,...,TH,EH] self-attn with horizon /
-                        type / same-pair biases -> scene cross-attn -> FFN
+Explicitly NOT here any more: the interleaved trajectory/ellipse
+``JointFusionBlock``, token type embeddings, role embeddings, or a second
+trajectory-skeleton cross-attention.
 """
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ..joint.joint_blocks import AdaLN, _MHABase
 
-__all__ = ["TrajSelfAttention", "CrossAttention", "TrajBlock", "JointFusionBlock"]
+__all__ = ["TrajSelfAttention", "CrossAttention", "TrajBlock", "MatchBlock"]
 
 
 class TrajSelfAttention(_MHABase):
     """Self-attention over H trajectory tokens with a learnable relative bias."""
 
-    def __init__(self, d_model, num_heads, horizon, dropout=0.0):
+    def __init__(self, d_model: int, num_heads: int, horizon: int,
+                 dropout: float = 0.0):
         super().__init__(d_model, num_heads, dropout)
         self.horizon = int(horizon)
         self.qkv = nn.Linear(d_model, 3 * d_model)
@@ -37,7 +42,7 @@ class TrajSelfAttention(_MHABase):
               - torch.arange(self.horizon)[None, :]).abs()
         self.register_buffer("_kd", kd.clamp(0, self.horizon - 1))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, L, _ = x.shape
         q, k, v = self.qkv(x).chunk(3, dim=-1)
         bias = self.b_horizon[self._kd].permute(2, 0, 1)[None]
@@ -45,22 +50,28 @@ class TrajSelfAttention(_MHABase):
 
 
 class CrossAttention(_MHABase):
-    """Q from x, K/V from mem (optional additive score bias)."""
+    """Q from ``x``, K/V from ``mem``; optional additive score bias."""
 
-    def __init__(self, d_model, num_heads, dropout=0.0):
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.0):
         super().__init__(d_model, num_heads, dropout)
         self.q = nn.Linear(d_model, d_model)
         self.kv = nn.Linear(d_model, 2 * d_model)
 
-    def forward(self, x, mem, bias=None):
+    def forward(self, x: torch.Tensor, mem: torch.Tensor,
+                bias: torch.Tensor | None = None) -> torch.Tensor:
         k, v = self.kv(mem).chunk(2, dim=-1)
         return self.attend(self.q(x), k, v, bias)
 
 
 class TrajBlock(nn.Module):
-    """Pre-norm AdaLN block: self-attention + scene cross-attention + FFN."""
+    """Pre-norm AdaLN block: self-attention + global-map cross + FFN.
 
-    def __init__(self, d_model, num_heads, ff_dim, horizon, dropout=0.0):
+    The same module class is used by the Trajectory Backbone (N_T = 8) and by
+    the Final Denoiser (N_F = 3); the two stacks own independent parameters.
+    """
+
+    def __init__(self, d_model: int, num_heads: int, ff_dim: int, horizon: int,
+                 dropout: float = 0.0):
         super().__init__()
         self.n1 = AdaLN(d_model, d_model)
         self.sa = TrajSelfAttention(d_model, num_heads, horizon, dropout)
@@ -71,68 +82,70 @@ class TrajBlock(nn.Module):
             nn.Linear(d_model, ff_dim), nn.GELU(),
             nn.Linear(ff_dim, d_model), nn.Dropout(dropout))
 
-    def forward(self, x, global_mem, h_t):
+    def forward(self, x: torch.Tensor, global_mem: torch.Tensor,
+                h_t: torch.Tensor) -> torch.Tensor:
         x = x + self.sa(self.n1(x, h_t))
         x = x + self.ca(self.n2(x, h_t), global_mem)
         x = x + self.ffn(self.n3(x, h_t))
         return x
 
 
-class JointFusionBlock(nn.Module):
-    """V1-style interleaved trajectory/ellipse fusion block.
+class MatchBlock(nn.Module):
+    """The single shared trajectory-skeleton matching block.
 
-    The 2H joint sequence keeps the structural biases of V1:
-        B_horizon(|k_i - k_j|) + B_type(r_i, r_j) + B_pair(same index, T <-> E)
+    For every candidate m (batched on the M dimension, parameters shared):
+
+        A_m = CrossAttention(Q=AdaLN(H_traj, h_t), K=H_m^S, V=H_m^S)
+        U_m = H_traj + A_m
+        R_m = U_m + FFN_match(LN_match(U_m))
+
+    No Chamfer feature, no candidate length, no coarse-trajectory token, and no
+    second cross-attention: R is the shared feature used by both the topology
+    head and the progress head.
     """
 
-    def __init__(self, d_model, num_heads, ff_dim, horizon, dropout=0.0):
+    def __init__(self, d_model: int, num_heads: int, ff_dim: int,
+                 dropout: float = 0.0):
         super().__init__()
-        self.horizon = int(horizon)
-        L = 2 * self.horizon
-        self.n1 = AdaLN(d_model, d_model)
-        self.qkv = nn.Linear(d_model, 3 * d_model)
+        if d_model % num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads")
+        self.d_model = int(d_model)
+        self.num_heads = int(num_heads)
+        self.head_dim = self.d_model // self.num_heads
+        self.scale = math.sqrt(self.head_dim)
+        self.adaln = AdaLN(d_model, d_model)
+        self.q = nn.Linear(d_model, d_model)
+        self.kv = nn.Linear(d_model, 2 * d_model)
         self.out = nn.Linear(d_model, d_model)
         self.drop = nn.Dropout(dropout)
-        self.num_heads = int(num_heads)
-        self.head_dim = d_model // self.num_heads
-        import math
-        self.scale = math.sqrt(self.head_dim)
-        self.b_horizon = nn.Parameter(torch.zeros(self.horizon, num_heads))
-        self.b_type = nn.Parameter(torch.zeros(2, 2, num_heads))
-        self.b_pair = nn.Parameter(torch.zeros(self.horizon, num_heads))
-        ks = torch.arange(self.horizon).repeat_interleave(2)
-        rs = torch.arange(2).repeat(self.horizon)
-        kd = (ks[:, None] - ks[None, :]).abs().clamp(0, self.horizon - 1)
-        same_pair = ((ks[:, None] == ks[None, :]) & (rs[:, None] != rs[None, :]))
-        self.register_buffer("_ks", ks)
-        self.register_buffer("_rs", rs)
-        self.register_buffer("_kd", kd)
-        self.register_buffer("_same_pair", same_pair)
-        assert L == len(ks)
-
-        self.n2 = AdaLN(d_model, d_model)
-        self.ca = CrossAttention(d_model, num_heads, dropout)
-        self.n3 = AdaLN(d_model, d_model)
+        self.ln = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, ff_dim), nn.GELU(),
             nn.Linear(ff_dim, d_model), nn.Dropout(dropout))
 
-    def forward(self, z, global_mem, h_t):
-        B, L, D = z.shape
-        h = self.n1(z, h_t)
-        q, k, v = self.qkv(h).chunk(3, dim=-1)
-        bh = self.b_horizon[self._kd]
-        bt = self.b_type[self._rs[:, None], self._rs[None, :]]
-        pair = self.b_pair[self._ks[:, None]] * self._same_pair[..., None]
-        bias = (bh + bt + pair).permute(2, 0, 1)[None]
-        q = q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+    def forward(self, h_traj: torch.Tensor, h_skel: torch.Tensor,
+                h_t: torch.Tensor) -> torch.Tensor:
+        """h_traj [B,H,D], h_skel [B,M,L,D] -> R [B,M,H,D]."""
+        B, H, D = h_traj.shape
+        M = h_skel.shape[1]
+        L = h_skel.shape[2]
+
+        q = self.q(self.adaln(h_traj, h_t))                  # [B,H,D]
+        kv = self.kv(h_skel)                                 # [B,M,L,2D]
+        k, v = kv.chunk(2, dim=-1)
+
+        q = q[:, None].expand(B, M, H, D).reshape(B * M, H, D)
+        k = k.reshape(B * M, L, D)
+        v = v.reshape(B * M, L, D)
+
+        q = q.view(B * M, H, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B * M, L, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B * M, L, self.num_heads, self.head_dim).transpose(1, 2)
         scores = torch.matmul(q, k.transpose(-1, -2)) / self.scale
-        scores = scores + bias.expand(B, self.num_heads, L, L)
-        attn = self.drop(torch.softmax(scores, dim=-1))
-        o = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, D)
-        z = z + self.out(o)
-        z = z + self.ca(self.n2(z, h_t), global_mem)
-        z = z + self.ffn(self.n3(z, h_t))
-        return z
+        attn = self.drop(F.softmax(scores, dim=-1))
+        att = torch.matmul(attn, v).transpose(1, 2).reshape(B * M, H, D)
+        att = self.out(att).view(B, M, H, D)
+
+        u = h_traj[:, None, :, :] + att                       # [B,M,H,D]
+        r = u + self.ffn(self.ln(u))
+        return r

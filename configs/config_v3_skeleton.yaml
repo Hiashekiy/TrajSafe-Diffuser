@@ -1,9 +1,9 @@
 # ============================================================
-# V3: Skeleton-Topology-Grounded Trajectory Diffusion (dynamic, no commit_t)
-#   docs/ChatGPT-扩散路径安全建议-20260919-0125.md
-#   每个 reverse timestep 重新执行完整网络：
-#     P_t -> P~_0 -> S_m -> s -> c -> E -> P^_0 -> P_{t-1}
-#   只有一个 diffusion state：P_t。
+# V3: TrajSafe-Diffuser - report-faithful architecture
+#   docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md
+#   ONE diffusion state: trajectory P_t [B,H,2].
+#   Ellipse is NOT a diffusion state and ellipse centres come from
+#   c_i = Gamma_m(s_i) - there is no centre head.
 # ============================================================
 
 env:
@@ -12,54 +12,60 @@ env:
   seed: 42
 
 data:
-  source: "data/processed_scene_v1"    # 轨迹 / 起终点 / 地图
-  base: "data/processed_scene_v3"      # V3 候选（features + dense geometry）
-  batch_size: 16           # 32 在本机(12GB 且与其它进程共享)会掉进显存回退的性能
-                           # 悬崖：实测同一 step，B=16 是 0.143s，B=32 是 4.1s
+  source: "data/processed_scene_v1"    # trajectory / endpoints / maps
+  base: "data/processed_scene_v3"      # candidate cache + ellipse labels
+  mazes: ["large"]                     # only the large map is used for training
+  batch_size: 16
   num_workers: 0
   splits: ["train", "val", "test"]
+  ellipse_mask_res: 64                 # lazy GT soft mask resolution
+  ellipse_mask_tau: 10.0               # same rasteriser as the loss
 
 skeleton:
   safety_dilation_cells: 1
   thinning_backend: "auto"
   pure_cycle_aux_nodes: 2
 
-# --- candidate topology (section 7/8) -----------------------------------
+# --- candidate topology (offline cache) ---------------------------------
 topology:
-  num_candidates: 4          # M
-  # raw_k 从 V2 的 16 提到 128：super source/sink 之后，K 条最短路会被大量
-  # 短的 anchor-pair 变体占满，预算太小就永远到不了远处那条 parallel branch。
+  num_candidates: 4
   raw_k: 128
   max_length_ratio: 1.5
   dedup_jaccard: 0.75
-  candidate_points: 128      # 网络特征路径 F_m^S 的点数
-  candidate_geometry_points: 1280   # dense geometry 的 padding 上限
+  candidate_points: 128                # L, S_m network input length
+  candidate_geometry_points: 1280      # dense Gamma_m padding budget
   anchor_candidates: 16
-  tau_gt: 0.05               # 仅历史指标用；V3 拓扑监督是 CE(m*)
+  tau_gt: 0.05
 
 model:
   horizon: 128
   d_model: 128
   num_heads: 4
-  traj_blocks: 8             # Trajectory Backbone
-  fusion_blocks: 3           # Joint Fusion Blocks (2~4)
+  traj_blocks: 8                       # Trajectory Backbone N_T
+  skeleton_blocks: 2                   # Skeleton Transformer N_S
+  final_blocks: 3                      # Final Denoiser N_F
   ffn_dim: 512
   map_res: 256
-  global_mem_res: 16
-  geo_decode_res: 64
-  geo_mem_res: 32
+  global_mem_res: 16                   # C_G 16x16
+  geo_decode_res: 64                   # fine-geometry decoder output
+  geo_mem_res: 32                      # C_E 32x32
   geo_sigma: 0.25
   geo_bias_clip: 8.0
   dropout: 0.0
-  head_hidden: 256
-  path_hidden: 128
-  path_transformer_layers: 2
+  coord_hidden: 256                    # MLP_T / MLP_S / MLP_C hidden width
+  head_hidden: 256                     # score / shape head hidden width
+  assert_shapes: true                  # report section 27.4 assertions
 
-# --- 椭圆物理轴长上界（section 16）-------------------------------------
-ellipse:
-  b_min: 0.02
-  b_max: 0.30
-  a_max: 0.80
+# --- ellipse label generation (scripts/data/14_build_ellipse_labels_v3.py)
+ellipse_label:
+  num_orientations: 36
+  local_radius: 0.25
+  dilation: 1
+  boundary_points: 128
+  interior_rings: 4
+  interior_angles: 32
+  binary_iters: 12
+  min_semi_axis: 1.0e-3
 
 diffusion:
   timesteps: 16
@@ -68,7 +74,7 @@ diffusion:
   beta_end: 0.02
   prediction_type: "x0"
 
-# --- loss (section 29) ---------------------------------------------------
+# --- loss (report section 25) -------------------------------------------
 loss:
   lambda_traj: 1.0
   lambda_coarse: 0.25
@@ -77,22 +83,17 @@ loss:
   smooth_jerk_weight: 1.0
 
   lambda_topology: 0.5
-  lambda_align: 0.5
-  lambda_gap: 0.01
 
-  lambda_safe: 1.0
-  lambda_area: 0.05
-  lambda_ratio: 0.01
-  lambda_inside: 0.0         # 先关，确认稳定后再开
+  # L_E = (2 L_center + 4 L_shape) / 6
+  lambda_E: 1.0
+  lambda_iou: 0.25
+  lambda_safe: 0.1
 
-  inner_weight: 1.0          # 内部 waypoint 权重（起终点硬约束）
   ellipse_safe_res: 64
   ellipse_mask_tau: 10.0
   ellipse_safe_chunk: 32
   safe_cvar_fraction: 0.2
   safe_cvar_weight: 1.0
-  ratio_max: 4.0
-  inside_rho: 0.8
 
 train:
   epochs: 100
@@ -104,11 +105,6 @@ train:
   eval_every: 10
   val_batches: 25
   ckpt_dir: "outputs/ckpt_v3_skeleton"
-  # 训练时 skeleton 选择策略（section 12）
-  selection_schedule:
-    gt_until_epoch: 10        # epoch < 10: 100% GT (m*)
-    predicted_from_epoch: 30  # epoch >= 30: 100% predicted
-    # 中间线性过渡
 
 eval:
   num_candidates_ablation: [1, 2, 4]

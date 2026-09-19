@@ -1,31 +1,14 @@
-"""V3 DDIM sampler (docs section 20/21).
+"""V3 DDIM sampler (report section 24).
 
-Every reverse timestep runs the FULL network, including a fresh skeleton choice:
+Only the trajectory P_t is a diffusion state.  Every reverse timestep runs the
+WHOLE report network, including a fresh topology choice:
 
     for t in reverse_times:
-        base   = encode_trajectory(P_t, map, t)
-        coarse = head_p(base)                  # first, ordinary x0 prediction
-        pi     = score_all_skeletons(coarse, base, candidates, t)
-        m      = argmax(pi)                    # recomputed EVERY step
-        s      = progress(base, selected_path, t)
-        c      = gamma(selected_dense_geometry, s)
-        E      = ellipse_head(c, base, geometry_memory, t)
-        h_fin  = joint_fusion(base, E, scene, t)
-        P0     = head_p(h_fin)                 # SAME head, real output
-        P_t    = ddim_step(P_t, P0, t)
+        P0_hat = model(P_t, occ, cond, t, ab, candidates)   # argmax(pi) routing
+        P_t    = ddim_step(P_t, P0_hat, t)
 
-No commit_t, no committed flag, no cached selected path/features.
-
-Schedules (section 21).  The network is evaluated at EVERY listed time and the
-final transition is always ``t = 0 -> -1``, which sets P = x0 exactly:
-
-    full        (T-1 -> T-2) ... (1 -> 0) (0 -> -1)        T+1 transitions
-    sub-sampled (15 -> 10) (10 -> 5) (5 -> 0) (0 -> -1)    4 transitions
-
-The trailing ``0 -> -1`` step is NOT optional: without it the last scheduled
-index (e.g. t = 5) would hand its own x0 estimate to DDIM, the network would
-never run at t = 0, and P_0 would not be the clean prediction.  Only
-``s_t < 0`` may therefore bypass DDIM.
+There is no commit timestep, no cached selection and no ellipse diffusion state.
+The trailing ``0 -> -1`` transition is not optional: it sets P = P0_hat exactly.
 """
 
 from __future__ import annotations
@@ -48,13 +31,11 @@ def pick_times(T: int, steps):
 
 
 @torch.no_grad()
-def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
-              candidate_lengths, geometry, geometry_lengths, device="cuda",
-              steps=None, seed=None, selection="argmax", return_trace=False):
-    """cond [B,2,2]; occ [B,1,R,R]; candidate_features [B,M,L,5];
+def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
+              geometry, geometry_lengths, device="cuda", steps=None, seed=None,
+              return_trace=False):
+    """cond [B,2,2]; occ [B,1,R,R]; candidate_xy [B,M,L,2];
     candidate_mask [B,M]; geometry [B,M,G,2]; geometry_lengths [B,M]."""
-    if selection not in ("argmax", "sample"):
-        raise ValueError("selection must be 'argmax' or 'sample'")
     if seed is not None:
         torch.manual_seed(int(seed))
     model.eval()
@@ -69,8 +50,7 @@ def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
         pairs = [(t, t - 1) for t in range(T - 1, -1, -1)]
     else:
         pairs = [(times[i], times[i - 1]) for i in range(len(times) - 1, 0, -1)]
-        # always close the schedule with the clean transition 0 -> -1, so the net
-        # is evaluated at t = 0 and P_0 == x0(t = 0) (section 21)
+        # close the schedule with the clean transition 0 -> -1 so P_0 is x0(0)
         pairs.append((times[0], -1))
 
     p = torch.randn(B, H, 2, device=dev, dtype=torch.float32)
@@ -83,30 +63,11 @@ def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
     for t, s_t in pairs:
         tb = torch.full((B,), int(t), device=dev, dtype=torch.long)
         ab = sqrt_ab[int(t)].expand(B).contiguous()
-        out = model.forward_all(p, occ, cond, tb, ab, candidate_features,
-                                candidate_mask, candidate_lengths, geometry,
-                                geometry_lengths, select_index=None)
-        if selection == "sample":
-            pi = out["topo"]["pi"]
-            idx = torch.multinomial(pi.clamp_min(1e-12), 1).squeeze(-1)
-            idx = torch.where(has_cand, idx, out["selected_idx"])
-            ar = torch.arange(B, device=dev)
-            path_feat = out["topo"]["path_feat"][ar, idx]
-            geom = geometry[ar, idx]
-            glen = geometry_lengths[ar, idx]
-            ell = model.build_ellipses(out["base"], out["coarse"], path_feat,
-                                       geom, glen, ab)
-            h_final = model.fuse(out["base"], ell["tokens"])
-            final = model.final_trajectory(h_final, cond)
-            out["ellipse"] = ell
-            out["final"] = final
-            out["selected_idx"] = idx
+        out = model.forward_all(p, occ, cond, tb, ab, candidate_xy,
+                                candidate_mask, geometry, geometry_lengths,
+                                select_index=None)
         x0 = out["final"]
         last = out
-        # ONLY the explicit clean transition (t = 0 -> -1) bypasses DDIM.  Every
-        # other step - including a sub-sampled step that lands on index 0 - must
-        # go through the real DDIM update, because alpha_bar_0 != 1: index 0 is
-        # still a noisy latent, not the clean sample.  Section 21.
         if int(s_t) < 0:
             p = x0
         else:
@@ -130,6 +91,7 @@ def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
                 "ellipse_b": out["ellipse"]["b"].detach().cpu().clone(),
                 "ellipse_theta": out["ellipse"]["theta"].detach().cpu().clone(),
             })
+
     result = {"p": p, "has_candidate": has_cand}
     if last is not None:
         result["selected_idx"] = last["selected_idx"]
@@ -139,6 +101,7 @@ def sample_v3(model, schedule, cond, occ, candidate_features, candidate_mask,
         result["ellipse_a"] = last["ellipse"]["a"]
         result["ellipse_b"] = last["ellipse"]["b"]
         result["ellipse_theta"] = last["ellipse"]["theta"]
+        result["ellipse_shape4"] = last["ellipse"]["shape4"]
     if return_trace:
         result["trace"] = trace
     return result

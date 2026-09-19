@@ -4,7 +4,8 @@ Runs the FIXED candidate generator (parallel branches preserved, multi-anchor
 super source/sink, no unsafe fallback, dense safe geometry) for every OD pair
 and stores, per split:
 
-    candidate_features.npy         [N, M, L, 5]  float32  network features
+    candidate_features.npy         [N, M, L, 5]  float32  legacy diagnostics
+    candidate_xy.npy               [N, M, L, 2]  float32  S_m network input
     candidate_mask.npy             [N, M]        bool
     candidate_lengths.npy          [N, M]        float32  scene arc length
     candidate_geometry.npy         [P, 2]        int16    dense cell chain (flat)
@@ -58,6 +59,7 @@ def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
     M, L = cfg.num_candidates, cfg.candidate_points
 
     features = np.zeros((n, M, L, 5), dtype=np.float32)
+    xy = np.zeros((n, M, L, 2), dtype=np.float32)
     mask = np.zeros((n, M), dtype=bool)
     lengths = np.zeros((n, M), dtype=np.float32)
     branch_counts = np.zeros((n, M), dtype=np.int32)
@@ -80,6 +82,7 @@ def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
         for m in range(cands.num_slots):
             if m < M and cands.mask[m]:
                 features[i, m] = cands.paths[m]
+                xy[i, m] = cands.paths[m][:, :2]
                 mask[i, m] = True
                 lengths[i, m] = cands.lengths[m]
                 branch_counts[i, m] = len(cands.branch_ids[m])
@@ -106,6 +109,7 @@ def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
             else np.zeros((0, 2), dtype=np.int16))
     os.makedirs(out_dir, exist_ok=True)
     np.save(os.path.join(out_dir, "candidate_features.npy"), features)
+    np.save(os.path.join(out_dir, "candidate_xy.npy"), xy)
     np.save(os.path.join(out_dir, "candidate_mask.npy"), mask)
     np.save(os.path.join(out_dir, "candidate_lengths.npy"), lengths)
     np.save(os.path.join(out_dir, "candidate_geometry.npy"), geom)

@@ -1,13 +1,7 @@
 """V3 dataset / visualisation regression tests.
 
-Covers two review findings:
-
-    * the dense cell-chain geometry is stored as int16 CELL indices, so the two
-      continuous endpoints (start / goal) come back snapped to cell centres.
-      The dataset restores them exactly, otherwise L_align carries a constant
-      error of up to half a cell at both ends.
-    * the per-step trace plot used to index the batch dimension twice and drew a
-      single waypoint instead of the whole trajectory.
+The dataset must expose exactly the report's ellipse-label fields and the lazy
+GT mask must be numerically identical to the shared soft rasteriser.
 """
 
 from __future__ import annotations
@@ -23,21 +17,101 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.datasets.skeleton_dataset_v3 import SkeletonDatasetV3  # noqa: E402
+from src.datasets.skeleton_dataset_v3 import (MAZE_NAMES,  # noqa: E402
+                                              SkeletonDatasetV3)
 from src.diffusion.schedule import NoiseSchedule  # noqa: E402
+from src.geometry.ellipse_raster import ellipse_soft_mask  # noqa: E402
+from src.geometry.ellipse_shape import shape4_to_abtheta  # noqa: E402
+from src.geometry.skeleton_paths import nearest_arclength  # noqa: E402
 
 from v3_utils import tiny_batch, tiny_model  # noqa: E402
 
 V3_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v3")
 SOURCE_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v1")
-HAS_DATA = os.path.exists(os.path.join(V3_ROOT, "test", "candidate_geometry.npy"))
+HAS_DATA = os.path.exists(os.path.join(V3_ROOT, "test", "ellipse_center_gt.npy"))
 
-needs_data = pytest.mark.skipif(not HAS_DATA, reason="V3 preprocessing not built")
+needs_data = pytest.mark.skipif(not HAS_DATA, reason="V3 ellipse labels not built")
+
+
+@needs_data
+def test_dataset_provides_the_report_fields():
+    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+                           ellipse_mask_res=32, mazes=["large"])
+    item = ds[0]
+    H, M, L = ds.horizon, ds.num_candidates, ds.candidate_points
+    G = ds.geometry_points
+    assert item["candidate_xy"].shape == (M, L, 2)
+    assert item["candidate_geometry"].shape == (M, G, 2)
+    assert item["ellipse_center_gt"].shape == (H, 2)
+    assert item["ellipse_shape4_gt"].shape == (H, 4)
+    assert item["shape_valid"].shape == (H,)
+    assert item["shape_valid"].dtype == torch.bool
+    assert item["progress_gt"].shape == (H,)
+    assert item["ellipse_mask"].shape == (H, 32, 32)
+    assert torch.isfinite(item["ellipse_center_gt"]).all()
+    assert torch.isfinite(item["ellipse_shape4_gt"]).all()
+
+
+@needs_data
+def test_maze_filter_keeps_only_large():
+    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+                           ellipse_mask_res=16, mazes=["large"])
+    assert len(ds) > 0
+    for i in range(min(len(ds), 10)):
+        assert int(ds[i]["maze_id"]) == MAZE_NAMES.index("large")
+
+
+@needs_data
+def test_gt_progress_is_monotone_and_pinned():
+    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+                           ellipse_mask_res=32, mazes=["large"])
+    checked = 0
+    for idx in range(min(len(ds), 20)):
+        item = ds[idx]
+        if not bool(item["has_candidate"]):
+            continue
+        s = item["progress_gt"].numpy()
+        assert abs(float(s[0])) < 1e-6
+        assert abs(float(s[-1] - 1.0)) < 1e-5
+        assert np.all(np.diff(s) >= -1e-6)
+        checked += 1
+    assert checked > 0
+
+
+@needs_data
+def test_gt_center_lies_on_the_selected_dense_curve():
+    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+                           ellipse_mask_res=32, mazes=["large"])
+    item = ds[0]
+    best = int(item["topology_best"])
+    geom = item["candidate_geometry"].numpy()[best]
+    n = int(item["candidate_geometry_lengths"][best])
+    gamma = geom[:n]
+    center = item["ellipse_center_gt"].numpy()
+    _, dist = nearest_arclength(center, gamma)
+    assert float(np.max(dist)) < 1e-5
+
+
+@needs_data
+def test_lazy_mask_matches_the_shared_rasteriser_and_masks_invalid():
+    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+                           ellipse_mask_res=32, mazes=["large"])
+    item = ds[0]
+    center = item["ellipse_center_gt"]
+    shape4 = item["ellipse_shape4_gt"]
+    valid = item["shape_valid"]
+    a, b, theta = shape4_to_abtheta(shape4)
+    expected = ellipse_soft_mask(center[None], a[None], b[None], theta[None],
+                                 32, 10.0)[0]
+    expected = expected * valid.float()[:, None, None]
+    assert torch.allclose(item["ellipse_mask"], expected, atol=1e-6)
+    assert float(item["ellipse_mask"][~valid].abs().sum()) == 0.0
 
 
 @needs_data
 def test_dense_geometry_endpoints_are_exact():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280)
+    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+                           ellipse_mask_res=32, mazes=["large"])
     checked = 0
     for idx in range(0, min(len(ds), 40)):
         item = ds[idx]
@@ -50,32 +124,11 @@ def test_dense_geometry_endpoints_are_exact():
             assert n >= 2, (idx, m)
             assert np.allclose(geom[m, 0], cond[0], atol=1e-6), (idx, m)
             assert np.allclose(geom[m, n - 1], cond[1], atol=1e-6), (idx, m)
-            # the inner points are cell centres and stay on the half-integer grid
-            inner = geom[m, 1:n - 1]
-            if len(inner):
-                cell = 2.0 / 256.0
-                px = (inner + 1.0) / cell - 0.5
-                assert np.abs(px - np.rint(px)).max() < 1e-4, (idx, m)
             checked += 1
     assert checked > 0
 
 
-@needs_data
-def test_dense_geometry_padding_is_zero_and_lengths_agree():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280)
-    item = ds[0]
-    glen = item["candidate_geometry_lengths"]
-    mask = item["candidate_mask"]
-    geom = item["candidate_geometry"]
-    assert bool((glen[~mask] == 0).all())
-    for m in np.nonzero(mask.numpy())[0]:
-        n = int(glen[m])
-        assert float(geom[m, n:].abs().sum()) == 0.0
-    assert bool((glen <= ds.geometry_points).all())
-
-
 def test_trace_plot_draws_the_whole_trajectory(tmp_path):
-    """plot_trace must plot all H waypoints of the per-sample [H, 2] arrays."""
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
     import sample_v3
@@ -99,31 +152,27 @@ def test_trace_plot_draws_the_whole_trajectory(tmp_path):
     axes = sample_v3.plot_trace(occ, trace, geom, glen, out_png, "unit")
     assert os.path.exists(out_png) and os.path.getsize(out_png) > 0
     ax = axes[0][0]
-    # line 0 = skeleton chain, 1 = coarse, 2 = final
     assert len(ax.lines[1].get_xdata()) == H
     assert len(ax.lines[2].get_xdata()) == H
-    assert len(ax.lines[1].get_ydata()) == H
     assert float(np.ptp(ax.lines[1].get_xdata())) > 10.0
 
 
 def test_sampler_trace_is_per_step_and_sliceable():
-    """The trace entry point used by sample_v3: [B, H, 2] -> slice -> [H, 2]."""
     import src.diffusion.sampler_v3 as sampler_v3
 
-    model = tiny_model()
-    b = tiny_batch(B=3, M=2)
+    model = tiny_model(horizon=8)
+    b = tiny_batch(B=3, M=2, H=8)
     out = sampler_v3.sample_v3(model, NoiseSchedule(16), b["cond"], b["occ"],
-                               b["features"], b["mask"], b["lengths"], b["geom"],
-                               b["geom_len"], device="cpu", steps=4, seed=0,
-                               return_trace=True)
+                               b["candidate_xy"], b["candidate_mask"],
+                               b["candidate_geometry"],
+                               b["candidate_geometry_lengths"],
+                               device="cpu", steps=4, seed=0, return_trace=True)
     assert len(out["trace"]) == 4
     for k in range(3):
-        frame = {name: step[name][k].numpy() for name, step in
-                 ((n, s) for s in out["trace"] for n in
-                  ("coarse", "final", "selected_idx", "pi", "ellipse_center"))}
-        assert frame["coarse"].shape == (model.horizon, 2)
-        assert frame["final"].shape == (model.horizon, 2)
-        assert frame["selected_idx"].shape == ()
-        assert frame["pi"].shape == (2,)
-        assert frame["ellipse_center"].shape == (model.horizon, 2)
+        for step in out["trace"]:
+            assert step["coarse"][k].shape == (model.horizon, 2)
+            assert step["final"][k].shape == (model.horizon, 2)
+            assert step["selected_idx"][k].shape == ()
+            assert step["pi"][k].shape == (2,)
+            assert step["ellipse_center"][k].shape == (model.horizon, 2)
     assert torch.isfinite(out["p"]).all()

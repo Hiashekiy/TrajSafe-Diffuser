@@ -1,14 +1,9 @@
-"""Single-step profiler for V3 (NOT training).
-
-Answers one question: how long does ONE V3 forward+backward take?  The first
-3-batch smoke test showed batch 1 at ~409 s while batches 2/3 were fast, and that
-has not been explained yet; this isolates whether a single step is inherently
-slow or whether it was a one-off (concurrent process, CUDA warm-up, ...).
+"""Single-step profiler for the report-faithful TrajSafe-Diffuser.
 
     python scripts/debug/v3_profile_step.py --device cuda --repeat 5
 
-It creates the model, builds synthetic tensors of the real shapes, and times
-forward + backward only - no optimizer, no dataset, no epochs.
+Creates the model and synthetic tensors of the real shapes and times
+forward + losses + backward only (no optimizer, no dataset, no epochs).
 """
 import argparse
 import os
@@ -22,8 +17,8 @@ sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.models.skeleton_v3 import SkeletonPlannerV3
-from src.losses.v3_losses import (ellipse_area_loss, ellipse_safety_loss,
-                                  trajectory_x0_loss)
+from src.losses.v3_losses import (ellipse_center_loss, ellipse_shape_loss,
+                                  ellipse_safety_loss, trajectory_x0_loss)
 
 
 def main():
@@ -43,28 +38,31 @@ def main():
     L = int(topo.get("candidate_points", 128))
     G = int(topo.get("candidate_geometry_points", 1280))
 
-    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse")).to(device)
+    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse_label")).to(device)
     model.train()
     p0 = torch.randn(B, H, 2, device=device)
     cond = torch.randn(B, 2, 2, device=device)
     occ = torch.zeros(B, 1, 256, 256, device=device)
     occ[:, :, 0, :] = 1.0
-    feats = torch.randn(B, M, L, 5, device=device)
+    cand_xy = torch.randn(B, M, L, 2, device=device)
     mask = torch.ones(B, M, dtype=torch.bool, device=device)
-    lengths = torch.rand(B, M, device=device) + 0.5
     geom = torch.randn(B, M, G, 2, device=device) * 0.5
     glen = torch.full((B, M), G, dtype=torch.long, device=device)
+    center_gt = torch.randn(B, H, 2, device=device) * 0.1
+    shape_gt = torch.zeros(B, H, 4, device=device)
+    shape_gt[..., 0] = torch.log(torch.tensor(0.1))
+    shape_gt[..., 1] = torch.log(torch.tensor(0.05))
+    shape_gt[..., 2] = 1.0
+    valid = torch.ones(B, H, dtype=torch.bool, device=device)
+    has_cand = mask.any(dim=-1)
     t = torch.full((B,), 5, dtype=torch.long, device=device)
     ab = torch.full((B,), 0.5, device=device)
 
     print("device=%s B=%d H=%d M=%d L=%d G=%d" % (device, B, H, M, L, G),
           flush=True)
-
     cuda = device.type == "cuda"
 
     def sync():
-        # CUDA is asynchronous: without this every segment timing below is a
-        # kernel-LAUNCH time, not a kernel time.
         if cuda:
             torch.cuda.synchronize()
 
@@ -75,9 +73,8 @@ def main():
         sync()
         return out, time.time() - t0
 
-    # warm-up pass (cudnn autotune, lazy init) - never reported
-    warm = model.forward_all(p0, occ, cond, t, ab, feats, mask, lengths,
-                             geom, glen, select_index=None)
+    warm = model.forward_all(p0, occ, cond, t, ab, cand_xy, mask, geom, glen,
+                             select_index=None)
     warm_loss = trajectory_x0_loss(warm["final"], p0)
     sync()
     warm_loss.backward()
@@ -88,18 +85,20 @@ def main():
     times = []
     for i in range(args.repeat):
         out, t_fwd = timed(lambda: model.forward_all(
-            p0, occ, cond, t, ab, feats, mask, lengths, geom, glen,
+            p0, occ, cond, t, ab, cand_xy, mask, geom, glen,
             select_index=None))
-        loss = (trajectory_x0_loss(out["final"], p0)
-                + trajectory_x0_loss(out["coarse"], p0))
+        ell = out["ellipse"]
 
         def _losses():
+            loss = (trajectory_x0_loss(out["final"], p0)
+                    + trajectory_x0_loss(out["coarse"], p0))
+            loss = loss + ellipse_center_loss(ell["center"], center_gt, has_cand)
+            loss = loss + ellipse_shape_loss(ell["shape4"], shape_gt, valid,
+                                             has_cand)
             safe, _, _ = ellipse_safety_loss(
-                out["ellipse"]["center"], out["ellipse"]["a"],
-                out["ellipse"]["b"], out["ellipse"]["theta"], occ)
-            return loss + safe + ellipse_area_loss(
-                out["ellipse"]["a"], out["ellipse"]["b"],
-                model.ellipse.a_max, model.ellipse.b_max)
+                ell["center"], ell["a"], ell["b"], ell["theta"], occ,
+                sample_mask=has_cand)
+            return loss + safe
 
         total_loss, t_loss = timed(_losses)
         _, t_bwd = timed(lambda: (total_loss.backward(),

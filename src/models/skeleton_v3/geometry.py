@@ -1,16 +1,21 @@
-"""Geometry helpers for V3: gamma_m(s) on the DENSE safe polyline.
+"""Skeleton-curve geometry for the report-faithful TrajSafe-Diffuser.
 
-The dense geometry of a candidate is the raw cell chain (padded to a fixed
-length for batching).  Interpolating on it - never on the 128-point network
-feature path - is what makes the ellipse centre structurally safe, because every
-segment of the chain stays inside free space.
+``Gamma_m`` is the complete ordered dense geometry of a candidate.  It is pure
+geometry data: it never enters the network.  Its ONLY use is the centre decode
+
+    s_i -> c_i = Gamma_m(s_i)
+
+implemented as arc-length interpolation on the dense safe polyline (report
+section 10.2 / 16 / 27.1).  Interpolating on the 128-point network feature path
+instead would allow a chord to cut an obstacle corner.
 """
 
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 
-__all__ = ["dense_arclength", "gather_dense_path_points"]
+__all__ = ["dense_arclength", "gather_dense_path_points", "CurveDecoder"]
 
 
 def dense_arclength(coords: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
@@ -31,9 +36,11 @@ def dense_arclength(coords: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor
 
 def gather_dense_path_points(coords: torch.Tensor, lengths: torch.Tensor,
                              s: torch.Tensor) -> torch.Tensor:
-    """gamma_m(s) on the dense chain: coords [B,G,2], lengths [B], s [B,K].
+    """Gamma_m(s) on the dense chain: coords [B,G,2], lengths [B], s [B,K].
 
-    Differentiable with respect to s.
+    Differentiable with respect to ``s``.  Degenerate candidates (length < 2)
+    return the first padded point, which keeps the forward finite; the planner
+    masks these rows and falls back to the coarse trajectory.
     """
     B, G, _ = coords.shape
     lengths = lengths.clamp(min=1, max=G)
@@ -51,3 +58,11 @@ def gather_dense_path_points(coords: torch.Tensor, lengths: torch.Tensor,
     p0 = coords.gather(1, ii - 1)
     p1 = coords.gather(1, ii)
     return p0 + t * (p1 - p0)
+
+
+class CurveDecoder(nn.Module):
+    """Parameter-free module wrapper around :func:`gather_dense_path_points`."""
+
+    def forward(self, geometry: torch.Tensor, lengths: torch.Tensor,
+                s: torch.Tensor) -> torch.Tensor:
+        return gather_dense_path_points(geometry, lengths, s)

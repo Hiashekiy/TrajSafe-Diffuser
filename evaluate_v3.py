@@ -1,15 +1,12 @@
-"""Evaluate V3 (Skeleton-Topology-Grounded Trajectory Diffusion, dynamic).
+"""Evaluate V3 with the report-faithful TrajSafe-Diffuser.
 
 Metrics:
 
   trajectory   collision rate, goal distance, smoothness, cross-seed diversity
-  centre       CenterFree rate (must be 1.0) and minimum clearance in cells
+  centre       free-space rate and minimum clearance (c_i = Gamma(s_i))
   ellipse      boundary+interior collision rate, mean area
   topology     selected-vs-GT nDTW, Recall@M, entropy, cross-seed diversity,
-               and the PER-STEP selection jitter - V3 re-selects the skeleton at
-               every reverse step, so a skeleton that flips between timesteps is
-               a V3-specific failure mode worth watching
-  alignment    mean ||c_i - p_i^GT|| (the quantity L_align optimises)
+               per-step selection jitter
   progress     monotonicity violations (must be 0)
 
     python evaluate_v3.py --config configs/config_v3_skeleton.yaml \
@@ -88,10 +85,7 @@ def main():
     ap.add_argument("--num-batches", type=int, default=3)
     ap.add_argument("--runs", type=int, default=4)
     ap.add_argument("--steps", type=int, default=None)
-    ap.add_argument("--selection", default="argmax",
-                    choices=("argmax", "sample"))
-    ap.add_argument("--max-candidates", type=int, default=None,
-                    help="M ablation: keep only the first M slots")
+    ap.add_argument("--max-candidates", type=int, default=None)
     ap.add_argument("--recall-tau", type=float, default=0.15)
     ap.add_argument("--device", default=None)
     ap.add_argument("--out", default=None)
@@ -104,13 +98,18 @@ def main():
     base = cfg["data"].get("base", "data/processed_scene_v3")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
+    mask_res = int(cfg["data"].get("ellipse_mask_res", 64))
+    mask_tau = float(cfg["data"].get("ellipse_mask_tau", 10.0))
     batch_size = int(cfg["data"].get("batch_size", 32))
 
-    ds = SkeletonDatasetV3(args.split, source, base, geometry_points=geo_points)
+    ds = SkeletonDatasetV3(args.split, source, base, geometry_points=geo_points,
+                           ellipse_mask_res=mask_res,
+                           ellipse_mask_tau=mask_tau,
+                           mazes=cfg["data"].get("mazes"))
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse")).to(device)
+    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse_label")).to(device)
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt.get("model_state", ckpt))
     model.eval()
@@ -118,7 +117,7 @@ def main():
     occ_maps = [ds.maps[i][0, 0].numpy() for i in range(len(MAZE_NAMES))]
     agg = {k: [] for k in
            ["traj_collision", "goal_dist", "smooth", "center_free",
-            "center_min_clearance", "ellipse_collision", "area", "align_mae",
+            "center_min_clearance", "ellipse_collision", "area", "center_mae",
             "progress_violations", "topo_entropy", "selected_ndtw", "recall",
             "topo_diversity", "traj_diversity", "step_jitter",
             "step_switch_rate", "sel_best_rate"]}
@@ -139,14 +138,13 @@ def main():
         for r in range(max(1, args.runs)):
             runs.append(sample_v3(
                 model, schedule, cond, occ_t,
-                batch["candidate_features"].to(device), mask,
-                batch["candidate_lengths"].to(device),
+                batch["candidate_xy"].to(device), mask,
                 batch["candidate_geometry"].to(device),
                 batch["candidate_geometry_lengths"].to(device),
                 device=device, steps=args.steps, seed=1000 * bi + r,
-                selection=args.selection, return_trace=True))
+                return_trace=True))
         best = batch["topology_best"].numpy()
-        feats = batch["candidate_features"].numpy()
+        feats = batch["candidate_xy"].numpy()
         geom = batch["candidate_geometry"].numpy()
         glen = batch["candidate_geometry_lengths"].numpy()
         pos = batch["pos"].numpy()
@@ -182,8 +180,8 @@ def main():
             agg["ellipse_collision"].append(float(np.mean(
                 [1.0 if _collides(p, occ_map) else 0.0 for p in pts])))
             agg["area"].append(float((np.pi * a * bb).mean()))
-            agg["align_mae"].append(float(np.linalg.norm(center - pos[b],
-                                                         axis=-1).mean()))
+            agg["center_mae"].append(float(np.linalg.norm(center - pos[b],
+                                                          axis=-1).mean()))
             s = runs[0]["progress"][b].cpu().numpy()
             agg["progress_violations"].append(float((np.diff(s) < -1e-6).sum()))
 
@@ -195,19 +193,17 @@ def main():
             nz = pi > 1e-12
             agg["topo_entropy"].append(float(-(pi[nz] * np.log(pi[nz])).sum()))
             gt_poly = resample_polyline(pos[b], 128)
-            dd = [normalized_dtw(gt_poly, feats[b, m, :, :2]) for m in valid]
+            dd = [normalized_dtw(gt_poly, feats[b, m]) for m in valid]
             agg["recall"].append(float(min(dd) <= args.recall_tau))
             sel = int(runs[0]["selected_idx"][b])
             sel_poly = (geom[b, sel, :int(glen[b, sel])]
-                        if glen[b, sel] > 1 else feats[b, sel, :, :2])
+                        if glen[b, sel] > 1 else feats[b, sel])
             agg["selected_ndtw"].append(float(normalized_dtw(
                 gt_poly, resample_polyline(sel_poly, 128))))
             agg["sel_best_rate"].append(float(sel == int(best[b])))
             sel_all = [int(run["selected_idx"][b]) for run in runs]
             agg["topo_diversity"].append(float(len(set(sel_all)) > 1))
             per_step = [int(step["selected_idx"][b]) for step in runs[0]["trace"]]
-            # real switch count, not |set|-1: a path A -> B -> A switches twice
-            # while set(...) only has two elements.
             switches = sum(1 for u, v in zip(per_step[:-1], per_step[1:]) if u != v)
             agg["step_jitter"].append(float(switches))
             agg["step_switch_rate"].append(
@@ -224,11 +220,11 @@ def main():
             summary[k] = float(np.mean(v))
     summary.update({"M": args.max_candidates or int(
         (cfg.get("topology") or {}).get("num_candidates", 4)),
-        "selection": args.selection, "steps": args.steps, "runs": args.runs,
-        "ckpt": args.ckpt, "epoch": ckpt.get("epoch"), "split": args.split})
+        "steps": args.steps, "runs": args.runs, "ckpt": args.ckpt,
+        "epoch": ckpt.get("epoch"), "split": args.split})
     out = args.out or os.path.join(
         os.path.dirname(args.ckpt),
-        "eval_v3_%s_M%s_%s.json" % (args.split, summary["M"], args.selection))
+        "eval_v3_%s_M%s.json" % (args.split, summary["M"]))
     with open(out, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))
