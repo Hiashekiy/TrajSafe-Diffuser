@@ -39,6 +39,14 @@ def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
     if seed is not None:
         torch.manual_seed(int(seed))
     model.eval()
+    # Be defensive: callers frequently pass CPU batch tensors while the model is
+    # on CUDA; mismatch shows up as masked_fill(-inf) on a different device.
+    cond = cond.to(device)
+    occ = occ.to(device)
+    candidate_xy = candidate_xy.to(device)
+    candidate_mask = candidate_mask.to(device)
+    geometry = geometry.to(device)
+    geometry_lengths = geometry_lengths.to(device)
     B, H = cond.shape[0], model.horizon
     T = schedule.num_timesteps
     dev = device
