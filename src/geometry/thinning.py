@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from skeleton_graph.topology import neighbour_offsets, topology_preserved
+from .topology import neighbour_offsets, topology_preserved
 
 #: Hard stop so a pathological input can never spin forever.
 MAX_SUBITERATIONS = 400

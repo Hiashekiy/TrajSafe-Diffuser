@@ -120,7 +120,7 @@ def skeletonize_free(free: np.ndarray, backend: str = "auto") -> np.ndarray:
         raise ValueError("free mask is empty; nothing to thin")
     occ255 = np.where(free, 255, 0).astype(np.uint8)
     try:
-        from skeleton_graph.thinning import guo_hall_thinning
+        from .thinning import guo_hall_thinning
     except Exception as exc:  # pragma: no cover - import environment failure
         raise ImportError(
             "skeletonize_free needs the standalone skeleton_graph package "
