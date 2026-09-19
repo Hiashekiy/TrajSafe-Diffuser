@@ -264,6 +264,7 @@ class V3Engine:
                 "progress": self._rounded(step["progress"][0]),
                 "center": self._rounded(center),
                 "shape4": self._rounded(shape4),
+                "regions": [],
             })
         # close the replay with the final x0 frame (same convention as V1/V2)
         p_history.append(p_history[-1]); e6_history.append(e6_history[-1])
