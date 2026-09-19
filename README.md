@@ -1,14 +1,14 @@
-# TrajSafe-Diffuser — V3（报告一致的骨架引导安全扩散规划器）
+# TrajSafe-Diffuser（报告一致的骨架引导安全扩散规划器）
 
-本仓库实现 **TrajSafe-Diffuser V3**：以 Maze2D 占据地图上的**骨架拓扑**为几何
+本仓库实现 **TrajSafe-Diffuser**：以 Maze2D 占据地图上的**骨架拓扑**为几何
 先验，用一条轨迹扩散链生成起终点之间的安全路径，并预测沿路径分布的安全椭圆。
 
 **唯一架构规格**（source of truth）：
 
 > [`docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md`](docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md)
 
-V1 / V2 的代码、配置、入口、脚本、测试与设计文档已在本分支删除。当前仓库只包含
-V3 及其实际依赖的共享组件（Skeleton 几何、推理期 ALM 引导、数据准备流水线）。
+旧版本的代码、配置、入口、脚本、测试与设计文档已删除。当前仓库只包含
+本实现及其依赖的共享组件（Skeleton 几何、推理期 ALM 引导、数据准备流水线）。
 
 ---
 
@@ -48,7 +48,7 @@ L = 1.00 L_traj + 0.50 L_coarse + 0.08 L_smooth + 0.25 L_topo
 E:/CondaEnvData/envs/GGMPC/python.exe --version    # Python 3.10 + torch 2.9.1+cu126
 ```
 
-所有路径 / 超参数集中在 `configs/config_v3_skeleton.yaml`，代码不硬编码数值。
+所有路径 / 超参数集中在 `configs/config.yaml`，代码不硬编码数值。
 
 ---
 
@@ -56,22 +56,22 @@ E:/CondaEnvData/envs/GGMPC/python.exe --version    # Python 3.10 + torch 2.9.1+c
 
 ```
 configs/
-    config_v3_skeleton.yaml     训练 / 数据 / 模型 / 损失 + 推理期 ALM 段
+    config.yaml     训练 / 数据 / 模型 / 损失 + 推理期 ALM 段
 src/
-    models/skeleton_v3/         V3 网络（planner / blocks / encoders / ellipse / fusion / geometry / heads）
-    models/joint/               共享 AdaLN / MHA（joint_blocks）与 SceneCNN（scene_cnn）
+    models/trajsafe/         网络（planner / blocks / encoders / ellipse / fusion / geometry / heads）
+    models/common/               共享 AdaLN / MHA（blocks）与 SceneCNN（scene_cnn）
     models/position_encoding.py SpatialPE / PE_1D / timestep embedding
-    datasets/skeleton_dataset_v3.py
-    diffusion/                  schedule / sampler_v3 / alm_guidance
-    losses/v3_losses.py
+    datasets/skeleton_dataset.py
+    diffusion/                  schedule / sampler / alm_guidance
+    losses/losses.py
     geometry/                   骨架图与候选路径、细化、椭圆几何、凸区域、数据准备几何
     utils/                      config / checkpoint / seed
-train_v3.py  sample_v3.py  evaluate_v3.py
+train.py  sample.py  evaluate.py
 scripts/data/{01,02,08,10,13,14}_*.py     数据准备流水线
-scripts/debug/v3_*.py                     候选召回 / 单步性能 / 标签可视化
-tests/                                    V3 + 共享几何测试
-diffusion-dashboard/                      V3-only 交互式可视化（见其 README）
-docs/                                     架构报告、V3 说明、ALM、数据说明
+scripts/debug/*.py                        候选召回 / 单步性能 / 标签可视化
+tests/                                    模型 / 数据 / 几何测试
+diffusion-dashboard/                      交互式可视化（见其 README）
+docs/                                     架构报告与实现说明
 ```
 
 ---
@@ -79,17 +79,17 @@ docs/                                     架构报告、V3 说明、ALM、数�
 ## 4. 数据
 
 ```bash
-# V3 骨架 / 候选 / 椭圆标签（在已提供的 data/processed_scene_v1 上运行）
-python scripts/data/10_build_skeletons.py            --config configs/config_v3_skeleton.yaml
-python scripts/data/13_build_skeleton_candidates_v3.py --config configs/config_v3_skeleton.yaml
-python scripts/data/14_build_ellipse_labels_v3.py    --config configs/config_v3_skeleton.yaml
+# 骨架 / 候选 / 椭圆标签（在已提供的 data/scenes 上运行）
+python scripts/data/01_build_skeletons.py            --config configs/config.yaml
+python scripts/data/02_build_candidates.py --config configs/config.yaml
+python scripts/data/03_build_ellipse_labels.py    --config configs/config.yaml
 ```
 
-* 轨迹 / 条件 / 地图：`data/processed_scene_v1`（仓库已提供）；
-* V3 候选缓存与椭圆标签：`data/processed_scene_v3`；
+* 轨迹 / 条件 / 地图：`data/scenes`（仓库已提供）；
+* 候选缓存与椭圆标签：`data/skeleton`；
 * 训练只使用 large：`data.mazes: ["large"]`。
 
-从 d4rl hdf5 重建 `processed_scene_v1` 的 V1 数据准备脚本已在本分支删除
+从 d4rl hdf5 重建 `scenes` 的 V1 数据准备脚本已在本分支删除
 （需要时从 git 历史取回）。
 
 ---
@@ -97,13 +97,13 @@ python scripts/data/14_build_ellipse_labels_v3.py    --config configs/config_v3_
 ## 5. 训练 / 采样 / 评估
 
 ```bash
-python train_v3.py    --config configs/config_v3_skeleton.yaml
-python sample_v3.py   --config configs/config_v3_skeleton.yaml --ckpt outputs/ckpt_v3_skeleton/best.pt
-python evaluate_v3.py --config configs/config_v3_skeleton.yaml --ckpt outputs/ckpt_v3_skeleton/best.pt
+python train.py    --config configs/config.yaml
+python sample.py   --config configs/config.yaml --ckpt outputs/ckpt/best.pt
+python evaluate.py --config configs/config.yaml --ckpt outputs/ckpt/best.pt
 ```
 
-`sample_v3.py` / `evaluate_v3.py` 支持 `--steps`（DDIM 子采样）与 `--device`；
-`evaluate_v3.py` 输出 `traj_collision`、`center_free`、`progress_violations`、
+`sample.py` / `evaluate.py` 支持 `--steps`（DDIM 子采样）与 `--device`；
+`evaluate.py` 输出 `traj_collision`、`center_free`、`progress_violations`、
 `recall@M`、`sel_best_rate` 等指标。
 
 ---
@@ -111,16 +111,16 @@ python evaluate_v3.py --config configs/config_v3_skeleton.yaml --ckpt outputs/ck
 ## 6. 测试
 
 ```bash
-python -m pytest tests/test_v3_model.py tests/test_v3_dataset.py tests/test_v3_geometry.py \
+python -m pytest tests/test_model.py tests/test_dataset.py tests/test_geometry.py \
                  tests/test_thinning.py tests/test_alm_guidance.py \
-                 tests/test_convex_corridor_validity.py -q
+                 tests/test_convex_region_validity.py -q
 ```
 
 ---
 
 ## 7. 交互式 Dashboard
 
-`diffusion-dashboard/` 提供 V3-only 的在线可视化：在线生成候选骨架、回放 16 步反向
+`diffusion-dashboard/` 提供在线可视化：在线生成候选骨架、回放 16 步反向
 扩散、叠加 verified convex region 与 ALM 修正前后的 `x̂₀`。启动方式见
 [`diffusion-dashboard/README.md`](diffusion-dashboard/README.md)。
 
@@ -128,6 +128,6 @@ python -m pytest tests/test_v3_model.py tests/test_v3_dataset.py tests/test_v3_g
 
 ## 8. 推理期扩展：凸区域 + ALM 修正
 
-可选开启（`configs/config_v3_skeleton.yaml` 的 `alm` 段）：对 `t <= start_t` 的帧，
+可选开启（`configs/config.yaml` 的 `alm` 段）：对 `t <= start_t` 的帧，
 用预测椭圆在线构造 verified convex region，并用 `alm_correct` 一阶修正 `x0` 后再走
 DDIM。该扩展只发生在推理期，不改变网络、checkpoint 与训练损失。

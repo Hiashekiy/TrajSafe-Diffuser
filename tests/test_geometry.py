@@ -1,4 +1,4 @@
-"""V3 geometry tests: the four fixes required before training (spec section 8).
+"""Geometry tests: the four fixes required before training (spec section 8).
 
     1. parallel branches survive the graph expansion
     2. start/goal attach to EVERY visible anchor (super source / sink)
@@ -97,7 +97,7 @@ def test_multi_anchor_start_goal_produces_several_topologies(corridors_graph):
     # because this test is about the graph expansion, not about the filter
     # NOTE raw_k must be generous: with a super source/sink the K lightest
     # simple paths are dominated by short anchor-pair variations, so a small
-    # budget never reaches the far corridor.  This is why the V3 config raises
+    # budget never reaches the far corridor.  This is why the config raises
     # raw_k from 16 to 64.
     # NOTE 32 slots on purpose: with a super source/sink the K shortest paths are
     # dominated by short anchor-pair variations (branch set {} / {5} / {8} ...),

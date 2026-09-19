@@ -1,7 +1,7 @@
 import torch
 
 from src.diffusion.alm_guidance import alm_correct
-from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.convex_region import EllipseRegionBuilder
 
 
 def test_alm_reduces_box_violation_and_preserves_endpoints():

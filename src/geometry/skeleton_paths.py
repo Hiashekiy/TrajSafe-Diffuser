@@ -1,4 +1,4 @@
-"""V2 geometry step 2: safe candidate topologies on the compressed skeleton graph.
+"""Skeleton geometry step 2: safe candidate topologies on the compressed skeleton graph.
 
 The graph algorithms in this module only produce *complete, connected, safe*
 candidate routes between a start and a goal.  They never rank them: choosing a
@@ -138,7 +138,7 @@ def _dedupe_consecutive(points: List[Tuple[float, float]]) -> np.ndarray:
 class UnsafeRouteError(RuntimeError):
     """No safe concatenation exists for this node/branch sequence.
 
-    Raised instead of repairing the route: V3 never emits a connector that a
+    Raised instead of repairing the route: the planner never emits a connector that a
     corner cut separates, the candidate is simply dropped.
     """
 

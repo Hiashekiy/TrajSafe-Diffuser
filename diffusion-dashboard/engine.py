@@ -1,24 +1,23 @@
-"""V3 engine for the diffusion dashboard.
+"""Inference engine for the diffusion dashboard.
 
 This is the report-faithful TrajSafe-Diffuser:
 
     P_t -> H_traj -> {R_m} -> m = argmax(pi) -> H_prog -> s
         -> c = Gamma_m(s) -> H_ell -> H_clean -> P0_hat -> DDIM
 
-Key dashboard-facing differences from V2:
+Key dashboard-facing behaviour:
 
   * every reverse timestep re-scores the topology (no commit timestep);
   * the candidate set is generated ONLINE from the current occupancy and
     start/goal with the SAME generator as the offline preprocessing, so the
     user-drawn obstacles and edited endpoints are part of the search graph;
-  * all candidate search paths are returned in ``v2.candidatePaths`` (the
-    existing V2 UI block is reused, with ``engine='v3-skeleton-dynamic'``);
+  * all candidate search paths are returned in ``topology.candidate_paths``;
   * each step returns the selected candidate, pi, progress and its ellipse
     centre/shape so the replay shows whether the topology switches.
 
 Self test (no HTTP):
 
-    python backend_v3.py --selftest --sample large-855
+    python engine.py --selftest --sample large-855
 """
 from __future__ import annotations
 
@@ -37,19 +36,19 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from src.diffusion.alm_guidance import alm_correct
-from src.diffusion.sampler_v3 import sample_v3
+from src.diffusion.sampler import sample
 from src.diffusion.schedule import NoiseSchedule
-from src.geometry.convex_corridor import EllipseRegionBuilder
+from src.geometry.convex_region import EllipseRegionBuilder
 from src.geometry.skeleton_graph import build_skeleton_graph
 from src.geometry.skeleton_paths import CandidateConfig, generate_candidates
-from src.models.skeleton_v3 import SkeletonPlannerV3
+from src.models.trajsafe import TrajSafePlanner
 from src.utils.config import load_config
 
-CONFIG_PATH = os.path.join(ROOT, "configs", "config_v3_skeleton.yaml")
+CONFIG_PATH = os.path.join(ROOT, "configs", "config.yaml")
 MAZES = ("umaze", "medium", "large")
-V3_CHECKPOINTS = {
-    "v3_best": "outputs/ckpt_v3_skeleton/best.pt",
-    "v3_latest": "outputs/ckpt_v3_skeleton/latest.pt",
+CHECKPOINTS = {
+    "best": "outputs/ckpt/best.pt",
+    "latest": "outputs/ckpt/latest.pt",
 }
 DEFAULT_GEOMETRY_POINTS = 1280
 
@@ -75,7 +74,7 @@ def polygon_vertices(A, b, mask, tol=1e-5):
     return np.round(vertices[np.argsort(angle)], 5).tolist()
 
 
-class V3Engine:
+class Engine:
     def __init__(self, device):
         self.cfg = load_config(CONFIG_PATH)
         self.topo_cfg = dict(self.cfg.get("topology") or {})
@@ -85,7 +84,7 @@ class V3Engine:
             self.topo_cfg.get("candidate_geometry_points", DEFAULT_GEOMETRY_POINTS))
         self.alm_cfg = (self.cfg.get("alm") or {})
         self.device = device
-        self.maps = {name: np.load(os.path.join(ROOT, "data", "processed_scene_v1",
+        self.maps = {name: np.load(os.path.join(ROOT, "data", "scenes",
                                                 "maps", "%s.npy" % name))
                      for name in MAZES}
         self.schedule = NoiseSchedule(
@@ -100,10 +99,10 @@ class V3Engine:
     # ------------------------------------------------------------------ model
     def get_model(self, model_id):
         if model_id not in self.models:
-            path = os.path.join(ROOT, V3_CHECKPOINTS[model_id])
+            path = os.path.join(ROOT, CHECKPOINTS[model_id])
             model_cfg = dict(self.cfg["model"])
             model_cfg["assert_shapes"] = False          # inference speed
-            model = SkeletonPlannerV3(model_cfg,
+            model = TrajSafePlanner(model_cfg,
                                       self.cfg.get("ellipse_label")).to(self.device)
             ckpt = torch.load(path, map_location="cpu", weights_only=False)
             model.load_state_dict(ckpt.get("model_state", ckpt))
@@ -136,19 +135,12 @@ class V3Engine:
             array = array.detach().cpu()
         return np.round(np.asarray(array, dtype=np.float64), 5).tolist()
 
-    @staticmethod
-    def _e6(center, shape4, trajectory):
-        """(centre, shape4, path point) -> V1 six-vector [dx,dy,loga,logb,c2,s2]."""
-        off = np.asarray(center, dtype=np.float64) - np.asarray(trajectory,
-                                                                dtype=np.float64)
-        return np.concatenate([off, np.asarray(shape4, dtype=np.float64)], axis=-1)
-
     def _pack_candidates(self, cands, condition):
-        """CandidateSet -> V3 tensors [1,M,...] on device.
+        """CandidateSet -> model tensors [1,M,...] on device.
 
         Candidate geometry is the dense safe Skeleton Curve Gamma_m; it is padded
         to a common length and its exact start/goal endpoints are restored, the
-        same convention as ``SkeletonDatasetV3``.
+        same convention as ``SkeletonDataset``.
         """
         M = int(cands.num_slots)
         L = int(self.cand_cfg.candidate_points)
@@ -186,7 +178,7 @@ class V3Engine:
 
     # ---------------------------------------------------------- ALM guidance
     def _make_guidance(self, occupancy):
-        """Inference-time V3 ALM guidance: predicted ellipse -> verified region.
+        """Inference-time ALM guidance: predicted ellipse -> verified region.
 
         The correction is applied to the model's raw ``P0_hat`` before DDIM; the
         network weights, training losses and the report architecture are
@@ -244,7 +236,7 @@ class V3Engine:
                 "regions": regions,
                 "enforced": [int(s) for s in range(horizon - 1)
                              if bool(enforce_cpu[s])],
-                "rawP": self._rounded(x0[0]),
+                "raw_p": self._rounded(x0[0]),
                 "stats": {k: float(v.detach().cpu()) for k, v in stats.items()},
             }
             return corrected, info
@@ -293,24 +285,24 @@ class V3Engine:
                 if not free(ring[k]).all():
                     hit += 1
             total += len(center)
-        out = {"ellipseCount": int(total),
-               "ellipseCollisionRate": float(hit / total) if total else None,
-               "centerFreeRate": None, "minCenterClearanceCells": None}
+        out = {"ellipse_count": int(total),
+               "ellipse_collision_rate": float(hit / total) if total else None,
+               "center_free_rate": None, "min_center_clearance_cells": None}
         if centers:
             center = centers[-1]
-            out["centerFreeRate"] = float(free(center).mean())
+            out["center_free_rate"] = float(free(center).mean())
             j, i = np.nonzero(occupancy.astype(bool))
             cx = (i + 0.5) * 2.0 / res - 1.0
             cy = (j + 0.5) * 2.0 / res - 1.0
             d = np.sqrt((center[:, 0:1] - cx[None, :]) ** 2
                         + (center[:, 1:2] - cy[None, :]) ** 2)
-            out["minCenterClearanceCells"] = float(d.min() * res / 2.0)
+            out["min_center_clearance_cells"] = float(d.min() * res / 2.0)
         return out
 
     # --------------------------------------------------------------- generate
     @torch.no_grad()
     def generate(self, sample_key, dataset_id, maze, occupancy, condition,
-                 seed, model_id="v3_best", verify_regions=False):
+                 seed, model_id="best", verify_regions=False):
         model, epoch = self.get_model(model_id)
         condition = np.asarray(condition, dtype=np.float32).reshape(2, 2)
         start = condition[0]
@@ -329,14 +321,14 @@ class V3Engine:
         occ = torch.as_tensor(occupancy, dtype=torch.float32,
                               device=self.device)[None, None]
         guide = self._make_guidance(occupancy) if verify_regions else None
-        result = sample_v3(model, self.schedule, cond, occ,
+        result = sample(model, self.schedule, cond, occ,
                            packed["xy"], packed["mask"], packed["geometry"],
                            packed["geometry_lengths"], device=self.device,
                            seed=seed, return_trace=True, alm_guidance=guide)
         trace = result["trace"]
 
-        p_history, e6_history, x0p_history, x0e6_history = [], [], [], []
-        alm_frames, v3_frames = [], []
+        state_history, x0_history, ellipse_history = [], [], []
+        alm_frames, topology_frames = [], []
         region_count = 0
         for step in trace:
             p = step["p"][0].numpy()
@@ -344,21 +336,21 @@ class V3Engine:
             coarse = step["coarse"][0].numpy()
             center = step["ellipse_center"][0].numpy()
             shape4 = step["ellipse_shape4"][0].numpy()
-            p_history.append(self._rounded(p))
-            x0p_history.append(self._rounded(x0))
-            e6_history.append(self._rounded(self._e6(center, shape4, p)))
-            x0e6_history.append(self._rounded(self._e6(center, shape4, x0)))
+            state_history.append(self._rounded(p))
+            x0_history.append(self._rounded(x0))
+            ellipse_history.append({"center": self._rounded(center),
+                                    "shape4": self._rounded(shape4)})
             guide_info = step.get("guide")
             if guide is None:
                 # report-faithful run: reuse the overlay for the coarse branch
                 alm_frames.append({"t": int(step["t"]),
-                                   "rawP": self._rounded(coarse),
+                                   "raw_p": self._rounded(coarse),
                                    "enforced": [], "regions": [], "stats": {}})
             elif guide_info is not None:
                 region_count += len(guide_info["regions"])
                 alm_frames.append({
                     "t": int(step["t"]),
-                    "rawP": guide_info["rawP"],
+                    "raw_p": guide_info["raw_p"],
                     "enforced": guide_info["enforced"],
                     "regions": guide_info["regions"],
                     "stats": guide_info["stats"],
@@ -366,74 +358,74 @@ class V3Engine:
             else:
                 # guided run but this timestep is above the ALM start threshold
                 alm_frames.append(None)
-            v3_frames.append({
+            topology_frames.append({
                 "t": int(step["t"]),
-                "selectedIdx": int(step["selected_idx"][0]),
+                "selected_idx": int(step["selected_idx"][0]),
                 "pi": self._rounded(step["pi"][0]),
                 "progress": self._rounded(step["progress"][0]),
                 "center": self._rounded(center),
                 "shape4": self._rounded(shape4),
                 "regions": [],
             })
-        # close the replay with the final x0 frame (same convention as V1/V2)
-        p_history.append(p_history[-1]); e6_history.append(e6_history[-1])
-        x0p_history.append(x0p_history[-1]); x0e6_history.append(x0e6_history[-1])
+        # close the replay with the final x0 frame
+        state_history.append(state_history[-1])
+        x0_history.append(x0_history[-1])
+        ellipse_history.append(dict(ellipse_history[-1]))
         alm_frames.append(None)
-        v3_frames.append(dict(v3_frames[-1]))
+        topology_frames.append(dict(topology_frames[-1]))
 
         selected = int(result["selected_idx"][0])
         topology = (cands.coords[selected] if cands.num_valid
                     else np.zeros((self.cand_cfg.candidate_points, 2)))
         metrics = self._ellipse_metrics(occupancy, trace)
-        metrics["trajCollision"] = bool(self._traj_collision(
-            occupancy, np.asarray(p_history[-2])))
-        metrics["regionCount"] = int(region_count)
-        metrics["progressMonotonic"] = all(
-            bool(np.all(np.diff(f["progress"]) >= -1e-6)) for f in v3_frames
+        metrics["traj_collision"] = bool(self._traj_collision(
+            occupancy, np.asarray(state_history[-2])))
+        metrics["region_count"] = int(region_count)
+        metrics["progress_monotonic"] = all(
+            bool(np.all(np.diff(f["progress"]) >= -1e-6)) for f in topology_frames
             if f and f.get("progress"))
-        selections = [int(f["selectedIdx"]) for f in v3_frames]
-        metrics["stepJitter"] = int(sum(1 for a, b in zip(selections[:-1],
-                                                          selections[1:]) if a != b))
-        metrics["selectionChanges"] = int(len(set(selections)) > 1)
+        selections = [int(f["selected_idx"]) for f in topology_frames]
+        metrics["step_jitter"] = int(sum(1 for a, b in zip(selections[:-1],
+                                                           selections[1:]) if a != b))
+        metrics["selection_changes"] = int(len(set(selections)) > 1)
 
         return {
-            "sampleKey": sample_key, "modelId": model_id, "seed": seed,
-            "cacheHit": False, "condition": condition.tolist(), "obstacles": [],
-            "stateLabels": ["t=%d" % int(step["t"]) for step in trace] + ["x0"],
+            "sample_key": sample_key, "model_id": model_id, "seed": seed,
+            "cache_hit": False, "condition": condition.tolist(), "obstacles": [],
+            "state_labels": ["t=%d" % int(step["t"]) for step in trace] + ["x0"],
             "schedule": {
-                "sqrtAlphaBar": np.round(
+                "sqrt_alpha_bar": np.round(
                     self.schedule.sqrt_alphas_cumprod.cpu().numpy(), 8).tolist(),
-                "sqrtOneMinusAlphaBar": np.round(
+                "sqrt_one_minus_alpha_bar": np.round(
                     self.schedule.sqrt_one_minus_alphas_cumprod.cpu().numpy(),
                     8).tolist(),
             },
-            "PHistory": p_history, "E6History": e6_history,
-            "X0PHistory": x0p_history, "X0E6History": x0e6_history,
+            "state_history": state_history,
+            "x0_history": x0_history,
+            "ellipse_history": ellipse_history,
             # ALM overlay channel: convex regions + the pre-correction x0, or the
             # coarse backbone prediction when ALM guidance is disabled.
             "alm": {"enabled": bool(verify_regions),
-                    "startT": int(self.alm_cfg.get("start_t", 7))
+                    "start_t": int(self.alm_cfg.get("start_t", 7))
                     if verify_regions else 0,
                     "frames": alm_frames},
-            "v2": {
-                "engine": "v3-skeleton-dynamic",
+            "topology": {
                 "epoch": epoch,
-                "commitT": -1,
                 "selection": "argmax",
-                "numCandidates": int(cands.num_slots),
-                "numValid": int(cands.num_valid),
-                "rawK": int(cands.raw_k),
-                "selectedIdx": selected,
+                "num_candidates": int(cands.num_slots),
+                "num_valid": int(cands.num_valid),
+                "raw_k": int(cands.raw_k),
+                "selected_idx": selected,
                 "pi": self._rounded(result["topology_pi"][0]),
-                "topologyPath": self._rounded(topology),
-                "candidatePaths": [self._rounded(cands.coords[m])
-                                   for m in range(cands.num_slots)],
-                "candidateMask": [bool(v) for v in cands.mask.tolist()],
-                "candidateLengths": self._rounded(cands.lengths),
-                "geometryPoints": int(packed["geometry_points"]),
-                "nodePath": [int(v) for v in cands.node_paths[selected]]
+                "topology_path": self._rounded(topology),
+                "candidate_paths": [self._rounded(cands.coords[m])
+                                    for m in range(cands.num_slots)],
+                "candidate_mask": [bool(v) for v in cands.mask.tolist()],
+                "candidate_lengths": self._rounded(cands.lengths),
+                "geometry_points": int(packed["geometry_points"]),
+                "node_path": [int(v) for v in cands.node_paths[selected]]
                 if cands.node_paths else [],
-                "frames": v3_frames,
+                "frames": topology_frames,
                 "metrics": metrics,
                 "skeleton": {"nodes": len(graph.nodes),
                              "branches": len(graph.branches)},
@@ -444,7 +436,7 @@ class V3Engine:
 def _selftest(args):
     device = torch.device(args.device if args.device else
                           ("cuda" if torch.cuda.is_available() else "cpu"))
-    engine = V3Engine(device)
+    engine = Engine(device)
     with open(os.path.join(SITE_ROOT, "lib", "dashboard-catalog.json"),
               "r", encoding="utf-8") as handle:
         catalog = json.load(handle)
@@ -453,24 +445,25 @@ def _selftest(args):
     payload = engine.generate(sample["key"], int(sample["datasetId"]),
                               sample["maze"], occupancy, sample["condition"],
                               args.seed, args.model)
-    v2 = payload["v2"]
-    print(json.dumps({"model": args.model, "epoch": v2["epoch"],
+    topology = payload["topology"]
+    print(json.dumps({"model": args.model, "epoch": topology["epoch"],
                       "maze": sample["maze"], "sample": sample["key"],
-                      "numValid": v2["numValid"], "selectedIdx": v2["selectedIdx"],
-                      "pi": v2["pi"], "metrics": v2["metrics"],
-                      "skeleton": v2["skeleton"],
-                      "steps": len(v2["frames"])}, indent=2))
+                      "num_valid": topology["num_valid"],
+                      "selected_idx": topology["selected_idx"],
+                      "pi": topology["pi"], "metrics": topology["metrics"],
+                      "skeleton": topology["skeleton"],
+                      "steps": len(topology["frames"])}, indent=2))
     shapes = {k: np.asarray(payload[k]).shape for k in
-              ("PHistory", "E6History", "X0PHistory", "X0E6History")}
+              ("state_history", "x0_history")}
     print("payload shapes:", shapes)
-    print("E6 last[0]:", payload["E6History"][-1][0])
+    print("ellipse last center[0]:", payload["ellipse_history"][-1]["center"][0])
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--sample", default="large-855")
-    ap.add_argument("--model", default="v3_best")
+    ap.add_argument("--model", default="best")
     ap.add_argument("--seed", type=int, default=43)
     ap.add_argument("--device", default=None)
     _selftest(ap.parse_args())

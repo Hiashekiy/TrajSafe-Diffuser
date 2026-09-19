@@ -34,7 +34,7 @@ import torch
 import torch.nn as nn
 
 from ...geometry.ellipse_raster import scene_grid_centres
-from ..joint.scene_cnn import SceneCNN
+from ..common.scene_cnn import SceneCNN
 from ..position_encoding import (Sinusoidal1DPositionEmbedding,
                                  Sinusoidal2DPositionEmbedding,
                                  SinusoidalTimestepEmbedding)
@@ -45,10 +45,10 @@ from .fusion import FinalDenoiser, FusionMLP
 from .geometry import CurveDecoder
 from .heads import EllipseShapeHead, ProgressHead, TopologyHead
 
-__all__ = ["SkeletonPlannerV3"]
+__all__ = ["TrajSafePlanner"]
 
 
-class SkeletonPlannerV3(nn.Module):
+class TrajSafePlanner(nn.Module):
     def __init__(self, model_cfg, ellipse_cfg=None):
         super().__init__()
         ellipse_cfg = dict(ellipse_cfg or {})

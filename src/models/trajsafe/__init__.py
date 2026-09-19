@@ -1,4 +1,4 @@
-"""TrajSafe-Diffuser V3: report-faithful architecture package."""
+"""TrajSafe-Diffuser: report-faithful architecture package."""
 
 from .blocks import CrossAttention, MatchBlock, TrajBlock, TrajSelfAttention
 from .ellipse import EllipseGeometry
@@ -6,10 +6,10 @@ from .encoders import CoordMLP, SkeletonEncoder, TrajectoryEncoder
 from .fusion import FinalDenoiser, FusionMLP
 from .geometry import CurveDecoder, dense_arclength, gather_dense_path_points
 from .heads import EllipseShapeHead, ProgressHead, TopologyHead
-from .planner import SkeletonPlannerV3
+from .planner import TrajSafePlanner
 
 __all__ = [
-    "SkeletonPlannerV3",
+    "TrajSafePlanner",
     "TrajectoryEncoder",
     "SkeletonEncoder",
     "CoordMLP",

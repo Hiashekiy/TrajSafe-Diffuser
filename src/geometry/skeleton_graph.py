@@ -1,4 +1,4 @@
-"""V2 geometry step 1: occupancy -> safe free space -> skeleton -> compressed
+"""Skeleton geometry step 1: occupancy -> safe free space -> skeleton -> compressed
 branch graph.
 
 This module is the *single* implementation used by both the offline
@@ -10,7 +10,7 @@ Conventions
 -----------
 occupancy map
     [H, W] array, 1 = obstacle (the convention of
-    data/processed_scene_v1/maps/*.npy), 0 = free.  Float maps are binarised
+    data/scenes/maps/*.npy), 0 = free.  Float maps are binarised
     with > 0.5.
 free mask
     bool [H, W], True = free.  Built from the occupancy map, optionally after
@@ -428,7 +428,7 @@ class SkeletonGraph:
                         b: Tuple[int, int]) -> Optional[List[Tuple[int, int]]]:
         """Shortest no-corner-cut path inside one node cluster (pixels).
 
-        Returns None when no safe path exists.  V3 forbids the former
+        Returns None when no safe path exists.  the planner forbids the former
         [a, b] fallback: joining two diagonal cluster pixels that a corner cut
         separates would emit an unsafe connector, so the whole candidate must
         be dropped instead of silently repaired.
@@ -581,7 +581,7 @@ def build_skeleton_graph(occ: np.ndarray, safety_dilation_cells: int = 1,
         occupancy map [H, W] with 1 = obstacle.
     safety_dilation_cells
         obstacle dilation applied before thinning (keeps skeleton centres away
-        from walls; 1 is the V2 default).
+        from walls; 1 is the default).
     skeleton, free
         optional pre-computed stages (used by the offline cache) - when given,
         occ is only used for the resolution.

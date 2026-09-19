@@ -1,6 +1,6 @@
-"""Losses for the V3 TrajSafe-Diffuser (see ``v3_losses``)."""
+"""Losses for the TrajSafe-Diffuser (see ``losses``)."""
 
-from .v3_losses import (center_alignment_loss, ellipse_iou_loss,
+from .losses import (center_alignment_loss, ellipse_iou_loss,
                         ellipse_safety_loss, ellipse_shape_loss, topology_ce,
                         trajectory_smoothness_loss, trajectory_x0_loss)
 

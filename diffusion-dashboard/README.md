@@ -1,15 +1,15 @@
 # Diffusion Lens 使用与启动说明
 
-Diffusion Lens 是 TrajSafe-Diffuser V3 的本地扩散过程观测面板。它使用项目中的真实
-Maze2D 数据、occupancy map 和 V3 checkpoint，在本地 GPU 上运行报告一致的骨架引导
+Diffusion Lens 是 TrajSafe-Diffuser 的本地扩散过程观测面板。它使用项目中的真实
+Maze2D 数据、occupancy map 和 checkpoint，在本地 GPU 上运行报告一致的骨架引导
 反向扩散，并保存每个 timestep 的中间状态供前端回放。
 
-> 本面板只服务 **V3**。V1 / V2 的模型入口、后端与导出脚本已随主仓库一并删除。
+> 本面板只服务当前模型（每步重选骨架的 TrajSafe-Diffuser）。
 
 ## 1. 功能
 
 - 选择 U-Maze、Medium、Large 数据集样本。
-- 在 `v3_best` / `v3_latest` 两个 checkpoint 间切换。
+- 在 `best` / `latest` 两个 checkpoint 间切换。
 - 设置随机种子。
 - 在地图上点击修改起点、终点和障碍物。
 - 在线重建骨架图与候选搜索路径，并运行真实的 16-step DDIM 采样。
@@ -25,27 +25,27 @@ Maze2D 数据、occupancy map 和 V3 checkpoint，在本地 GPU 上运行报告�
 ```text
 Neural-IRISDiffuser/
 ├─ configs/
-│  └─ config_v3_skeleton.yaml     模型 / 采样 / 候选生成参数 + 推理期 ALM 段
+│  └─ config.yaml     模型 / 采样 / 候选生成参数 + 推理期 ALM 段
 ├─ data/
-│  └─ processed_scene_v1/         test 样本 + 三张地图
+│  └─ scenes/         test 样本 + 三张地图
 ├─ outputs/
-│  └─ ckpt_v3_skeleton/           best.pt / latest.pt
+│  └─ ckpt/           best.pt / latest.pt
 ├─ src/
 └─ diffusion-dashboard/
    ├─ app/                 前端页面
    ├─ cache/               扩散序列缓存
    ├─ lib/                 前端数据目录
    ├─ backend.py           本地推理服务（HTTP + 缓存）
-   ├─ backend_v3.py        V3Engine（在线骨架/候选 + 采样器 + ALM）
+   ├─ engine.py            推理引擎（在线骨架/候选 + 采样器 + ALM）
    └─ package.json
 ```
 
 推理服务读取：
 
-- `data/processed_scene_v1/test/positions.npy`、`conditions.npy`、`maze_id.npy`
-- `data/processed_scene_v1/maps/{umaze,medium,large}.npy`
-- `configs/config_v3_skeleton.yaml`（含推理期 `alm` 段）
-- `outputs/ckpt_v3_skeleton/{best,latest}.pt`
+- `data/scenes/test/positions.npy`、`conditions.npy`、`maze_id.npy`
+- `data/scenes/maps/{umaze,medium,large}.npy`
+- `configs/config.yaml`（含推理期 `alm` 段）
+- `outputs/ckpt/{best,latest}.pt`
 
 ## 3. 环境要求
 
@@ -73,7 +73,7 @@ cd D:\ProjectDirectory\Neural-IRISDiffuser\diffusion-dashboard
 启动成功后会显示：
 
 ```text
-V3 diffusion dashboard API on http://localhost:8765 (cuda)
+TrajSafe dashboard API on http://localhost:8765 (cuda)
 ```
 
 检查服务：
@@ -119,9 +119,10 @@ npm run dev
 
 1. 按当前 occupancy（含自定义障碍）重建骨架图并哈希缓存；
 2. 在线生成候选搜索路径（与离线预处理同一个生成器）；
-3. 加载所选 V3 checkpoint；
+3. 加载所选 checkpoint；
 4. 运行完整的 16-step DDIM；
-5. 保存每个 timestep 的 noisy state、`x̂₀`、选中拓扑 `m`、`π(m)` 与椭圆预测；
+5. 保存每个 timestep 的 noisy state（`state_history`）、`x̂₀`（`x0_history`）、
+   选中拓扑 `m`、`π(m)` 与椭圆预测（`ellipse_history`）；
 6. 结果写入 `cache/`。
 
 首次加载某个 checkpoint 通常比后续生成稍慢。
@@ -151,12 +152,12 @@ npm run dev
 先清除旧的 JSON 缓存再重新运行完整扩散，因此右侧通常显示 `SAVED`。缓存文件位于
 `diffusion-dashboard/cache/`，是派生数据；需要清理时删除其中的 `.json`（保留 `.gitkeep`）。
 
-## 7. V3 模型：TrajSafe-Diffuser（每步重选动态骨架）
+## 7. 模型：TrajSafe-Diffuser（每步重选动态骨架）
 
 模型下拉：
 
-- `V3 TrajSafe · Best (ep 19)` → `outputs/ckpt_v3_skeleton/best.pt`
-- `V3 TrajSafe · Latest (ep 100)` → `outputs/ckpt_v3_skeleton/latest.pt`
+- `TrajSafe · Best (ep 19)` → `outputs/ckpt/best.pt`
+- `TrajSafe · Latest (ep 100)` → `outputs/ckpt/latest.pt`
 
 ### 7.1 链路
 
@@ -171,15 +172,15 @@ P_t -> H_traj -> {R_m} -> m = argmax(pi) -> H_prog -> s
 
 ### 7.2 候选搜索路径的配套设计
 
-V3 的输入就是骨架图上的搜索路径，所以 dashboard 与离线预处理使用**同一个生成器**：
+模型的输入就是骨架图上的搜索路径，所以 dashboard 与离线预处理使用**同一个生成器**：
 
-1. `V3Engine.get_graph` 按当前 occupancy（含用户画的自定义障碍）哈希缓存骨架图；
+1. `Engine.get_graph` 按当前 occupancy（含用户画的自定义障碍）哈希缓存骨架图；
 2. `generate_candidates(graph, start, goal, CandidateConfig)` 生成候选，参数与
-   `configs/config_v3_skeleton.yaml` 的 `topology` 段一致；
-3. `V3Engine._pack_candidates` 把 `coords`（128 点 `S_m`）与 `geometry`（dense `Γ_m`）
+   `configs/config.yaml` 的 `topology` 段一致；
+3. `Engine._pack_candidates` 把 `coords`（128 点 `S_m`）与 `geometry`（dense `Γ_m`）
    打包成模型输入；
-4. 返回 `v2.candidatePaths` / `v2.candidateMask` / `v2.topologyPath`，前端把全部候选
-   画成浅蓝虚线，把选中的 `m` 画成深蓝实线。
+4. 返回 `topology.candidate_paths` / `topology.candidate_mask` / `topology.topology_path`，
+   前端把全部候选画成浅蓝虚线，把选中的 `m` 画成深蓝实线。
 
 修改起终点或障碍后候选会重新生成；若障碍截断通路，接口返回
 `该起终点在骨架图上没有合法候选路径…`。
@@ -189,12 +190,12 @@ V3 的输入就是骨架图上的搜索路径，所以 dashboard 与离线预处
 - **选中骨架拓扑**：浅蓝虚线 = 当前 occupancy/起终点下的全部候选搜索路径；
   深蓝实线 = 每步 `argmax(pi)` 选中的 `m`。
 - **轨迹主干 x̂₀ / 修正前 x̂₀**：`Head_P(H_traj)` 的 coarse 分支，粉色虚线。
-- **对应椭圆状态**：V3 的 `center = Γ(s)` 与 `shape4`，后端换算回 6 维
-  `[dx,dy,log a,log b,cos2t,sin2t]`，回放器无需改动。
+- **对应椭圆状态**：payload 的 `ellipse_history` 直接给出每步的 `center = Γ(s)`（绝对
+  坐标）与 `shape4`（`[log a, log b, cos 2t, sin 2t]`）。
 
 ### 7.4 右侧诊断面板
 
-选 V3 时右栏显示 `V3 安全诊断`：每步重选 `m`、当前 `π(m)`、候选数 valid/total、
+右栏显示 `安全诊断`：每步重选 `m`、当前 `π(m)`、候选数 valid/total、
 CenterFree 中心安全率、中心最小余量（格）、轨迹碰撞、椭圆点碰撞率、进度单调性、
 每步选择抖动 `stepJitter`、是否发生拓扑切换、骨架 nodes/branches。
 
@@ -207,7 +208,7 @@ dashboard 会在「轨迹碰撞」中明确标红；这是模型效果检查的�
 
 开关「凸区域 + ALM 修正（较慢）」打开后，每个 `t <= start_t` 的 reverse step 会：
 
-1. 取 V3 预测椭圆 `(center = Γ(s), shape4)`；
+1. 取模型预测椭圆 `(center = Γ(s), shape4)`；
 2. 用 `EllipseRegionBuilder` 为每个椭圆生成 verified convex region；
 3. 用 `alm_correct` 修正模型刚输出的 `x0`（保持端点、correction 平滑）；
 4. 修正后的 `x0` 才进入 DDIM，物理椭圆中心保持在 `Γ(s)`。
@@ -216,7 +217,7 @@ dashboard 会在「轨迹碰撞」中明确标红；这是模型效果检查的�
 仍是纯 DDIM，粉色虚线显示 coarse 分支。
 
 该功能只发生在推理期，网络权重与训练损失不变；参数在
-`configs/config_v3_skeleton.yaml` 的 `alm` 段（`start_t`、`rho`、`step_size` 等）。
+`configs/config.yaml` 的 `alm` 段（`start_t`、`rho`、`step_size` 等）。
 
 ## 9. 常见问题
 

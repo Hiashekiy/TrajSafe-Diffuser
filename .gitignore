@@ -39,7 +39,7 @@ _archive/
 # scene-normalized generated dataset (large)
 data/processed_scene/
 
-# V1 joint-diffusion generated dataset (large)
+# legacy joint-diffusion generated dataset
 data/processed_scene_v1/
 /data/processed_scene_v1.zip
 

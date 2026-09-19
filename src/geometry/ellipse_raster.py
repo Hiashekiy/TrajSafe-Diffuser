@@ -1,4 +1,4 @@
-"""Differentiable soft rasterisation of safety ellipses (V2).
+"""Differentiable soft rasterisation of safety ellipses.
 
 One implementation, used by
   * the training losses (IoU against the GT mask, full-ellipse safety),

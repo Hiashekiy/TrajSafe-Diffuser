@@ -1,4 +1,4 @@
-"""Evaluate V3 with the report-faithful TrajSafe-Diffuser.
+"""Evaluate the report-faithful TrajSafe-Diffuser.
 
 Metrics:
 
@@ -9,8 +9,8 @@ Metrics:
                per-step selection jitter
   progress     monotonicity violations (must be 0)
 
-    python evaluate_v3.py --config configs/config_v3_skeleton.yaml \
-        --ckpt outputs/ckpt_v3_skeleton/best.pt --split test --runs 4
+    python evaluate.py --config configs/config.yaml \
+        --ckpt outputs/ckpt/best.pt --split test --runs 4
 """
 import argparse
 import json
@@ -25,9 +25,9 @@ sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.diffusion.schedule import NoiseSchedule
-from src.diffusion.sampler_v3 import sample_v3
-from src.models.skeleton_v3 import SkeletonPlannerV3
-from src.datasets.skeleton_dataset_v3 import (MAZE_NAMES, SkeletonDatasetV3,
+from src.diffusion.sampler import sample
+from src.models.trajsafe import TrajSafePlanner
+from src.datasets.skeleton_dataset import (MAZE_NAMES, SkeletonDataset,
                                               make_collate)
 from src.geometry.skeleton_paths import normalized_dtw, resample_polyline
 
@@ -79,7 +79,7 @@ def _smoothness(p):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--split", default="test")
     ap.add_argument("--num-batches", type=int, default=3)
@@ -94,22 +94,22 @@ def main():
     cfg = load_config(args.config)
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available() else "cpu"))
-    source = cfg["data"].get("source", "data/processed_scene_v1")
-    base = cfg["data"].get("base", "data/processed_scene_v3")
+    scenes_root = cfg["data"].get("scenes", "data/scenes")
+    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
     mask_res = int(cfg["data"].get("ellipse_mask_res", 64))
     mask_tau = float(cfg["data"].get("ellipse_mask_tau", 10.0))
     batch_size = int(cfg["data"].get("batch_size", 32))
 
-    ds = SkeletonDatasetV3(args.split, source, base, geometry_points=geo_points,
+    ds = SkeletonDataset(args.split, scenes_root, skeleton_root, geometry_points=geo_points,
                            ellipse_mask_res=mask_res,
                            ellipse_mask_tau=mask_tau,
                            mazes=cfg["data"].get("mazes"))
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse_label")).to(device)
+    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label")).to(device)
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt.get("model_state", ckpt))
     model.eval()
@@ -136,7 +136,7 @@ def main():
             mask[:, keep:] = False
         runs = []
         for r in range(max(1, args.runs)):
-            runs.append(sample_v3(
+            runs.append(sample(
                 model, schedule, cond, occ_t,
                 batch["candidate_xy"].to(device), mask,
                 batch["candidate_geometry"].to(device),
@@ -208,7 +208,7 @@ def main():
             agg["step_jitter"].append(float(switches))
             agg["step_switch_rate"].append(
                 float(switches) / max(len(per_step) - 1, 1))
-        print("[eval_v3] batch %d/%d" % (bi + 1, args.num_batches), flush=True)
+        print("[eval] batch %d/%d" % (bi + 1, args.num_batches), flush=True)
 
     summary = {}
     for k, v in agg.items():
@@ -224,7 +224,7 @@ def main():
         "epoch": ckpt.get("epoch"), "split": args.split})
     out = args.out or os.path.join(
         os.path.dirname(args.ckpt),
-        "eval_v3_%s_M%s.json" % (args.split, summary["M"]))
+        "eval_%s_M%s.json" % (args.split, summary["M"]))
     with open(out, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))

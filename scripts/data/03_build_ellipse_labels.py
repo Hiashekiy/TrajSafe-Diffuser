@@ -1,14 +1,15 @@
-"""14_build_ellipse_labels_v3.py - report section 20 label generation.
+"""03_build_ellipse_labels.py - report section 20 label generation.
 
-Builds, from the V3 compact candidate cache and the occupancy maps:
+Builds, from the compact candidate cache and the occupancy maps:
 
-  <base>/skeletons/<maze>_shape4.npy       [H,W,4]  ShapeTable(q_k)
-  <base>/skeletons/<maze>_shape_valid.npy  [H,W]    Valid(q_k)
+  <skeleton>/skeletons/<maze>_shape4.npy       [H,W,4]  ShapeTable(q_k)
+  <skeleton>/skeletons/<maze>_shape_valid.npy  [H,W]    Valid(q_k)
 
-  <base>/<split>/ellipse_center_gt.npy     [N,H,2]  c_i^* = Gamma*(s_i^*)
-  <base>/<split>/ellipse_shape4_gt.npy     [N,H,4]  nearest ShapeTable lookup
-  <base>/<split>/shape_valid.npy           [N,H]    label validity
-  <base>/<split>/progress_gt.npy           [N,H]    monotone GT progress
+  <skeleton>/<split>/ellipse_shape4_gt.npy     [N,H,4]  nearest ShapeTable lookup
+  <skeleton>/<split>/shape_valid.npy           [N,H]    label validity
+
+The GT trajectory waypoint p_i^GT is used directly as the ellipse centre; there
+is no ``ellipse_center_gt`` and no ``progress_gt`` label.
 
 The ShapeTable is built exactly as described in section 20.3:
 
@@ -24,8 +25,8 @@ The ShapeTable is built exactly as described in section 20.3:
 A waypoint label is then ``ShapeTable(q_k)`` for the nearest dense point q_k of
 the selected Skeleton Curve Gamma*; no interpolation of the angle is done.
 
-    python scripts/data/14_build_ellipse_labels_v3.py \
-        --config configs/config_v3_skeleton.yaml
+    python scripts/data/03_build_ellipse_labels.py \
+        --config configs/config.yaml
 """
 
 from __future__ import annotations
@@ -314,11 +315,11 @@ def build_shape_kdtree(shape4_lut, valid_lut):
     return cKDTree(pts), ys, xs
 
 
-def collect_dense_points(base, source, splits, geometry_points):
+def collect_dense_points(skeleton_root, scenes_root, splits, geometry_points):
     """Union of all dense Skeleton-Curve cell centres used by the split cache."""
     points = {i: set() for i in range(len(MAZE_NAMES))}
     for split in splits:
-        split_dir = os.path.join(base, split)
+        split_dir = os.path.join(skeleton_root, split)
         if not os.path.exists(os.path.join(split_dir, "candidate_geometry.npy")):
             continue
         geometry = np.load(os.path.join(split_dir, "candidate_geometry.npy"),
@@ -327,7 +328,7 @@ def collect_dense_points(base, source, splits, geometry_points):
                                        "candidate_geometry_offsets.npy"))
         glens = np.load(os.path.join(split_dir, "candidate_geometry_lengths.npy"))
         cmask = np.load(os.path.join(split_dir, "candidate_mask.npy"))
-        mid = np.load(os.path.join(source, split, "maze_id.npy"))
+        mid = np.load(os.path.join(scenes_root, split, "maze_id.npy"))
         for i in range(len(glens)):
             maze = int(mid[i])
             for m in range(glens.shape[1]):
@@ -346,7 +347,7 @@ def collect_dense_points(base, source, splits, geometry_points):
     return points
 
 
-def build_split(split, source_dir, v3_dir, graphs, shape_luts, valid_luts,
+def build_split(split, scenes_dir, skeleton_dir, graphs, shape_luts, valid_luts,
                 geometry_points, maze_names=None, limit=None,
                 max_distance_cells=3.0):
     """Write the per-waypoint shape label.
@@ -355,9 +356,9 @@ def build_split(split, source_dir, v3_dir, graphs, shape_luts, valid_luts,
     shape label is the nearest valid safe ShapeTable entry.  There is no GT
     skeleton projection, no s*, no ellipse_center_gt and no progress_gt.
     """
-    pos = np.load(os.path.join(source_dir, split, "positions.npy"))
-    mid = np.load(os.path.join(source_dir, split, "maze_id.npy"))
-    split_dir = os.path.join(v3_dir, split)
+    pos = np.load(os.path.join(scenes_dir, split, "positions.npy"))
+    mid = np.load(os.path.join(scenes_dir, split, "maze_id.npy"))
+    split_dir = os.path.join(skeleton_dir, split)
     cmask = np.load(os.path.join(split_dir, "candidate_mask.npy"))
 
     n = len(pos) if limit is None else min(int(limit), len(pos))
@@ -421,9 +422,9 @@ def build_split(split, source_dir, v3_dir, graphs, shape_luts, valid_luts,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
-    ap.add_argument("--source", default=None)
-    ap.add_argument("--base", default=None)
+    ap.add_argument("--config", default="configs/config.yaml")
+    ap.add_argument("--scenes", default=None)
+    ap.add_argument("--skeleton", default=None)
     ap.add_argument("--splits", nargs="*", default=["train", "val", "test"])
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--num-orientations", type=int, default=36)
@@ -444,16 +445,16 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    source = args.source or cfg["data"].get("source", "data/processed_scene_v1")
-    base = args.base or cfg["data"].get("base", "data/processed_scene_v3")
+    scenes_root = args.scenes or cfg["data"].get("scenes", "data/scenes")
+    skeleton_root = args.skeleton or cfg["data"].get("skeleton", "data/skeleton")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
-    skel_dir = os.path.join(base, "skeletons")
+    skel_dir = os.path.join(skeleton_root, "skeletons")
     graphs = [load_graph_npz(os.path.join(skel_dir, name + ".npz"))
               for name in MAZE_NAMES]
 
     shape_luts, valid_luts = [], []
-    report = {"source": source, "base": base,
+    report = {"scenes": scenes_root, "skeleton": skeleton_root,
               "shape_table": {"num_orientations": args.num_orientations,
                               "local_radius": args.local_radius,
                               "dilation": args.dilation,
@@ -467,7 +468,7 @@ def main():
     dense_points = {}
     if not args.skip_shape_table:
         print("[points] collecting the dense-point union ...", flush=True)
-        dense_points = collect_dense_points(base, source, args.point_splits,
+        dense_points = collect_dense_points(skeleton_root, scenes_root, args.point_splits,
                                             geo_points)
 
     for i, name in enumerate(MAZE_NAMES):
@@ -484,7 +485,7 @@ def main():
             s4 = np.load(s4_path)
             valid = np.load(v_path).astype(bool)
         else:
-            occ = np.load(os.path.join(source, "maps", name + ".npy"))
+            occ = np.load(os.path.join(scenes_root, "maps", name + ".npy"))
             points = set()
             for x, y in dense_points.get(i, set()):
                 points.add((int(y), int(x)))
@@ -517,14 +518,14 @@ def main():
     if not args.only_shape_table:
         for split in args.splits:
             report["splits"][split] = build_split(
-                split, source, base, graphs, shape_luts, valid_luts,
+                split, scenes_root, skeleton_root, graphs, shape_luts, valid_luts,
                 geo_points, maze_names=args.mazes, limit=args.limit,
                 max_distance_cells=args.max_shape_distance_cells)
 
-    with open(os.path.join(base, "ellipse_labels_report.json"), "w",
+    with open(os.path.join(skeleton_root, "ellipse_labels_report.json"), "w",
               encoding="utf-8") as f:
         json.dump(report, f, indent=2)
-    print("DONE", base)
+    print("DONE", skeleton_root)
 
 
 if __name__ == "__main__":

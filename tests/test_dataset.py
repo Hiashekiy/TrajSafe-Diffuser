@@ -1,4 +1,4 @@
-"""V3 dataset / visualisation regression tests.
+"""Dataset / visualisation regression tests.
 
 The dataset must expose exactly the report's ellipse-label fields and the lazy
 GT mask must be numerically identical to the shared soft rasteriser.
@@ -17,24 +17,24 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from src.datasets.skeleton_dataset_v3 import (MAZE_NAMES,  # noqa: E402
-                                              SkeletonDatasetV3)
+from src.datasets.skeleton_dataset import (MAZE_NAMES,  # noqa: E402
+                                              SkeletonDataset)
 from src.diffusion.schedule import NoiseSchedule  # noqa: E402
 from src.geometry.ellipse_raster import ellipse_soft_mask  # noqa: E402
 from src.geometry.ellipse_shape import shape4_to_abtheta  # noqa: E402
 
-from v3_utils import tiny_batch, tiny_model  # noqa: E402
+from helpers import tiny_batch, tiny_model  # noqa: E402
 
-V3_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v3")
-SOURCE_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v1")
-HAS_DATA = os.path.exists(os.path.join(V3_ROOT, "test", "ellipse_shape4_gt.npy"))
+SKELETON_ROOT = os.path.join(REPO_ROOT, "data", "skeleton")
+SCENES_ROOT = os.path.join(REPO_ROOT, "data", "scenes")
+HAS_DATA = os.path.exists(os.path.join(SKELETON_ROOT, "test", "ellipse_shape4_gt.npy"))
 
-needs_data = pytest.mark.skipif(not HAS_DATA, reason="V3 ellipse shape labels not built")
+needs_data = pytest.mark.skipif(not HAS_DATA, reason="ellipse shape labels not built")
 
 
 @needs_data
 def test_dataset_provides_the_training_fields():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+    ds = SkeletonDataset("test", SCENES_ROOT, SKELETON_ROOT, geometry_points=1280,
                            ellipse_mask_res=32, mazes=["large"])
     item = ds[0]
     H, M, L = ds.horizon, ds.num_candidates, ds.candidate_points
@@ -53,7 +53,7 @@ def test_dataset_provides_the_training_fields():
 
 @needs_data
 def test_maze_filter_keeps_only_large():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+    ds = SkeletonDataset("test", SCENES_ROOT, SKELETON_ROOT, geometry_points=1280,
                            ellipse_mask_res=16, mazes=["large"])
     assert len(ds) > 0
     for i in range(min(len(ds), 10)):
@@ -62,7 +62,7 @@ def test_maze_filter_keeps_only_large():
 
 @needs_data
 def test_align_target_is_the_gt_trajectory():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+    ds = SkeletonDataset("test", SCENES_ROOT, SKELETON_ROOT, geometry_points=1280,
                            ellipse_mask_res=16, mazes=["large"])
     item = ds[0]
     pos = item["pos"]
@@ -75,7 +75,7 @@ def test_align_target_is_the_gt_trajectory():
 
 @needs_data
 def test_lazy_mask_matches_the_shared_rasteriser_and_masks_invalid():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+    ds = SkeletonDataset("test", SCENES_ROOT, SKELETON_ROOT, geometry_points=1280,
                            ellipse_mask_res=32, mazes=["large"])
     item = ds[0]
     center = item["pos"]              # GT trajectory waypoint = mask centre
@@ -91,7 +91,7 @@ def test_lazy_mask_matches_the_shared_rasteriser_and_masks_invalid():
 
 @needs_data
 def test_dense_geometry_endpoints_are_exact():
-    ds = SkeletonDatasetV3("test", SOURCE_ROOT, V3_ROOT, geometry_points=1280,
+    ds = SkeletonDataset("test", SCENES_ROOT, SKELETON_ROOT, geometry_points=1280,
                            ellipse_mask_res=32, mazes=["large"])
     checked = 0
     for idx in range(0, min(len(ds), 40)):
@@ -112,7 +112,7 @@ def test_dense_geometry_endpoints_are_exact():
 def test_trace_plot_draws_the_whole_trajectory(tmp_path):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
-    import sample_v3
+    import sample
 
     H, res = 12, 64
     occ = np.zeros((res, res), dtype=np.float32)
@@ -130,7 +130,7 @@ def test_trace_plot_draws_the_whole_trajectory(tmp_path):
         "ellipse_center": np.zeros((H, 2), dtype=np.float32),
     }]
     out_png = str(tmp_path / "trace.png")
-    axes = sample_v3.plot_trace(occ, trace, geom, glen, out_png, "unit")
+    axes = sample.plot_trace(occ, trace, geom, glen, out_png, "unit")
     assert os.path.exists(out_png) and os.path.getsize(out_png) > 0
     ax = axes[0][0]
     assert len(ax.lines[1].get_xdata()) == H
@@ -139,11 +139,11 @@ def test_trace_plot_draws_the_whole_trajectory(tmp_path):
 
 
 def test_sampler_trace_is_per_step_and_sliceable():
-    import src.diffusion.sampler_v3 as sampler_v3
+    import src.diffusion.sampler as sampler
 
     model = tiny_model(horizon=8)
     b = tiny_batch(B=3, M=2, H=8)
-    out = sampler_v3.sample_v3(model, NoiseSchedule(16), b["cond"], b["occ"],
+    out = sampler.sample(model, NoiseSchedule(16), b["cond"], b["occ"],
                                b["candidate_xy"], b["candidate_mask"],
                                b["candidate_geometry"],
                                b["candidate_geometry_lengths"],

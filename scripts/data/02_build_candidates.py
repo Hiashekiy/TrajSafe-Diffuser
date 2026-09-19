@@ -1,4 +1,4 @@
-"""13_build_skeleton_candidates_v3.py - V3 candidate preprocessing.
+"""02_build_candidates.py - candidate preprocessing.
 
 Runs the FIXED candidate generator (parallel branches preserved, multi-anchor
 super source/sink, no unsafe fallback, dense safe geometry) for every OD pair
@@ -18,7 +18,7 @@ The dense geometry is stored as integer cell indices (lossless, half the size of
 float32 scene coordinates).  It stays SEPARATE from the 128-point network
 feature path: gamma_m(s) only ever runs on the dense chain.
 
-    python scripts/data/13_build_skeleton_candidates_v3.py --config configs/config_v3_skeleton.yaml
+    python scripts/data/02_build_candidates.py --config configs/config.yaml
 """
 import argparse
 import json
@@ -45,16 +45,16 @@ def load_graphs(skeleton_dir):
         path = os.path.join(skeleton_dir, name + ".npz")
         if not os.path.exists(path):
             raise FileNotFoundError(
-                "missing skeleton cache %s; run scripts/data/10_build_skeletons.py "
-                "--out <base>/skeletons first" % path)
+                "missing skeleton cache %s; run scripts/data/01_build_skeletons.py "
+                "--out <skeleton>/skeletons first" % path)
         graphs.append(load_graph_npz(path))
     return graphs
 
 
-def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
-    pos = np.load(os.path.join(source_dir, split, "positions.npy"))
-    cond = np.load(os.path.join(source_dir, split, "conditions.npy"))
-    mid = np.load(os.path.join(source_dir, split, "maze_id.npy"))
+def build_split(split, scenes_dir, out_dir, graphs, cfg, limit=None):
+    pos = np.load(os.path.join(scenes_dir, split, "positions.npy"))
+    cond = np.load(os.path.join(scenes_dir, split, "conditions.npy"))
+    mid = np.load(os.path.join(scenes_dir, split, "maze_id.npy"))
     n = len(pos) if limit is None else min(int(limit), len(pos))
     M, L = cfg.num_candidates, cfg.candidate_points
 
@@ -149,30 +149,30 @@ def build_split(split, source_dir, out_dir, graphs, cfg, limit=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--splits", nargs="*", default=["train", "val", "test"])
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    source = cfg["data"].get("source", "data/processed_scene_v1")
-    base = cfg["data"].get("base", "data/processed_scene_v3")
+    scenes_root = cfg["data"].get("scenes", "data/scenes")
+    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
     cand_cfg = CandidateConfig.from_dict(cfg.get("topology"), strict=False)
-    graphs = load_graphs(os.path.join(base, "skeletons"))
+    graphs = load_graphs(os.path.join(skeleton_root, "skeletons"))
     print("[graphs] " + ", ".join(
         "%s: %d nodes / %d branches" % (MAZE_NAMES[i], len(g.nodes), len(g.branches))
         for i, g in enumerate(graphs)), flush=True)
 
-    report = {"source": source, "base": base,
+    report = {"scenes": scenes_root, "skeleton": skeleton_root,
               "candidate_config": cand_cfg.__dict__, "splits": {}}
     for split in args.splits:
         report["splits"][split] = build_split(
-            split, source, os.path.join(base, split), graphs, cand_cfg,
+            split, scenes_root, os.path.join(skeleton_root, split), graphs, cand_cfg,
             limit=args.limit)
-    with open(os.path.join(base, "candidates_report_v3.json"), "w",
+    with open(os.path.join(skeleton_root, "candidates_report.json"), "w",
               encoding="utf-8") as f:
         json.dump(report, f, indent=2)
-    print("DONE", base)
+    print("DONE", skeleton_root)
 
 
 if __name__ == "__main__":

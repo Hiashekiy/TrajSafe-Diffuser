@@ -1,6 +1,6 @@
 """Single-step profiler for the report-faithful TrajSafe-Diffuser.
 
-    python scripts/debug/v3_profile_step.py --device cuda --repeat 5
+    python scripts/debug/profile_step.py --device cuda --repeat 5
 
 Creates the model and synthetic tensors of the real shapes and times
 forward + losses + backward only (no optimizer, no dataset, no epochs).
@@ -16,14 +16,14 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
-from src.models.skeleton_v3 import SkeletonPlannerV3
-from src.losses.v3_losses import (center_alignment_loss, ellipse_shape_loss,
+from src.models.trajsafe import TrajSafePlanner
+from src.losses.losses import (center_alignment_loss, ellipse_shape_loss,
                                   ellipse_safety_loss, trajectory_x0_loss)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--device", default=None)
     ap.add_argument("--batches", type=int, default=1)
     ap.add_argument("--repeat", type=int, default=5)
@@ -38,7 +38,7 @@ def main():
     L = int(topo.get("candidate_points", 128))
     G = int(topo.get("candidate_geometry_points", 1280))
 
-    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse_label")).to(device)
+    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label")).to(device)
     model.train()
     p0 = torch.randn(B, H, 2, device=device)
     cond = torch.randn(B, 2, 2, device=device)

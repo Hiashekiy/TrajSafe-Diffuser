@@ -26,14 +26,14 @@ import numpy as np
 import pytest
 import torch
 
-from v3_utils import tiny_batch, tiny_model
+from helpers import tiny_batch, tiny_model
 
-from src.diffusion import sampler_v3
+from src.diffusion import sampler
 from src.diffusion.schedule import NoiseSchedule
 from src.geometry.ellipse_shape import raw_to_shape4, shape4_to_abtheta
 from src.geometry.skeleton_paths import nearest_arclength
-from src.losses import v3_losses
-from src.models.skeleton_v3 import MatchBlock, SkeletonPlannerV3
+from src.losses import losses
+from src.models.trajsafe import MatchBlock, TrajSafePlanner
 
 
 def _forward(model, b, select_index=None):
@@ -116,7 +116,7 @@ def test_coarse_and_final_share_the_same_head_p():
     with torch.no_grad():
         model.head_p.weight.copy_(before)
 
-    src = inspect.getsource(SkeletonPlannerV3)
+    src = inspect.getsource(TrajSafePlanner)
     assert src.count("self.head_p(") == 2
     heads = [m for m in model.modules()
              if isinstance(m, torch.nn.Linear) and m.out_features == 2]
@@ -127,7 +127,7 @@ def test_only_one_match_block_and_one_progress_path():
     model = tiny_model()
     matches = [m for m in model.modules() if isinstance(m, MatchBlock)]
     assert len(matches) == 1 and matches[0] is model.match_block
-    src = inspect.getsource(SkeletonPlannerV3)
+    src = inspect.getsource(TrajSafePlanner)
     assert "match_block" in src
     assert "second" not in src.lower()
     # no leftover interleaved fusion / type embeddings / ellipse diffusion state
@@ -143,7 +143,7 @@ def test_no_ellipse_diffusion_state_or_second_cross_attention():
     assert "ellipse_geometry" in names and "ellipse_shape_head" in names
     # the old ellipse head class is gone; only the report's two ellipse modules exist
     assert not hasattr(model, "mlp_e")
-    src = inspect.getsource(sampler_v3.sample_v3)
+    src = inspect.getsource(sampler.sample)
     for forbidden in ("eps_e", "x0_e", "ellipse_state"):
         assert forbidden not in src, forbidden
     assert re.search(r"\be_t\b", src) is None
@@ -254,10 +254,10 @@ def test_shape_loss_ignores_invalid_locations():
     valid = torch.ones(2, 5, dtype=torch.bool)
     valid[0, 0] = False
     sample = torch.ones(2, dtype=torch.bool)
-    l1 = v3_losses.ellipse_shape_loss(shape4, gt, valid, sample)
+    l1 = losses.ellipse_shape_loss(shape4, gt, valid, sample)
     gt2 = gt.clone()
     gt2[0, 0] = 1e6
-    l2 = v3_losses.ellipse_shape_loss(shape4, gt2, valid, sample)
+    l2 = losses.ellipse_shape_loss(shape4, gt2, valid, sample)
     assert torch.allclose(l1, l2)
 
 
@@ -269,11 +269,11 @@ def test_iou_loss_ignores_invalid_locations():
     gt = torch.zeros(1, 2, 16, 16)
     valid = torch.tensor([[True, False]])
     sample = torch.ones(1, dtype=torch.bool)
-    l1 = v3_losses.ellipse_iou_loss(center, a, b, theta, gt, valid, sample,
+    l1 = losses.ellipse_iou_loss(center, a, b, theta, gt, valid, sample,
                                     raster_res=16)
     gt2 = gt.clone()
     gt2[0, 1] = 1.0
-    l2 = v3_losses.ellipse_iou_loss(center, a, b, theta, gt2, valid, sample,
+    l2 = losses.ellipse_iou_loss(center, a, b, theta, gt2, valid, sample,
                                     raster_res=16)
     assert torch.allclose(l1, l2)
 
@@ -283,7 +283,7 @@ def test_align_loss_gives_gradient_to_progress_head_only():
     b = tiny_batch()
     out = _forward(model, b)
     model.zero_grad()
-    loss = v3_losses.center_alignment_loss(out["ellipse"]["center"], b["pos"],
+    loss = losses.center_alignment_loss(out["ellipse"]["center"], b["pos"],
                                            b["has_candidate"])
     loss.backward()
     g = model.progress_head.mlp_prog[1].weight.grad
@@ -299,7 +299,7 @@ def test_shape_loss_gives_gradient_to_ellipse_head():
     b = tiny_batch()
     out = _forward(model, b)
     model.zero_grad()
-    loss = v3_losses.ellipse_shape_loss(out["ellipse"]["shape4"],
+    loss = losses.ellipse_shape_loss(out["ellipse"]["shape4"],
                                         b["ellipse_shape4_gt"],
                                         b["shape_valid"], b["has_candidate"])
     loss.backward()
@@ -316,7 +316,7 @@ def test_safety_loss_gives_gradient_to_ellipse_shape():
     out = _forward(model, b)
     ell = out["ellipse"]
     model.zero_grad()
-    loss, mean, cvar = v3_losses.ellipse_safety_loss(
+    loss, mean, cvar = losses.ellipse_safety_loss(
         ell["center"], ell["a"], ell["b"], ell["theta"], b["occ"],
         sample_mask=b["has_candidate"])
     loss.backward()
@@ -331,9 +331,9 @@ def test_trajectory_losses_are_finite():
     model = tiny_model()
     b = tiny_batch()
     out = _forward(model, b)
-    l_traj = v3_losses.trajectory_x0_loss(out["final"], b["pos"])
-    l_coarse = v3_losses.trajectory_x0_loss(out["coarse"], b["pos"])
-    l_smooth = v3_losses.trajectory_smoothness_loss(out["final"], b["pos"])
+    l_traj = losses.trajectory_x0_loss(out["final"], b["pos"])
+    l_coarse = losses.trajectory_x0_loss(out["coarse"], b["pos"])
+    l_smooth = losses.trajectory_smoothness_loss(out["final"], b["pos"])
     assert torch.isfinite(l_traj) and torch.isfinite(l_coarse)
     assert torch.isfinite(l_smooth)
 
@@ -350,7 +350,7 @@ def test_sampler_only_updates_the_trajectory_and_rescores_every_step():
         return orig(*a, **k)
 
     model.topology_head.forward = spy
-    out = sampler_v3.sample_v3(
+    out = sampler.sample(
         model, NoiseSchedule(16), b["cond"], b["occ"], b["candidate_xy"],
         b["candidate_mask"], b["candidate_geometry"],
         b["candidate_geometry_lengths"], device="cpu", seed=0,
@@ -365,7 +365,7 @@ def test_sampler_only_updates_the_trajectory_and_rescores_every_step():
 def test_subsampled_schedule_keeps_the_clean_transition():
     model = tiny_model()
     b = tiny_batch(B=1, M=2)
-    out = sampler_v3.sample_v3(
+    out = sampler.sample(
         model, NoiseSchedule(16), b["cond"], b["occ"], b["candidate_xy"],
         b["candidate_mask"], b["candidate_geometry"],
         b["candidate_geometry_lengths"], device="cpu", steps=4, seed=0,
@@ -378,7 +378,7 @@ def test_subsampled_schedule_keeps_the_clean_transition():
 
 
 def test_sampler_source_has_no_commit_or_ellipse_state():
-    src = inspect.getsource(sampler_v3.sample_v3)
+    src = inspect.getsource(sampler.sample)
     for forbidden in ("committed", "selected_path", "selected_feat",
                       "eps_e", "x0_e", "ellipse_state"):
         assert forbidden not in src, forbidden

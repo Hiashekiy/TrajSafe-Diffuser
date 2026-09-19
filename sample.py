@@ -1,7 +1,7 @@
-"""Sample V3 with the report-faithful TrajSafe-Diffuser.
+"""Sample the report-faithful TrajSafe-Diffuser.
 
-    python sample_v3.py --config configs/config_v3_skeleton.yaml \
-        --ckpt outputs/ckpt_v3_skeleton/best.pt --split test --num 6 --seed 0
+    python sample.py --config configs/config.yaml \
+        --ckpt outputs/ckpt/best.pt --split test --num 6 --seed 0
 
 Inference routing is always argmax(pi), as defined in the report.
 """
@@ -18,9 +18,9 @@ sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.diffusion.schedule import NoiseSchedule
-from src.diffusion.sampler_v3 import sample_v3
-from src.models.skeleton_v3 import SkeletonPlannerV3
-from src.datasets.skeleton_dataset_v3 import (MAZE_NAMES, SkeletonDatasetV3,
+from src.diffusion.sampler import sample
+from src.models.trajsafe import TrajSafePlanner
+from src.datasets.skeleton_dataset import (MAZE_NAMES, SkeletonDataset,
                                               make_collate)
 
 
@@ -102,7 +102,7 @@ def plot_trace(occ, trace, geometry, geometry_lengths, out_png, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--split", default="test")
     ap.add_argument("--num", type=int, default=6)
@@ -111,20 +111,20 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default=None)
     ap.add_argument("--no-trace-plot", action="store_true")
-    ap.add_argument("--out", default="outputs/v3_samples")
+    ap.add_argument("--out", default="outputs/samples")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available() else "cpu"))
-    source = cfg["data"].get("source", "data/processed_scene_v1")
-    base = cfg["data"].get("base", "data/processed_scene_v3")
+    scenes_root = cfg["data"].get("scenes", "data/scenes")
+    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
     mask_res = int(cfg["data"].get("ellipse_mask_res", 64))
     mask_tau = float(cfg["data"].get("ellipse_mask_tau", 10.0))
 
-    ds = SkeletonDatasetV3(args.split, source, base, geometry_points=geo_points,
+    ds = SkeletonDataset(args.split, scenes_root, skeleton_root, geometry_points=geo_points,
                            ellipse_mask_res=mask_res,
                            ellipse_mask_tau=mask_tau,
                            mazes=cfg["data"].get("mazes"))
@@ -132,23 +132,23 @@ def main():
     if not idxs:
         raise SystemExit("offset beyond the split")
     batch = make_collate(ds)([ds[i] for i in idxs])
-    print("[sample_v3] %d samples from %s (geometry_points=%d)"
+    print("[sample] %d samples from %s (geometry_points=%d)"
           % (len(idxs), args.split, geo_points), flush=True)
 
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = SkeletonPlannerV3(cfg["model"], cfg.get("ellipse_label")).to(device)
+    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label")).to(device)
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt.get("model_state", ckpt))
     model.eval()
-    print("[sample_v3] ckpt epoch=%s" % ckpt.get("epoch"), flush=True)
+    print("[sample] ckpt epoch=%s" % ckpt.get("epoch"), flush=True)
 
     cond = batch["cond"].to(device)
     occ = batch["map_tensor"].to(device)
     geom_cpu = batch["candidate_geometry"].numpy()
     glen_cpu = batch["candidate_geometry_lengths"].numpy()
-    out = sample_v3(model, schedule, cond, occ,
+    out = sample(model, schedule, cond, occ,
                     batch["candidate_xy"].to(device),
                     batch["candidate_mask"].to(device),
                     batch["candidate_geometry"].to(device),
@@ -186,7 +186,7 @@ def main():
                  "b": out["ellipse_b"][k].cpu().numpy(),
                  "theta": out["ellipse_theta"][k].cpu().numpy()},
                 os.path.join(args.out, "samples_%s_%d.png" % (tag, idxs[k])),
-                "V3 %s #%d  m=%d" % (MAZE_NAMES[maze], idxs[k], sel))
+                "%s #%d  m=%d" % (MAZE_NAMES[maze], idxs[k], sel))
             if not args.no_trace_plot:
                 trace_k = [{**step,
                             "coarse": step["coarse"][k].numpy(),
@@ -199,7 +199,7 @@ def main():
                 plot_trace(occ_map, trace_k, geom_cpu[k], glen_cpu[k],
                            os.path.join(args.out,
                                         "trace_%s_%d.png" % (tag, idxs[k])),
-                           "V3 reverse replay #%d (dashed=coarse, solid=final)"
+                           "reverse replay #%d (dashed=coarse, solid=final)"
                            % idxs[k])
     with open(os.path.join(args.out, "samples_%s.json" % tag), "w",
               encoding="utf-8") as f:

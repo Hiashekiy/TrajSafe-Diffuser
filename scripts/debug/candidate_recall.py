@@ -1,4 +1,4 @@
-"""V3 candidate quality check: can the candidates even fit the demonstration?
+"""Candidate quality check: can the candidates even fit the demonstration?
 
 topology_best always picks SOME candidate, so m* alone says nothing about
 whether L_align / L_topo can converge.  This tool reports, per split:
@@ -11,7 +11,7 @@ whether L_align / L_topo can converge.  This tool reports, per split:
 It decodes the 128-point metric polylines out of the stored candidate features
 (channels 0:2), so it never re-runs the (slow) route generator.
 
-    python scripts/debug/v3_candidate_recall.py --split test --samples 1000
+    python scripts/debug/candidate_recall.py --split test --samples 1000
 """
 import argparse
 import json
@@ -32,19 +32,19 @@ TAUS = (0.02, 0.05, 0.10, 0.20)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--split", default="test")
     ap.add_argument("--samples", type=int, default=1000)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    source = cfg["data"].get("source", "data/processed_scene_v1")
-    base = cfg["data"].get("base", "data/processed_scene_v3")
+    scenes_root = cfg["data"].get("scenes", "data/scenes")
+    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
     n_pts = int((cfg.get("topology") or {}).get("candidate_points", 128))
 
-    split_dir = os.path.join(base, args.split)
-    src_dir = os.path.join(source, args.split)
+    split_dir = os.path.join(skeleton_root, args.split)
+    src_dir = os.path.join(scenes_root, args.split)
     pos = np.load(os.path.join(src_dir, "positions.npy"))
     feats = np.load(os.path.join(split_dir, "candidate_features.npy"),
                     mmap_mode="r")
@@ -91,7 +91,7 @@ def main():
     }
     txt = json.dumps(report, indent=2)
     print(txt)
-    out = args.out or os.path.join(base, "candidate_recall_%s.json" % args.split)
+    out = args.out or os.path.join(skeleton_root, "candidate_recall_%s.json" % args.split)
     with open(out, "w", encoding="utf-8") as f:
         f.write(txt + "\n")
     print("saved", out)

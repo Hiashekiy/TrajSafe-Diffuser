@@ -1,5 +1,5 @@
 # ============================================================
-# V3: TrajSafe-Diffuser - report-faithful architecture
+# TrajSafe-Diffuser - report-faithful architecture
 #   docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md
 #   ONE diffusion state: trajectory P_t [B,H,2].
 #   Ellipse is NOT a diffusion state and ellipse centres come from
@@ -12,8 +12,8 @@ env:
   seed: 42
 
 data:
-  source: "data/processed_scene_v1"    # trajectory / endpoints / maps
-  base: "data/processed_scene_v3"      # candidate cache + ellipse labels
+  scenes: "data/scenes"    # trajectory / endpoints / maps
+  skeleton: "data/skeleton"      # candidate cache + ellipse labels
   mazes: ["large"]                     # only the large map is used for training
   batch_size: 16
   num_workers: 0
@@ -56,7 +56,7 @@ model:
   head_hidden: 256                     # score / shape head hidden width
   assert_shapes: true                  # report section 27.4 assertions
 
-# --- ellipse label generation (scripts/data/14_build_ellipse_labels_v3.py)
+# --- ellipse label generation (scripts/data/03_build_ellipse_labels.py)
 ellipse_label:
   num_orientations: 36
   local_radius: 0.25
@@ -109,7 +109,7 @@ train:
   save_every: 10
   eval_every: 10
   val_batches: 25
-  ckpt_dir: "outputs/ckpt_v3_skeleton"
+  ckpt_dir: "outputs/ckpt"
 
 eval:
   num_candidates_ablation: [1, 2, 4]
@@ -117,7 +117,7 @@ eval:
 
 # --- inference-only ALM (augmented Lagrangian) guidance ------------------
 # Strictly inference-time: the network, the checkpoint and the training losses
-# are untouched.  It consumes the V3 prediction (center = Gamma(s), shape4)
+# are untouched.  It consumes the model prediction (center = Gamma(s), shape4)
 # and first-order corrects x0 inside verified convex regions built online from
 # the current occupancy.  The dashboard reads this section; training ignores it.
 alm:

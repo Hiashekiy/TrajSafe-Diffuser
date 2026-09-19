@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..joint.joint_blocks import AdaLN, _MHABase
+from ..common.blocks import AdaLN, _MHABase
 
 __all__ = ["TrajSelfAttention", "CrossAttention", "TrajBlock", "MatchBlock"]
 

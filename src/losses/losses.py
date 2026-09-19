@@ -1,4 +1,4 @@
-"""Losses for the TrajSafe-Diffuser V3.
+"""Losses for the TrajSafe-Diffuser.
 
     L = lambda_traj   * L_traj
       + lambda_coarse * L_coarse

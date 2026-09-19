@@ -1,4 +1,4 @@
-"""Visualise V3 offline ellipse labels for manual inspection.
+"""Visualise offline ellipse labels for manual inspection.
 
 For each sampled OD pair it draws:
 
@@ -8,9 +8,9 @@ For each sampled OD pair it draws:
   * progress_gt(s) with the ShapeValid mask;
   * the GT soft ellipse mask for one valid waypoint.
 
-    python scripts/debug/visualize_v3_labels.py \
-        --config configs/config_v3_skeleton.yaml \
-        --split test --num 8 --out outputs/v3_label_samples
+    python scripts/debug/visualize_labels.py \
+        --config configs/config.yaml \
+        --split test --num 8 --out outputs/label_samples
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
 from src.geometry.ellipse_shape import shape4_to_abtheta
-from src.datasets.skeleton_dataset_v3 import SkeletonDatasetV3, MAZE_NAMES
+from src.datasets.skeleton_dataset import SkeletonDataset, MAZE_NAMES
 
 
 def to_px(points, res):
@@ -133,7 +133,7 @@ def plot_one(ds, idx, out_png, stride=4):
     ax.set_title("GT soft ellipse mask @ waypoint %d (valid=%s, zoom)" %
                  (k, bool(valid[k])), fontsize=10)
 
-    fig.suptitle("V3 large label check  sample %d  valid=%.3f  best=%d" %
+    fig.suptitle("Large label check  sample %d  valid=%.3f  best=%d" %
                  (idx, float(valid.mean()), best), fontsize=11)
     fig.tight_layout()
     fig.savefig(out_png)
@@ -152,20 +152,20 @@ def plot_one(ds, idx, out_png, stride=4):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--split", default="test")
     ap.add_argument("--num", type=int, default=8)
     ap.add_argument("--offset", type=int, default=0)
     ap.add_argument("--stride", type=int, default=4)
-    ap.add_argument("--out", default="outputs/v3_label_samples")
+    ap.add_argument("--out", default="outputs/label_samples")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    source = cfg["data"].get("source", "data/processed_scene_v1")
-    base = cfg["data"].get("base", "data/processed_scene_v3")
+    scenes_root = cfg["data"].get("scenes", "data/scenes")
+    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
     mazes = cfg["data"].get("mazes", ["large"])
-    ds = SkeletonDatasetV3(
-        args.split, source, base,
+    ds = SkeletonDataset(
+        args.split, scenes_root, skeleton_root,
         geometry_points=int((cfg.get("topology") or {}).get(
             "candidate_geometry_points", 1280)),
         ellipse_mask_res=int(cfg["data"].get("ellipse_mask_res", 64)),

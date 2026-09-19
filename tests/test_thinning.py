@@ -1,6 +1,6 @@
 """Tests for the migrated thinning implementation in ``src.geometry``.
 
-The legacy top-level ``skeleton_graph`` package was removed; the V3 online
+The legacy top-level ``skeleton_graph`` package was removed; the online
 candidate search and the offline skeleton builder now use
 ``src.geometry.thinning`` through ``src.geometry.skeleton_graph``.
 """

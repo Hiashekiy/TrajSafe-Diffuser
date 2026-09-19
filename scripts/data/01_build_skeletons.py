@@ -1,11 +1,11 @@
-"""10_build_skeletons.py - V3 step 1: occupancy map -> skeleton branch graph.
+"""01_build_skeletons.py - step 1: occupancy map -> skeleton branch graph.
 
 For every maze map it writes the cached free mask, skeleton and compressed
 branch graph, plus an overlay figure for visual inspection.
 
-    python scripts/data/10_build_skeletons.py --config configs/config_v3_skeleton.yaml
+    python scripts/data/01_build_skeletons.py --config configs/config.yaml
 
-Outputs (data.processed_scene_v3/skeletons by default):
+Outputs (data.skeleton/skeletons by default):
 
     <maze>.npz            free / skeleton / nodes / branches (load_graph_npz)
     <maze>_overlay.png    occupancy + skeleton + graph
@@ -59,23 +59,23 @@ def plot_graph(occ, graph, path, title):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
-    ap.add_argument("--source", default=None,
-                    help="directory holding maps/<maze>.npy (default data.source)")
+    ap.add_argument("--config", default="configs/config.yaml")
+    ap.add_argument("--scenes", default=None,
+                    help="directory holding maps/<maze>.npy (default data.scenes_root)")
     ap.add_argument("--out", default=None,
-                    help="output directory (default <data.base>/skeletons)")
+                    help="output directory (default <data.skeleton>/skeletons)")
     ap.add_argument("--no-plot", action="store_true")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    source = args.source or cfg["data"].get("source", "data/processed_scene_v1")
-    out = args.out or os.path.join(cfg["data"].get("base", "data/processed_scene_v3"),
+    scenes_root = args.scenes or cfg["data"].get("scenes", "data/scenes")
+    out = args.out or os.path.join(cfg["data"].get("skeleton", "data/skeleton"),
                                    "skeletons")
     sk_cfg = cfg.get("skeleton", {})
-    maps_dir = os.path.join(source, "maps")
+    maps_dir = os.path.join(scenes_root, "maps")
     os.makedirs(out, exist_ok=True)
 
-    report = {"source": source, "out": out, "skeleton": sk_cfg, "mazes": {}}
+    report = {"scenes": scenes_root, "out": out, "skeleton": sk_cfg, "mazes": {}}
     for name in MAZE_NAMES:
         map_path = os.path.join(maps_dir, name + ".npy")
         if not os.path.exists(map_path):

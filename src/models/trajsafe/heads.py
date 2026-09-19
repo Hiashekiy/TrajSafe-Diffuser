@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ...geometry.ellipse_shape import raw_to_shape4, shape4_to_abtheta
-from ..joint.joint_blocks import AdaLN
+from ..common.blocks import AdaLN
 
 __all__ = ["TopologyHead", "ProgressHead", "EllipseShapeHead"]
 

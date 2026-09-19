@@ -1,4 +1,4 @@
-"""V3 dataset for the TrajSafe-Diffuser.
+"""Dataset for the TrajSafe-Diffuser.
 
 Vocabulary:
 
@@ -42,15 +42,15 @@ _LABEL_FILES = {
 }
 
 
-class SkeletonDatasetV3(Dataset):
-    def __init__(self, split, source_root, v3_root, geometry_points=1280,
+class SkeletonDataset(Dataset):
+    def __init__(self, split, scenes_root, skeleton_root, geometry_points=1280,
                  ellipse_mask_res=64, ellipse_mask_tau=10.0, mazes=None):
         self.split = str(split)
         self.geometry_points = int(geometry_points)
         self.ellipse_mask_res = int(ellipse_mask_res)
         self.ellipse_mask_tau = float(ellipse_mask_tau)
-        split_dir = os.path.join(v3_root, self.split)
-        source_dir = os.path.join(source_root, self.split)
+        split_dir = os.path.join(skeleton_root, self.split)
+        source_dir = os.path.join(scenes_root, self.split)
 
         self.pos = np.load(os.path.join(source_dir, "positions.npy"))
         self.cond = np.load(os.path.join(source_dir, "conditions.npy"))
@@ -89,7 +89,7 @@ class SkeletonDatasetV3(Dataset):
             if not os.path.exists(path):
                 raise FileNotFoundError(
                     "missing %s; run\n"
-                    "  python scripts/data/14_build_ellipse_labels_v3.py "
+                    "  python scripts/data/03_build_ellipse_labels.py "
                     "--config <config>" % path)
             labels[key] = np.load(path)
         self.shape4_gt = labels["ellipse_shape4_gt"]
@@ -101,7 +101,7 @@ class SkeletonDatasetV3(Dataset):
                 "(raise topology.candidate_geometry_points)"
                 % (int(self.geom_lengths.max()), self.geometry_points))
 
-        maps_dir = os.path.join(source_root, "maps")
+        maps_dir = os.path.join(scenes_root, "maps")
         self.maps = [torch.as_tensor(np.load(os.path.join(maps_dir, "%s.npy" % m)),
                                      dtype=torch.float32)[None, None]
                      for m in MAZE_NAMES]
@@ -212,10 +212,10 @@ def make_collate(ds):
     return collate
 
 
-def make_loader(split, source_root, v3_root, batch_size, shuffle,
+def make_loader(split, scenes_root, skeleton_root, batch_size, shuffle,
                 num_workers=0, geometry_points=1280,
                 ellipse_mask_res=64, ellipse_mask_tau=10.0, mazes=None):
-    ds = SkeletonDatasetV3(split, source_root, v3_root,
+    ds = SkeletonDataset(split, scenes_root, skeleton_root,
                            geometry_points=geometry_points,
                            ellipse_mask_res=ellipse_mask_res,
                            ellipse_mask_tau=ellipse_mask_tau, mazes=mazes)

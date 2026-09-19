@@ -1,4 +1,4 @@
-"""Shared helpers for the V3 report-faithful test suite."""
+"""Shared helpers for the report-faithful test suite."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ if REPO_ROOT not in sys.path:
 
 from src.geometry.ellipse_raster import ellipse_soft_mask  # noqa: E402
 from src.geometry.ellipse_shape import shape4_to_abtheta  # noqa: E402
-from src.models.skeleton_v3 import SkeletonPlannerV3  # noqa: E402
+from src.models.trajsafe import TrajSafePlanner  # noqa: E402
 
-V3_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v3")
-SOURCE_ROOT = os.path.join(REPO_ROOT, "data", "processed_scene_v1")
+SKELETON_ROOT = os.path.join(REPO_ROOT, "data", "skeleton")
+SCENES_ROOT = os.path.join(REPO_ROOT, "data", "scenes")
 
 
 def tiny_model(horizon=8, d_model=32, traj_blocks=2, skeleton_blocks=1,
@@ -27,7 +27,7 @@ def tiny_model(horizon=8, d_model=32, traj_blocks=2, skeleton_blocks=1,
                global_mem_res=global_res, geo_decode_res=geo_res,
                geo_mem_res=geo_res // 2, coord_hidden=32, head_hidden=32,
                dropout=0.0, assert_shapes=True)
-    return SkeletonPlannerV3(cfg)
+    return TrajSafePlanner(cfg)
 
 
 def tiny_batch(B=2, H=8, M=3, L=8, G=24, res=64, mask_res=32, seed=0):

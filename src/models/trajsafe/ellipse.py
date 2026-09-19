@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 
 from ...geometry.ellipse_raster import scene_grid_centres
-from ..joint.joint_blocks import AdaLN, _MHABase
+from ..common.blocks import AdaLN, _MHABase
 from .encoders import CoordMLP
 
 __all__ = ["EllipseGeometry"]

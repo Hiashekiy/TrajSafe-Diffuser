@@ -1,4 +1,4 @@
-"""V3 DDIM sampler (report section 24).
+"""DDIM sampler (report section 24).
 
 Only the trajectory P_t is a diffusion state.  Every reverse timestep runs the
 WHOLE report network, including a fresh topology choice:
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import torch
 
-__all__ = ["sample_v3", "pick_times"]
+__all__ = ["sample", "pick_times"]
 
 
 def pick_times(T: int, steps):
@@ -31,7 +31,7 @@ def pick_times(T: int, steps):
 
 
 @torch.no_grad()
-def sample_v3(model, schedule, cond, occ, candidate_xy, candidate_mask,
+def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
               geometry, geometry_lengths, device="cuda", steps=None, seed=None,
               return_trace=False, alm_guidance=None):
     """cond [B,2,2]; occ [B,1,R,R]; candidate_xy [B,M,L,2];

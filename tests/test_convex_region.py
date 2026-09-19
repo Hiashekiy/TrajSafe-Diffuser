@@ -2,7 +2,7 @@ import math
 
 import torch
 
-from src.geometry.convex_corridor import EllipseRegionBuilder, _halfspaces_are_bounded
+from src.geometry.convex_region import EllipseRegionBuilder, _halfspaces_are_bounded
 from src.geometry.convex_region import halfspaces_to_vertices
 
 

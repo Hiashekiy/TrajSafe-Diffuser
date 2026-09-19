@@ -1,4 +1,4 @@
-"""Train V3.
+"""Train the TrajSafe-Diffuser.
 
     L = lam_traj L_traj + lam_coarse L_coarse + lam_smooth L_smooth
       + lam_topo L_topo + lam_align L_align + lam_shape L_shape
@@ -16,8 +16,8 @@ report defines exactly these two routing modes.  Only the trajectory is a
 diffusion state.
 
 Usage:
-  python train_v3.py --config configs/config_v3_skeleton.yaml
-  python train_v3.py --config configs/config_v3_skeleton.yaml --epochs 1 --max-batches 3
+  python train.py --config configs/config.yaml
+  python train.py --config configs/config.yaml --epochs 1 --max-batches 3
 """
 import argparse
 import os
@@ -34,9 +34,9 @@ from src.utils.config import load_config
 from src.utils.seed import set_seed
 from src.utils.checkpoint import save_checkpoint, load_checkpoint
 from src.diffusion.schedule import NoiseSchedule
-from src.models.skeleton_v3 import SkeletonPlannerV3
-from src.datasets.skeleton_dataset_v3 import make_loader
-from src.losses.v3_losses import (center_alignment_loss, ellipse_iou_loss,
+from src.models.trajsafe import TrajSafePlanner
+from src.datasets.skeleton_dataset import make_loader
+from src.losses.losses import (center_alignment_loss, ellipse_iou_loss,
                                   ellipse_safety_loss, ellipse_shape_loss,
                                   topology_ce, trajectory_smoothness_loss,
                                   trajectory_x0_loss)
@@ -145,7 +145,7 @@ def validate(model, schedule, loader, lcfg, device, max_batches):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="configs/config_v3_skeleton.yaml")
+    ap.add_argument("--config", default="configs/config.yaml")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--resume", default=None)
     ap.add_argument("--log-interval", type=int, default=None)
@@ -167,10 +167,10 @@ def main():
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available()
                and env.get("device", "cuda") == "cuda" else "cpu"))
-    print("[train_v3] device=%s" % device, flush=True)
+    print("[train] device=%s" % device, flush=True)
 
-    source = data_cfg.get("source", "data/processed_scene_v1")
-    base_dir = data_cfg.get("base", "data/processed_scene_v3")
+    scenes_root = data_cfg.get("scenes", "data/scenes")
+    skeleton_root = data_cfg.get("skeleton", "data/skeleton")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
     mask_res = int(data_cfg.get("ellipse_mask_res", 64))
@@ -178,20 +178,20 @@ def main():
     mazes = data_cfg.get("mazes")
 
     train_loader, train_ds = make_loader(
-        "train", source, base_dir, data_cfg.get("batch_size", 32), True,
+        "train", scenes_root, skeleton_root, data_cfg.get("batch_size", 32), True,
         data_cfg.get("num_workers", 0), geometry_points=geo_points,
         ellipse_mask_res=mask_res, ellipse_mask_tau=mask_tau, mazes=mazes)
     if args.overfit:
         base_ds = train_loader.dataset
         train_ds = torch.utils.data.Subset(base_ds, list(range(args.overfit)))
-        from src.datasets.skeleton_dataset_v3 import make_collate
+        from src.datasets.skeleton_dataset import make_collate
         train_loader = torch.utils.data.DataLoader(
             train_ds, batch_size=min(data_cfg.get("batch_size", 32), args.overfit),
             shuffle=True, collate_fn=make_collate(base_ds))
     val_loader = val_ds = None
     if not args.no_val:
         val_loader, val_ds = make_loader(
-            "val", source, base_dir, data_cfg.get("batch_size", 32), False, 0,
+            "val", scenes_root, skeleton_root, data_cfg.get("batch_size", 32), False, 0,
             geometry_points=geo_points, ellipse_mask_res=mask_res,
             ellipse_mask_tau=mask_tau, mazes=mazes)
     print("[data] train=%d val=%s geometry_points=%d"
@@ -202,7 +202,7 @@ def main():
         beta_schedule=diff_cfg.get("beta_schedule", "squaredcos_cap_v2"),
         beta_start=diff_cfg.get("beta_start", 0.0001),
         beta_end=diff_cfg.get("beta_end", 0.02)).to(device)
-    model = SkeletonPlannerV3(model_cfg, cfg.get("ellipse_label")).to(device)
+    model = TrajSafePlanner(model_cfg, cfg.get("ellipse_label")).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print("[model] params=%.2fM traj_blocks=%d skeleton_blocks=%d final_blocks=%d"
           % (n_params / 1e6, model.traj_blocks, model.skeleton_blocks,
@@ -211,7 +211,7 @@ def main():
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
     log_interval = (args.log_interval if args.log_interval is not None
                     else int(train_cfg.get("log_interval", 20)))
-    ckpt_dir = args.ckpt_dir or train_cfg.get("ckpt_dir", "outputs/ckpt_v3_skeleton")
+    ckpt_dir = args.ckpt_dir or train_cfg.get("ckpt_dir", "outputs/ckpt")
     os.makedirs(ckpt_dir, exist_ok=True)
     print("[ckpt] %s" % ckpt_dir, flush=True)
 

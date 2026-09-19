@@ -1,12 +1,12 @@
 """Local GPU inference and cache service for the diffusion dashboard.
 
-This server exposes the report-faithful **V3 TrajSafe-Diffuser only**:
+This server exposes the report-faithful **TrajSafe-Diffuser**:
 
     P_t -> H_traj -> {R_m} -> m = argmax(pi) -> H_prog -> s
         -> c = Gamma_m(s) -> H_ell -> H_clean -> P0_hat -> DDIM
 
 The model class, the online skeleton/candidate search, the sampler and the
-optional inference-time ALM guidance all live in ``backend_v3.V3Engine``.  This
+optional inference-time ALM guidance all live in ``engine.Engine``.  This
 module only owns the HTTP layer, the per-request obstacle overlay and the JSON
 cache.
 
@@ -30,19 +30,18 @@ SITE_ROOT = os.path.abspath(os.path.dirname(__file__))
 ROOT = os.path.abspath(os.path.join(SITE_ROOT, ".."))
 sys.path.insert(0, ROOT)
 
-from backend_v3 import V3_CHECKPOINTS, V3Engine
+from engine import CHECKPOINTS, Engine
 
 
-CHECKPOINTS = dict(V3_CHECKPOINTS)
 MAZES = ("umaze", "medium", "large")
 CACHE_DIR = os.path.join(SITE_ROOT, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_FORMAT = 5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-maps = {name: np.load(os.path.join(ROOT, "data", "processed_scene_v1",
+maps = {name: np.load(os.path.join(ROOT, "data", "scenes",
                                    "maps", f"{name}.npy")) for name in MAZES}
-test_dir = os.path.join(ROOT, "data", "processed_scene_v1", "test")
+test_dir = os.path.join(ROOT, "data", "scenes", "test")
 conditions = np.load(os.path.join(test_dir, "conditions.npy"))
 
 with open(os.path.join(SITE_ROOT, "lib", "dashboard-catalog.json"), "r",
@@ -50,16 +49,16 @@ with open(os.path.join(SITE_ROOT, "lib", "dashboard-catalog.json"), "r",
     catalog = json.load(handle)
 sample_lookup = {sample["key"]: sample for sample in catalog["samples"]}
 
-v3_engine = None
+engine = None
 inference_lock = threading.Lock()
 
 
-def get_v3_engine() -> V3Engine:
-    """Lazily build the V3 engine (own config, model class and sampler)."""
-    global v3_engine
-    if v3_engine is None:
-        v3_engine = V3Engine(device)
-    return v3_engine
+def get_engine() -> Engine:
+    """Lazily build the inference engine (own config, model class and sampler)."""
+    global engine
+    if engine is None:
+        engine = Engine(device)
+    return engine
 
 
 def clear_generation_cache():
@@ -95,7 +94,7 @@ def apply_obstacles(maze: str, obstacles):
 @torch.no_grad()
 def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
              obstacles=None, alm_enabled: bool | None = None):
-    """Run one V3 reverse diffusion and return the dashboard payload."""
+    """Run one reverse diffusion and return the dashboard payload."""
     sample = sample_lookup[sample_key]
     dataset_id = int(sample["datasetId"])
     condition = np.asarray(
@@ -103,7 +102,7 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
         dtype=np.float32)
     if condition.shape != (2, 2) or not np.isfinite(condition).all() or np.abs(condition).max() > 1:
         raise ValueError("起终点必须是 [-1,1]² 内的两个坐标")
-    engine = get_v3_engine()
+    engine = get_engine()
     if alm_enabled is None:
         alm_enabled = bool(engine.alm_cfg.get("enabled", False))
     # Candidates are generated ONLINE on the current occupancy (including user
@@ -148,12 +147,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
-            sample_key = request.get("sampleKey")
-            model_id = request.get("modelId")
+            sample_key = request.get("sample_key")
+            model_id = request.get("model_id")
             seed = int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
-            alm_enabled = bool(request.get("almEnabled", True))
+            alm_enabled = bool(request.get("alm_enabled", True))
             if sample_key not in sample_lookup:
                 raise ValueError("未知样本")
             if model_id not in CHECKPOINTS:
@@ -175,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
                                   obstacles, alm_enabled)
                 with open(cache_path, "w", encoding="utf-8") as handle:
                     json.dump(result, handle, separators=(",", ":"))
-            result["elapsedMs"] = round((time.perf_counter() - started) * 1000, 1)
+            result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self.send_json(200, result)
         except Exception as error:
             self.send_json(400, {"error": str(error)})
@@ -185,6 +184,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"V3 diffusion dashboard API on http://localhost:8765 ({device})",
+    print(f"TrajSafe dashboard API on http://localhost:8765 ({device})",
           flush=True)
     ThreadingHTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
