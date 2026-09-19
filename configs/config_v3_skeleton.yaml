@@ -77,20 +77,22 @@ diffusion:
 # --- loss (report section 25) -------------------------------------------
 loss:
   lambda_traj: 1.0
-  lambda_coarse: 0.25
-  lambda_smooth: 0.1
+  lambda_coarse: 0.5
+  lambda_smooth: 0.08
   smooth_acc_weight: 0.25
   smooth_jerk_weight: 1.0
 
-  lambda_topology: 0.5
+  lambda_topology: 0.25
 
-  # L_align: SmoothL1(Gamma(s), p_GT) -> Progress Head only
-  # L_shape: 4-parameter ellipse shape -> Ellipse Shape Head only
-  # default weights preserve the old effective scale of (2*center+4*shape)/6
-  lambda_align: 0.3333333333333333
-  lambda_shape: 0.6666666666666666
+  # balanced initial contributions (20-batch large-only probe):
+  # Ltraj 13% / Lcoarse 13% / Lsmooth 13% / Ltopo 15%
+  # Lalign ~0.5% / Lshape 17% / Liou 15% / Lsafe 14%
+  # Lalign is naturally small because Gamma(s) already starts near the GT
+  # trajectory; raise lambda_align only if progress visibly lags.
+  lambda_align: 5.0
+  lambda_shape: 0.08
   lambda_iou: 0.25
-  lambda_safe: 0.1
+  lambda_safe: 0.15
 
   ellipse_safe_res: 64
   ellipse_mask_tau: 10.0
