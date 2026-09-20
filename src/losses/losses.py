@@ -61,10 +61,15 @@ def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 def control_x0_loss(q_hat: torch.Tensor, q_gt: torch.Tensor) -> torch.Tensor:
     """MSE on the INTERIOR B-spline controls (``Q_1 .. Q_{C-2}``).
 
-    The first and the last control are hard-conditioned to start / goal
-    (clamped knots => curve endpoints), so they carry no training signal and
-    must not contribute to the loss.  Used for BOTH ``L_ctrl`` and
-    ``L_coarse``; both take the RAW (pre boundary decoder) control polygon.
+    The two endpoint controls are EXCLUDED because, in the control-token model,
+    the network's raw predictions ``Q~_0`` / ``Q~_{C-1}`` are NOT hard-
+    conditioned: they are free outputs that are (a) supervised by
+    ``L_boundary`` against the GT local polygon and (b) made exact afterwards by
+    the fixed BoundaryDecoder.  Adding them here would double-count the
+    endpoints and pull all of ``Q_1..Q_3`` towards the start.
+
+    Used for BOTH ``L_ctrl`` and ``L_coarse``; both take the RAW (pre boundary
+    decoder) control polygon.
     """
     if q_hat.shape != q_gt.shape:
         raise ValueError("control shapes differ: %s vs %s"
@@ -110,12 +115,19 @@ def boundary_control_loss(q_raw: torch.Tensor, q_gt: torch.Tensor,
                           wg: torch.Tensor) -> torch.Tensor:
     """Weighted local supervision of the RAW controls at both ends.
 
-        L_boundary = [ sum_i w^s_i ||Q~_i    - T^s_i||^2
-                     + sum_i w^g_i ||Q~_{C-1-i} - T^g_{C-1-i}||^2 ] / (2 sum_i w_i)
+    Per sample::
+
+        l_b = [ sum_i w^s_i ||Q~_i - T^s_i||^2
+              + sum_i w^g_i ||Q~_i - T^g_i||^2 ] / (2 sum_i w_i)
+
+    and the returned value is the MEAN over the batch, so the term is
+    batch-size invariant exactly like every other loss in this file (summing
+    the batch without dividing would silently scale ``lambda_boundary`` by the
+    batch size).
 
     ``T^s`` / ``T^g`` are the GT control polygons rigidly translated to THIS
-    sample's start / goal (see :meth:`BoundaryDecoder.boundary_targets`), so the
-    loss enforces the GT *shape* of the local polygon, not a collapse onto S/G.
+    sample's start / goal (see :func:`boundary_targets`), so the loss enforces
+    the GT *shape* of the local polygon, not a collapse onto S/G.
     ``ws`` / ``wg`` come from the model's fixed boundary decoder.
     """
     if q_raw.shape != q_gt.shape:
@@ -126,8 +138,9 @@ def boundary_control_loss(q_raw: torch.Tensor, q_gt: torch.Tensor,
     wg = wg.to(q_raw.dtype)[None, :, None]
     err_s = ((q_raw - target_s) ** 2).sum(dim=-1) * ws[:, :, 0]
     err_g = ((q_raw - target_g) ** 2).sum(dim=-1) * wg[:, :, 0]
-    denom = ws.sum() + wg.sum()
-    return (err_s.sum() + err_g.sum()) / denom.clamp_min(1e-9)
+    denom = (ws.sum() + wg.sum()).clamp_min(1e-9)
+    per_sample = (err_s.sum(dim=1) + err_g.sum(dim=1)) / denom
+    return per_sample.mean()
 
 
 def topology_ce(pi: torch.Tensor, best: torch.Tensor,

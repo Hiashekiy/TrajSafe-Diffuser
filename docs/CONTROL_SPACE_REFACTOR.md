@@ -59,6 +59,10 @@ Q_t [B,C,2]                      扩散状态；端点硬条件（clamped knot �
 * 粗解码头（`Q~_coarse`）**直接输出控制点**，不再 `128 点 → LS 拟合 → 32 控制点`。
 * 网络内部**没有任何 128 点轨迹张量**；`B_128` 解码只在最末端出现一次，
   用于画线、碰撞评估和控制执行。
+* **训练链是纯控制点的**：没有任何一项损失读取解码曲线，两个纯诊断解码
+  （`input_curve`、`raw_curve`）在 `torch.no_grad()` 下计算，不进 autograd 图；
+  只有 `coarse`（无候选样本的回退）与 `final`（验证指标：曲线 RMSE / 碰撞）
+  保持可导，且都在链路最末端、位于所有可学习模块之后。
 * 椭圆分支运行在**被选中骨架的 Q 个 token** 上，因此 `shape4` 仍是 `[B,128,4]`，
   与离线标签（`ellipse_shape4_gt.npy`）逐位对应，这一支的语义没有变化。
 
@@ -109,7 +113,7 @@ L = λ_ctrl·L_ctrl + λ_coarse·L_coarse + λ_smooth·L_smooth + λ_bound·L_bo
 
 | 项 | 权重 | 定义 |
 |---|---:|---|
-| `L_ctrl` | 0.2 | `MSE(Q~_final[1:-1], Q_GT[1:-1])`，用 **Boundary Decoder 之前**的 raw 控制点 |
+| `L_ctrl` | 0.2 | `MSE(Q~_final[1:-1], Q_GT[1:-1])`，用 **Boundary Decoder 之前**的 raw 控制点；端点 control **故意排除**（它们由 `L_boundary` 监督、由固定 decoder 修正，放进 `L_ctrl` 会把 `Q_1..Q_3` 一起拉向起点） |
 | `L_coarse` | 0.5 | `MSE(Q~_coarse[1:-1], Q_GT[1:-1])`，coarse head 直接输出控制点 |
 | `L_smooth` | 0.08 | 控制多边形的二阶/三阶差分（`Δ²Q`、`Δ³Q`），按 GT 控制点平均步长 detach 归一化，`α=0.25, β=1.0`；**不解码任何轨迹点** |
 | `L_boundary` | 0.2 | `L_b(Q~_final) + 0.5·L_b(Q~_coarse)` |
@@ -124,9 +128,14 @@ L = λ_ctrl·L_ctrl + λ_coarse·L_coarse + λ_smooth·L_smooth + λ_bound·L_bo
 T^s_i = S + (Q^GT_i - Q^GT_0)
 T^g_j = G + (Q^GT_j - Q^GT_{C-1})
 
-L_b(Q~) = [ Σ_i w^s_i ‖Q~_i - T^s_i‖² + Σ_i w^g_i ‖Q~_{C-1-i} - T^g_{C-1-i}‖² ]
-          / (2 Σ_i w_i)
+l_b(sample) = [ Σ_i w^s_i ‖Q~_i - T^s_i‖² + Σ_i w^g_i ‖Q~_i - T^g_i‖² ] / (2 Σ_i w_i)
+L_boundary  = mean_over_batch( l_b )          # 与其它损失一致：对 batch 取平均
 ```
+
+> 注意：`L_boundary` **必须**对 batch 取平均（`err_s.sum(dim=1) + err_g.sum(dim=1)` 后再
+> `/ denom`，最后 `.mean()`）。曾经写成整个 batch 求和但分母只有权重和，等于把
+> `lambda_boundary` 乘上了 batch size（batch=16 时等效权重 3.2 而不是 0.2）。
+> `tests/test_control_space.py::test_control_losses_are_batch_size_invariant` 守着这一点。
 
 监督的是**局部控制多边形形状**（而不是把 `Q_1..Q_3` 都拽到 `S` 上），
 这样网络自己就能生成合理的端点邻域，不必依赖 decoder。

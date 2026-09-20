@@ -311,7 +311,20 @@ class TrajSafePlanner(nn.Module):
                          geometry: torch.Tensor,
                          geometry_lengths: torch.Tensor,
                          select_index: torch.Tensor | None = None):
-        """Control-space chain: C control tokens, Q safety geometry queries."""
+        """Control-space chain: C control tokens, Q safety geometry queries.
+
+        The TRAINING chain is controls-only: nothing in the loss reads a decoded
+        curve, and the two purely diagnostic decodes (``input_curve``,
+        ``raw_curve``) are computed under ``no_grad`` so no 128-point trajectory
+        tensor ever enters the autograd graph.  Only two decodes stay connected:
+
+        * ``coarse`` - the fallback for samples without any candidate (it feeds
+          ``torch.where`` for ``center`` / ``final``);
+        * ``final``  - needed by the validation metrics (curve RMSE, collision).
+
+        Both are produced at the very END of the chain, after every learned
+        module, so they cannot influence the representation.
+        """
         B, C, _ = q_t.shape
         if C != self.num_controls:
             raise ValueError("q_t must be [B,%d,2], got %s"
@@ -320,7 +333,9 @@ class TrajSafePlanner(nn.Module):
 
         # control-space hard conditioning (clamped knots => exact curve ends)
         q_t = self.hard_control_endpoints(q_t, cond)
-        p_t = self.bspline.decode_controls(q_t)          # plot / fallback only
+        # DIAGNOSTIC ONLY (never read by a loss): the noisy state's curve
+        with torch.no_grad():
+            p_t = self.bspline.decode_controls(q_t)
 
         c_g, c_e = self.scene_tokens(occ)
         h_t = self.time_pe(t.to(dev))
@@ -360,7 +375,10 @@ class TrajSafePlanner(nn.Module):
         h_clean = self.final_denoiser(f, c_g, h_t)
         q_raw_final = self.head_p(h_clean)                      # [B,C,2]
         q_final = self.boundary_decoder(q_raw_final, cond)      # [B,C,2]
-        raw_curve = self.bspline.decode_controls(q_raw_final)
+        # DIAGNOSTIC ONLY: the free network prediction decoded, i.e. "x0 before
+        # the fixed boundary decoder" (dashboard / plots; never a loss input)
+        with torch.no_grad():
+            raw_curve = self.bspline.decode_controls(q_raw_final)
         final = self.bspline.decode_controls(q_final)
         final = torch.where(has_cand[:, None, None], final, coarse)
 

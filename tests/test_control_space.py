@@ -320,3 +320,65 @@ def test_every_parameter_receives_a_gradient_from_the_eight_term_loss():
     assert missing == []
     for name, p in model.named_parameters():
         assert torch.isfinite(p.grad).all(), name
+
+
+def test_control_losses_are_batch_size_invariant():
+    """Every control-space term must be a batch MEAN.
+
+    ``L_boundary`` used to sum the numerator over the whole batch while the
+    denominator only covered the weight vectors, which silently multiplied
+    ``lambda_boundary`` by the batch size (16x at batch 16).
+    """
+    torch.manual_seed(0)
+    bd = BoundaryDecoder()
+    C = 16
+    ws, wg = bd.weights(C)
+    q_gt = torch.randn(1, C, 2)
+    q_raw = torch.randn(1, C, 2)
+    cond = torch.randn(1, 2, 2)
+    single = float(losses.boundary_control_loss(q_raw, q_gt, cond, ws, wg))
+    for batch in (2, 8, 16):
+        repeated = float(losses.boundary_control_loss(
+            q_raw.repeat(batch, 1, 1), q_gt.repeat(batch, 1, 1),
+            cond.repeat(batch, 1, 1), ws, wg))
+        assert abs(repeated - single) < 1e-5, (batch, repeated, single)
+
+    # the same for the other control terms
+    for fn in (lambda a, b: losses.control_x0_loss(a, b),
+               lambda a, b: losses.control_smoothness_loss(a, b)):
+        one = float(fn(q_raw, q_gt))
+        many = float(fn(q_raw.repeat(8, 1, 1), q_gt.repeat(8, 1, 1)))
+        assert abs(many - one) < 1e-5, (fn, many, one)
+
+    # a heterogeneous batch must be the per-sample mean, not the weighted sum
+    q_gt2 = torch.cat([q_gt, torch.randn(1, C, 2)])
+    q_raw2 = torch.cat([q_raw, torch.randn(1, C, 2)])
+    cond2 = torch.cat([cond, torch.randn(1, 2, 2)])
+    per = [float(losses.boundary_control_loss(q_raw2[i:i + 1], q_gt2[i:i + 1],
+                                              cond2[i:i + 1], ws, wg))
+           for i in range(2)]
+    mixed = float(losses.boundary_control_loss(q_raw2, q_gt2, cond2, ws, wg))
+    assert abs(mixed - sum(per) / len(per)) < 1e-5
+
+
+def test_training_graph_contains_no_decoded_trajectory_tensor():
+    """The two diagnostic decodes are detached; only the outputs needed by the
+    fallback / validation metrics stay connected, and they sit at the very end
+    of the chain."""
+    torch.manual_seed(0)
+    model = tiny_model()
+    b = tiny_batch(B=2, H=model.num_controls, L=model.num_safety_queries)
+    out = _forward(model, b)
+    assert not out["input_curve"].requires_grad
+    assert not out["raw_curve"].requires_grad
+    # coarse -> fallback for samples without candidates, final -> val metrics
+    assert out["coarse"].requires_grad
+    assert out["final"].requires_grad
+    # the controls themselves are of course differentiable
+    assert out["q_raw_final"].requires_grad
+    assert out["control"].requires_grad
+    # ... and no control-space loss term ever decodes a curve
+    import inspect
+    for fn in (losses.control_x0_loss, losses.control_smoothness_loss,
+               losses.boundary_control_loss):
+        assert "decode_controls" not in inspect.getsource(fn)
