@@ -4,12 +4,16 @@ Same HTTP contract as the legacy ``backend.py`` (GET /health, POST /generate),
 but the engine is :mod:`engine_carla`:
 
     Q_t [1,32,2] --(fixed B-spline decode)--> P_t [1,128,2] --> network
-    -> argmax(pi) candidate -> fixed Skeleton centres c_i = Gamma_m(i/127)
-    -> 128 ellipses -> x0 controls -> decode -> curve
+    -> topology (argmax pi, then FROZEN after activation)
+    -> fixed Skeleton centres c_i = Gamma_m(i/127)
+    -> 128 convex regions -> overlap check -> point-seeded gap bridge
+    -> frozen corridor + exact B-spline constraint pack
+    -> per-reverse-step control-space ALM on the fresh Q0_raw
+    -> DDIM with Q0_safe -> curve
 
-ALM guidance is NOT migrated to control space, so ``alm_enabled`` is accepted
-for compatibility but the response always reports ``alm.enabled = false`` and
-carries no convex regions.
+``alm_enabled: false`` runs ablation A (raw diffusion).  The response carries
+``x0_raw_history`` (pre-ALM), ``x0_history`` (post-ALM / DDIM input), the frozen
+``corridor`` (network + bridge cells) and the per-step ALM statistics.
 
     python backend_carla.py       # http://localhost:8765
 """
@@ -37,7 +41,7 @@ CACHE_DIR = os.path.join(SITE_ROOT, "cache-carla")
 os.makedirs(CACHE_DIR, exist_ok=True)
 # Bump whenever the payload schema changes: it is part of the cache key, so a
 # restarted backend can never replay a payload produced by older code.
-PAYLOAD_FORMAT = 3
+PAYLOAD_FORMAT = 4
 CACHE_FORMAT = PAYLOAD_FORMAT
 CATALOG_PATH = os.path.join(SITE_ROOT, "lib", "dashboard-catalog-carla.json")
 
@@ -127,12 +131,20 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
     occupancy = apply_obstacles(base, obstacles)
     payload = eng.generate(sample_key, "test", index, occupancy, condition,
                            seed, model_id=model_id,
-                           verify_regions=False)
+                           verify_regions=False,
+                           alm_enabled=alm_enabled is not False)
     payload["obstacles"] = obstacles or []
     payload["format"] = PAYLOAD_FORMAT
-    payload["alm_note"] = ("B-spline control-space ALM 尚未迁移，本面板只跑"
-                           "报告一致的 DDIM（无凸区域修正）")
+    if alm_enabled is False:
+        payload["alm_note"] = ("消融 A：raw diffusion（未建立安全走廊、"
+                               "未做 ALM 修正）")
+    else:
+        payload["alm_note"] = ("WARMUP → TRY_ACTIVATE（128 凸区域 + overlap + "
+                               "gap bridge，随后冻结）→ GUIDED（每个 reverse "
+                               "step 做 control-space B-spline ALM，dual 跨步 "
+                               "warm-start），DDIM 使用 Q0_safe")
     return payload
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -159,7 +171,8 @@ class Handler(BaseHTTPRequestHandler):
                 "status": "ready", "device": str(device),
                 "engine": "carla-controlspace-32",
                 "format": PAYLOAD_FORMAT,
-                "features": ["control_history", "topology", "ellipse_history"],
+                "features": ["control_history", "topology", "ellipse_history",
+                             "corridor", "alm_stats", "raw_vs_safe"],
                 "checkpoints": sorted(CHECKPOINTS.keys()),
                 "samples": len(sample_lookup),
                 "cached": len(os.listdir(CACHE_DIR))})
@@ -177,6 +190,7 @@ class Handler(BaseHTTPRequestHandler):
             seed = int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
+            alm_enabled = request.get("alm_enabled")
             resolve_sample(sample_key)
             if model_id not in CHECKPOINTS:
                 raise ValueError("未知模型")
@@ -184,7 +198,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("seed 超出范围")
             cache_payload = json.dumps(
                 {"format": CACHE_FORMAT, "engine": "carla-controlspace-32",
-                 "features": ["control_history", "topology"], "sample": sample_key,
+                 "features": ["control_history", "topology", "corridor",
+                              "alm_stats", "raw_vs_safe"],
+                 "sample": sample_key,
                  "model": model_id, "seed": seed, "condition": custom_condition,
                  "obstacles": obstacles},
                 sort_keys=True, separators=(",", ":"))
@@ -201,7 +217,8 @@ class Handler(BaseHTTPRequestHandler):
                 with inference_lock:
                     clear_generation_cache()
                     result = generate(sample_key, model_id, seed,
-                                      custom_condition, obstacles)
+                                      custom_condition, obstacles,
+                                      alm_enabled=alm_enabled)
                     with open(cache_path, "w", encoding="utf-8") as handle:
                         json.dump(result, handle, separators=(",", ":"))
             result["elapsed_ms"] = round(

@@ -204,20 +204,39 @@ CenterFree 中心安全率、中心最小余量（格）、轨迹碰撞、椭圆
 个别 OD 上仍可能预测出贴墙/切角轨迹（例如 `large-855` 的 waypoint 17–25），
 dashboard 会在「轨迹碰撞」中明确标红；这是模型效果检查的一部分，不是渲染错误。
 
-## 8. 凸区域 + ALM 修正（推理期，可选）
+## 8. 安全走廊 + B-spline 控制空间 ALM（推理期）
 
-开关「凸区域 + ALM 修正（较慢）」打开后，每个 `t <= start_t` 的 reverse step 会：
+开关「安全走廊 + B-spline ALM 引导」打开后，sampler 走三阶段状态机
+（`src/diffusion/sampler.py`）：
 
-1. 取模型预测椭圆 `(center = Γ(s), shape4)`；
-2. 用 `EllipseRegionBuilder` 为每个椭圆生成 verified convex region；
-3. 用 `alm_correct` 修正模型刚输出的 `x0`（保持端点、correction 平滑）；
-4. 修正后的 `x0` 才进入 DDIM，物理椭圆中心保持在 `Γ(s)`。
+1. **WARMUP**（前 `alm.warmup_reverse_steps` 次 reverse forward）
+   纯 DDIM，不建走廊、不做 ALM；
+2. **TRY_ACTIVATE**（此后每个 reverse forward 尝试一次）
+   当前 clean prediction → 按 `pi` 依次尝试候选 topology，用绝对中心的
+   `EllipseRegionBuilder.build_from_ellipse` 生成 128 个凸区域 → adjacent
+   overlap ratio（面积比）→ 不足处用「GCOPTER 式 point-seeded gap bridge」
+   （seed = `Γ((s_i+s_{i+1})/2)`，isotropic metric，每 gap 最多 1 个，不递归）
+   → 得到冻结 corridor + `BSplineConstraintPack`；
+3. **GUIDED**（走廊冻结后每一个 reverse step）
+   网络给出新的 `Q0_raw` → 对**同一个** constraint pack 做 control-space
+   ALM（30 个内部控制点、endpoint 硬固定、λ 跨步 warm-start）→ `Q0_safe`
+   才进入 DDIM。`t=0` 之后不再做额外 final projection。
 
-右侧显示每帧区域数、`violation before → after`、修正量、λ、平滑度等；关闭开关时
-仍是纯 DDIM，粉色虚线显示 coarse 分支。
+### 面板上的对应关系
 
-该功能只发生在推理期，网络权重与训练损失不变；参数在
-`configs/config.yaml` 的 `alm` 段（`start_t`、`rho`、`step_size` 等）。
+| 面板元素 | 含义 |
+| --- | --- |
+| 青色多边形 | 冻结走廊的 128 个基础凸区域 |
+| 橙色多边形 + `bridge` 标记 | gap bridge 生成的补丁区域 |
+| 洋红虚线 | 网络原始 `x̂₀`（修正前） |
+| 青色实线 | ALM 修正后的 `x̂₀`（真正进入 DDIM） |
+| 「激活 reverse step / 冻结 topology m」 | 走廊建立的时间点与被冻结的候选 |
+| 「走廊违约 before → after」「曲线修正 (m)」 | 每步 ALM 的约束违约与真实曲线位移 |
+| 「最终最大违约 / 走廊归属率」 | 512 点稠密验证（只验证，不再修轨迹） |
+
+关闭开关 = 消融 A（raw diffusion）。参数在 `configs/config.yaml` 的
+`corridor` 与 `alm` 两段；ALM 的 per-step 修正上限 `max_curve_step_scene`
+是 scene 单位（80 m 映射到 [-1,1]，0.03 ≈ 1.2 m）。
 
 ## 9. 常见问题
 

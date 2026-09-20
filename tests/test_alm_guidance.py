@@ -60,15 +60,16 @@ def test_physical_safety_gate_prevents_conservative_region_from_moving_point():
 def test_corridor_builder_batches_and_normalises_faces():
     occ = torch.zeros(2, 1, 32, 32)
     occ[:, :, 12:20, 12:20] = 1.0
-    p = torch.zeros(2, 8, 2)
-    p[:, :, 0] = torch.linspace(-0.8, 0.8, 8)
-    e = torch.zeros(2, 8, 6)
-    e[..., 2:4] = -2.0
-    e[..., 4] = 1.0
+    # absolute centres on a straight line (no p0 / delta-centre semantics)
+    center = torch.zeros(2, 8, 2)
+    center[:, :, 0] = torch.linspace(-0.8, 0.8, 8)
+    shape4 = torch.zeros(2, 8, 4)
+    shape4[..., 0:2] = -2.0
+    shape4[..., 2] = 1.0
 
     A, b, mask, valid = EllipseRegionBuilder(
         occ, {"corridor_chunk_size": 4},
-    )(p, e)
+    ).build_from_ellipse(center, shape4)
 
     assert A.shape[:2] == (2, 8)
     assert A.shape[2] == b.shape[2]
@@ -83,24 +84,31 @@ def test_corridor_builder_batches_and_normalises_faces():
     assert valid.all()
 
 
-def test_region_is_keyed_by_its_own_physical_ellipse():
+def test_region_is_keyed_by_its_absolute_center():
+    """The region follows the ABSOLUTE centre that was passed in.
+
+    The old contract ("move p0 and compensate the delta and the region stays")
+    is gone: there is no trajectory argument at all any more.
+    """
     occ = torch.zeros(1, 1, 32, 32)
     occ[:, :, 12:20, 12:20] = 1.0
-    p1 = torch.tensor([[[-0.8, -0.5], [-0.5, -0.5], [-0.2, -0.5]]])
-    p2 = p1.clone()
-    p2[:, 1, 0] += 0.2
-    e1 = torch.zeros(1, 3, 6)
-    e1[..., 2:4] = -2.0
-    e1[..., 4] = 1.0
-    e2 = e1.clone()
-    e2[:, 1, 0] -= 0.2
+    c1 = torch.tensor([[[-0.8, -0.5], [-0.5, -0.5], [-0.2, -0.5]]])
+    c2 = c1.clone()
+    c2[:, 1, 0] += 0.2
+    shape4 = torch.zeros(1, 3, 4)
+    shape4[..., 0:2] = -2.0
+    shape4[..., 2] = 1.0
     builder = EllipseRegionBuilder(occ)
 
-    A1, b1, m1, _ = builder(p1, e1)
-    A2, b2, m2, _ = builder(p2, e2)
+    A1, b1, m1, _ = builder.build_from_ellipse(c1, shape4)
+    A2, b2, m2, _ = builder.build_from_ellipse(c2, shape4)
 
-    # Moving p_1 while compensating delta-c_1 leaves its physical ellipse
-    # unchanged, so its ellipse-centred local map and region stay unchanged.
-    assert torch.equal(m1[:, 1], m2[:, 1])
-    assert torch.allclose(A1[:, 1], A2[:, 1])
-    assert torch.allclose(b1[:, 1], b2[:, 1])
+    # Moving the centre DOES move the region (the local map moved with it).
+    assert not torch.allclose(A1[:, 1], A2[:, 1])
+    # ... and calling it with a trajectory is no longer possible at all.
+    try:
+        builder(c1, shape4)
+    except NotImplementedError:
+        pass
+    else:                                            # pragma: no cover
+        raise AssertionError("the delta-centre entry point must be gone")

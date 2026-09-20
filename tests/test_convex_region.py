@@ -8,8 +8,9 @@ from src.geometry.convex_region import halfspaces_to_vertices
 
 def test_dense_local_border_points_produce_a_bounded_region():
     occupancy = torch.zeros(1, 1, 32, 32)
-    trajectory = torch.zeros(1, 1, 2)
-    ellipse = torch.tensor([[[0.0, 0.0, math.log(0.12), math.log(0.07), 1.0, 0.0]]])
+    center = torch.zeros(1, 1, 2)
+    shape4 = torch.tensor(
+        [[[math.log(0.12), math.log(0.07), 1.0, 0.0]]])
     builder = EllipseRegionBuilder(occupancy, {
         "safety_margin": 0.01,
         "obstacle_window_half": 0.35,
@@ -21,13 +22,15 @@ def test_dense_local_border_points_produce_a_bounded_region():
         torch.isclose(border.abs().amax(dim=-1), torch.tensor(0.35), atol=1e-6)
     )
 
-    A, b, mask, valid = builder(trajectory, ellipse)
+    # ABSOLUTE centre API: the builder never sees a trajectory any more.
+    A, b, mask, valid = builder.build_from_ellipse(center, shape4)
     polygon = halfspaces_to_vertices(
         A[0, 0, mask[0, 0]].numpy(),
         b[0, 0, mask[0, 0]].numpy(),
         interior_point=torch.zeros(2).numpy(),
     )
     assert valid.item()
+
     assert polygon is not None
     assert len(polygon) >= 3
     assert abs(polygon).max() <= 0.35 + 1e-5
@@ -47,25 +50,29 @@ def test_three_faces_in_a_semicircle_are_unbounded():
     assert not _halfspaces_are_bounded(A, mask).item()
 
 
-def test_center_outside_halfspaces_is_diagnostic_not_invalid():
+def test_center_outside_halfspaces_is_now_invalid():
+    """Report section 4.3: ``valid`` MUST include ``center_inside``.
+
+    A region that does not contain its own anchor can never enter the corridor,
+    so the former "diagnostic only" contract is upgraded to a hard validity
+    requirement.
+    """
     occupancy = torch.zeros(1, 1, 32, 32)
     occupancy[0, 0, :, 16] = 1.0
     theta = 1.2
-    trajectory = torch.tensor([[[0.025, 0.0]]])
-    ellipse = torch.tensor([[[
-        0.0, 0.0, math.log(0.3), math.log(0.03),
+    center = torch.tensor([[[0.025, 0.0]]])
+    shape4 = torch.tensor([[[
+        math.log(0.3), math.log(0.03),
         math.cos(2.0 * theta), math.sin(2.0 * theta),
-    ]]])
-    ellipse = ellipse.to(torch.float32)
+    ]]]).to(torch.float32)
     builder = EllipseRegionBuilder(occupancy, {
         "safety_margin": 0.02,
         "obstacle_window_half": 0.35,
     })
 
-    _, _, _, valid, diagnostics = builder(
-        trajectory, ellipse, return_diagnostics=True,
-    )
+    A, b, mask, valid, diagnostics = builder.build_from_ellipse(
+        center, shape4, return_diagnostics=True)
 
-    assert diagnostics["region_complete"].item()
     assert not diagnostics["center_inside"].item()
-    assert valid.item()
+    assert not valid.item()
+

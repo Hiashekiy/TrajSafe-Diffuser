@@ -2,14 +2,23 @@
 
 Two related utilities live here:
 
-* :class:`EllipseRegionBuilder` — the fast, batched, per-ellipse builder used by
-  the inference-time ALM guidance.  For every trajectory waypoint there is
-  exactly one predicted ellipse and one convex region: real obstacle-boundary
-  points from a local map are combined with a dense ring of points along that
-  local map's outer border, and all points go through the Neural-IRIS
-  Mahalanobis ordering and greedy filtering mechanism.
+* :class:`EllipseRegionBuilder` — the fast, batched local convex-region builder
+  used by the corridor construction.  It works on an **absolute centre** plus an
+  anisotropy metric:
+
+      ``build_from_metric(center, quadratic)``   <- the core primitive
+      ``build_from_ellipse(center, shape4)``     <- ellipse  ->  metric wrapper
+
+  Real obstacle-boundary points from a local map are combined with a dense ring
+  of points along that local map's outer border, and all points go through the
+  Neural-IRIS Mahalanobis ordering and greedy filtering mechanism.
+
+  The centre is ABSOLUTE (scene coordinates).  The old ``center = p0 + delta``
+  semantics is GONE: the ellipse centres are the fixed Skeleton progress points
+  ``c_i = Gamma_m(i/127)`` and the head only predicts the shape.
+
 * :func:`halfspaces_to_vertices` — convert ``A x <= b`` into polygon vertices
-  (used for drawing / validation of the built regions).
+  (used for the overlap check and for drawing).
 
 Unlike Neural-IRIS, the ellipse here is ``p = P u + c`` with ``||u|| <= 1``, so
 the quadratic form used for the metric ordering is ``Q = P^{-2}``.
@@ -21,6 +30,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.spatial import ConvexHull, HalfspaceIntersection
+
+_ELLIPSE_LOG_CLAMP = (-6.0, 0.7)
 
 
 def _obstacle_boundary_points(occ: torch.Tensor, dilation: int = 0) -> torch.Tensor:
@@ -74,8 +85,35 @@ def _halfspaces_are_bounded(A: torch.Tensor, mask: torch.Tensor) -> torch.Tensor
     return (count >= 3) & torch.isfinite(max_gap) & (max_gap < torch.pi - 1e-6)
 
 
+def ellipse_shape4_to_quadratic(shape4: torch.Tensor, axis_min: float = 2e-3,
+                                axis_max: float = 2.0) -> torch.Tensor:
+    """``[B,H,4] = [log a, log b, cos 2t, sin 2t]`` -> metric ``[B,H,2,2]``.
+
+    ``a = exp(log a)``, ``b = exp(log b)`` and
+
+        Q = R(theta) diag(1/a^2, 1/b^2) R(theta)^T,  theta = atan2(sin2t, cos2t)/2
+    """
+    if shape4.shape[-1] < 4:
+        raise ValueError("shape4 must have shape [...,4]")
+    clean = torch.nan_to_num(shape4, nan=0.0, posinf=0.0, neginf=0.0)
+    axes = clean[..., 0:2].clamp(*_ELLIPSE_LOG_CLAMP).exp()
+    axes = axes.clamp(float(axis_min), float(axis_max))
+    theta = 0.5 * torch.atan2(clean[..., 3], clean[..., 2])
+    u = torch.stack((torch.cos(theta), torch.sin(theta)), dim=-1)
+    v = torch.stack((-torch.sin(theta), torch.cos(theta)), dim=-1)
+    return (u[..., :, None] * u[..., None, :] /
+            axes[..., 0, None, None].square() +
+            v[..., :, None] * v[..., None, :] /
+            axes[..., 1, None, None].square())
+
+
 class EllipseRegionBuilder:
-    """Return one padded ``A x <= b`` safe region for every predicted ellipse.
+    """Return one padded ``A x <= b`` convex region for every query point.
+
+    The centre is ABSOLUTE.  Two entry points exist:
+
+    * :meth:`build_from_ellipse` (absolute centre + ``shape4``)
+    * :meth:`build_from_metric` (absolute centre + quadratic metric)
 
     Shapes are ``A[B,H,M,2]``, ``b[B,H,M]``, ``mask[B,H,M]`` and
     ``valid[B,H]``. ``M`` is the largest number of faces actually generated in
@@ -229,35 +267,50 @@ class EllipseRegionBuilder:
                 torch.stack(generated_b, dim=1),
                 torch.stack(generated_mask, dim=1))
 
-    def __call__(self, p0: torch.Tensor, e0: torch.Tensor,
-                 return_diagnostics: bool = False):
-        if p0.ndim != 3 or p0.shape[-1] != 2:
-            raise ValueError("p0 must have shape [B,H,2]")
-        if e0.shape[:2] != p0.shape[:2] or e0.shape[-1] < 6:
-            raise ValueError("e0 must have shape [B,H,6]")
-        batch, horizon, _ = p0.shape
-        dtype, device = p0.dtype, p0.device
-        region_complete = torch.ones(batch, horizon, dtype=torch.bool, device=device)
+    def build_from_ellipse(self, center: torch.Tensor, shape4: torch.Tensor,
+                           return_diagnostics: bool = False):
+        """ABSOLUTE ellipse centre + shape4 -> padded ``A x <= b`` regions.
 
-        clean_e = torch.nan_to_num(e0, nan=0.0, posinf=0.0, neginf=0.0)
-        center_all = p0 + clean_e[..., :2]
-        axes = clean_e[..., 2:4].clamp(-6.0, 0.7).exp()
-        axes = axes.clamp(self.axis_min, self.axis_max)
-        theta = 0.5 * torch.atan2(clean_e[..., 5], clean_e[..., 4])
-        u = torch.stack((torch.cos(theta), torch.sin(theta)), dim=-1)
-        v = torch.stack((-torch.sin(theta), torch.cos(theta)), dim=-1)
-        quadratic_all = (
-            u[..., :, None] * u[..., None, :] /
-            axes[..., 0, None, None].square() +
-            v[..., :, None] * v[..., None, :] /
-            axes[..., 1, None, None].square()
-        )
+        ``center [B,H,2]`` is already in scene coordinates; there is no
+        ``p0 + delta`` offset any more.  ``shape4 [B,H,4]`` is
+        ``[log a, log b, cos 2theta, sin 2theta]``.
+        """
+        if shape4.shape[:2] != center.shape[:2] or shape4.shape[-1] < 4:
+            raise ValueError("shape4 must have shape [B,H,4]")
+        quadratic = ellipse_shape4_to_quadratic(
+            shape4, self.axis_min, self.axis_max)
+        return self.build_from_metric(center, quadratic,
+                                      return_diagnostics=return_diagnostics)
+
+    def build_from_metric(self, center: torch.Tensor, quadratic: torch.Tensor,
+                          return_diagnostics: bool = False):
+        """Core primitive: absolute centre + anisotropic metric -> regions.
+
+        ``center [B,H,2]``, ``quadratic [B,H,2,2]``.  The metric is what the
+        Mahalanobis ordering uses; an isotropic metric (identity) therefore
+        recovers a point-seeded Euclidean region, which is exactly what the
+        gap-bridge uses.
+        """
+        if center.ndim != 3 or center.shape[-1] != 2:
+            raise ValueError("center must have shape [B,H,2]")
+        if tuple(quadratic.shape) != tuple(center.shape[:-1]) + (2, 2):
+            raise ValueError("quadratic must have shape [B,H,2,2]")
+        batch, horizon, _ = center.shape
+        dtype, device = center.dtype, center.device
+        region_complete = torch.ones(batch, horizon, dtype=torch.bool,
+                                     device=device)
+
+        center_finite = torch.isfinite(center).all(dim=-1)
+        quadratic_finite = torch.isfinite(quadratic).all(dim=(-1, -2))
+        clean_center = torch.nan_to_num(center, nan=0.0, posinf=0.0, neginf=0.0)
+        clean_quadratic = torch.nan_to_num(quadratic, nan=0.0, posinf=0.0,
+                                           neginf=0.0)
 
         group_results = []
         max_faces = 0
         for batch_indices, obstacle_points in self._groups:
-            centers = center_all[batch_indices].reshape(-1, 2)
-            quadratics = quadratic_all[batch_indices].reshape(-1, 2, 2)
+            centers = clean_center[batch_indices].reshape(-1, 2)
+            quadratics = clean_quadratic[batch_indices].reshape(-1, 2, 2)
             chunk_results = []
 
             for begin in range(0, len(centers), self.chunk_size):
@@ -297,9 +350,10 @@ class EllipseRegionBuilder:
         face_mask = torch.zeros(batch, horizon, max_faces,
                                 dtype=torch.bool, device=device)
         for batch_indices, count, chunk_results in group_results:
-            local_A = p0.new_zeros((count, max_faces, 2))
-            local_b = p0.new_zeros((count, max_faces))
-            local_mask = torch.zeros((count, max_faces), dtype=torch.bool, device=device)
+            local_A = clean_center.new_zeros((count, max_faces, 2))
+            local_b = clean_center.new_zeros((count, max_faces))
+            local_mask = torch.zeros((count, max_faces), dtype=torch.bool,
+                                     device=device)
             for begin, end, chunk_A, chunk_b, chunk_mask in chunk_results:
                 faces = chunk_A.shape[1]
                 local_A[begin:end, :faces] = chunk_A
@@ -314,22 +368,24 @@ class EllipseRegionBuilder:
 
         finite_faces = torch.isfinite(A).all(dim=-1) & torch.isfinite(b)
         face_mask &= finite_faces
-        center_violation = (A * center_all[:, :, None]).sum(dim=-1) - b
+        center_violation = (A * clean_center[:, :, None]).sum(dim=-1) - b
         max_center_violation = center_violation.masked_fill(
             ~face_mask, -torch.inf).max(dim=-1).values
-        center_inside = max_center_violation <= 1e-5
-        center_finite = torch.isfinite(center_all).all(dim=-1)
-        quadratic_finite = torch.isfinite(quadratic_all).all(dim=(-1, -2))
+        # ``A x <= b`` feasibility of the centre itself.  A region that does not
+        # contain its own anchor is never allowed into the corridor.
+        center_inside = (max_center_violation <= 1e-5) & torch.isfinite(
+            max_center_violation)
         face_count = face_mask.sum(dim=-1)
         bounded = _halfspaces_are_bounded(A, face_mask)
-        # Diagnostic only: face_count counts generated separator rows, not the
-        # visible edge count after redundant halfspaces are removed. Neither it
-        # nor center_inside determines validity.
-        valid = center_finite & quadratic_finite & region_complete & bounded
+        # face_count only counts generated separator rows (not the visible edge
+        # count) and therefore stays diagnostic-only.  ``center_inside`` IS part
+        # of the validity contract (report section 4.3).
+        valid = (center_finite & quadratic_finite & region_complete & bounded
+                 & center_inside)
         if not return_diagnostics:
             return A, b, face_mask, valid
         diagnostics = {
-            "center": center_all,
+            "center": clean_center,
             "center_finite": center_finite,
             "quadratic_finite": quadratic_finite,
             "region_complete": region_complete,
@@ -339,6 +395,13 @@ class EllipseRegionBuilder:
             "max_center_violation": max_center_violation,
         }
         return A, b, face_mask, valid, diagnostics
+
+    # deprecated shim: the old (p0 + delta, 6-vector) semantics is gone.
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "EllipseRegionBuilder(center, shape4) 的旧 delta-centre 语义已删除；"
+            "请使用 build_from_ellipse(center, shape4) 或 "
+            "build_from_metric(center, quadratic)")
 
 
 def halfspaces_to_vertices(

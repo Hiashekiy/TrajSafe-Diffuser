@@ -40,7 +40,7 @@ echo.
 start "" "http://localhost:3000/"
 
 echo.
-echo  If "format" above is not 3, the backend did not restart - close its
+echo  If "format" above is not 4, the backend did not restart - close its
 echo  window manually and run this file again.
 goto :end
 

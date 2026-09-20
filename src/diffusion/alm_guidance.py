@@ -1,9 +1,26 @@
-"""Analytic augmented-Lagrangian correction for clean trajectory predictions.
+"""LEGACY WAYPOINT ALM — do NOT use for the 32-control B-spline state.
 
-The inequality aggregation is an exact maximum. An unnormalised log-sum-exp
-adds ``tau * log(number_of_faces)`` and can turn a strictly feasible segment
-into a false positive. Since inference does not use autograd, the active face
-supplies an exact and inexpensive subgradient.
+This module is kept ONLY so that the old waypoint experiments stay reproducible.
+Its primal variable is the 128-waypoint trajectory, its corridor is the
+per-waypoint ellipsoid region of the deleted delta-centre semantics, and its
+inequality aggregation keeps just the single worst face per waypoint.
+
+The current version uses :mod:`src.diffusion.bspline_alm` instead:
+
+    * primal variable  : the 32-control B-spline polygon Q [B,32,2]
+    * constraints      : EVERY piece x 4 Bezier controls x EVERY valid face
+    * geometry source  : the frozen bridge safety corridor
+                         (src/geometry/safety_corridor.py) through the exact
+                         extraction pack (src/geometry/bspline_constraints.py)
+    * endpoints        : Q_0 = start, Q_31 = goal, always
+
+``src.diffusion.sampler.sample`` refuses an ``alm_guidance`` argument, so this
+code path can no longer be reached by accident.
+
+The inequality aggregation here is an exact maximum. An unnormalised
+log-sum-exp adds ``tau * log(number_of_faces)`` and can turn a strictly feasible
+segment into a false positive. Since inference does not use autograd, the active
+face supplies an exact and inexpensive subgradient.
 """
 from __future__ import annotations
 

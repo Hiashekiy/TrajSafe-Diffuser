@@ -127,27 +127,85 @@ eval:
   num_candidates_ablation: [1, 2, 4]
   samples_per_od: 4
 
-# --- inference-only ALM (augmented Lagrangian) guidance ------------------
-# NOT migrated to the B-spline control-space state in this version.
-# It stays DISABLED; enabling it would apply the old waypoint semantics to a
-# control polygon, so the sampler refuses to run it.
+# --- inference-only safety corridor + ALM guidance -----------------------
+# Three-stage state machine in src/diffusion/sampler.py:
+#   WARMUP  -> TRY_ACTIVATE (128 regions / overlap / gap bridge / freeze)
+#           -> GUIDED (per-reverse-step control-space ALM, dual warm start)
+# The corridor and the exact B-spline constraint pack are built ONCE and then
+# frozen; only the network's clean prediction keeps being refreshed.
+corridor:
+  enabled: true
+
+  # Area intersection over min-area; 0.10 is an initial experimental value and
+  # the observed distribution is logged (never hard-code it in the code).
+  min_overlap_ratio: 0.10
+
+  # GCOPTER/FIRI style point-seeded gap region at the Skeleton progress
+  # midpoint.  V1 allows at most ONE bridge per gap (no recursion).
+  bridge:
+    enabled: true
+    max_bridge_per_gap: 1
+
+  # How many topology candidates are tried before the corridor is declared
+  # unclosable for this sample.
+  topology_trials: 4
+
+  # EllipseRegionBuilder knobs (absolute-centre semantics).
+  region:
+    safety_margin: 0.02
+    obstacle_window_half: 0.35
+    obstacle_dilation: 0
+    corridor_chunk_size: 512
+    ellipse_axis_min: 0.002
+    ellipse_axis_max: 2.0
+
 alm:
-  enabled: false
-  log_per_step: true
-  start_t: 7
-  inner_steps: 4
-  step_size: 0.03
+  enabled: true
+  mode: "guided_bspline"       # "guided_bspline" | "final_only" (ablation B)
+
+  # Counted in executed reverse network forwards, NEVER in absolute timesteps.
+  warmup_reverse_steps: 3
+
+  # If the first activation fails, keep denoising and retry; after this many
+  # failed retries the sample finishes as raw diffusion (alm_status).
+  max_activation_delay_steps: 2
+
+  activation_inner_steps: 8
+  inner_steps: 6
+
+  step_size: 0.05
+
   rho: 5.0
+
   proximity_weight: 1.0
-  correction_smooth_weight: 20.0
-  max_grad_norm: 1.0
-  max_correction_per_step: 0.10
+  correction_smooth_weight: 0.1
+
+  constraint_tol: 1.0e-3
+
+  # Scene-normalised units: the CARLA crop is 80 m over [-1,1], so
+  # 0.01 scene == 0.4 m.  This is the trust region of ONE inner ALM step,
+  # measured on the REAL curve displacement max_i ||B dQ_i||.
+  #
+  # MEASURED (best_task.pt, test samples 1/3/7/11, 16 reverse steps, 4 seeds):
+  #   step 0.01 + inner 3  -> final violation mean 0.041 / max 0.130,
+  #                           corridor membership 0.862, 1/4 still colliding
+  #   step 0.03 + inner 6  -> final violation mean -0.011 / max 0.004,
+  #                           corridor membership 0.998, 0/4 colliding
+  # The raw network prediction sits ~3-6 m away from the Skeleton the corridor
+  # is built on, so the spec's initial 0.4 m/step budget cannot close it inside
+  # the guided phase.  Re-measure and re-tune if the checkpoint changes.
+  max_curve_step_scene: 0.03
+
+  inherit_dual_across_reverse_steps: true
+
+  dense_verify_points: 512
+  log_per_step: true
+
+  # region-builder keys may also be mirrored here (legacy place); the
+  # ``corridor.region`` block wins when both are present.
   safety_margin: 0.02
   obstacle_window_half: 0.35
   obstacle_dilation: 0
-  guidance_dilation_cells: 1
-  guidance_occupancy_threshold: 1.0e-3
-  segment_collision_samples: 8
   corridor_chunk_size: 512
   ellipse_axis_min: 0.002
   ellipse_axis_max: 2.0

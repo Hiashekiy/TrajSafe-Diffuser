@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 import numpy as np
 import torch
@@ -92,6 +93,12 @@ def main():
     ap.add_argument("--recall-tau", type=float, default=0.15)
     ap.add_argument("--device", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--ablation", default=None, choices=["A", "B", "C", "D"],
+                    help="report section 48 ablation preset "
+                         "A raw / B final-only / C guided / D no-bridge")
+    ap.add_argument("--compare-raw", action="store_true",
+                    help="also run one raw (ALM disabled) sample per batch so "
+                         "the collision delta is reported")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -120,7 +127,32 @@ def main():
             "topo_entropy", "selected_ndtw", "recall", "topo_diversity",
             "traj_diversity", "step_jitter", "step_switch_rate",
             "sel_best_rate", "pred_topo_best_rate"]}
+    # --- corridor / ALM bridge metrics (report section 47) -----------------
+    alm_agg = {k: [] for k in
+               ["alm_activation_rate", "topology_fallback_rate",
+                "activation_step", "activation_attempts",
+                "corridor_base_cells", "corridor_bridge_cells",
+                "corridor_min_overlap", "corridor_mean_overlap",
+                "corridor_region_faces", "constraint_pieces",
+                "constraint_active_faces",
+                "alm_max_violation_before", "alm_max_violation_after",
+                "alm_mean_violation_before", "alm_mean_violation_after",
+                "alm_feasible_rate", "alm_curve_correction_m",
+                "alm_lambda_max", "alm_inner_steps", "alm_runtime_ms",
+                "final_collision", "final_max_constraint_violation",
+                "final_corridor_membership_rate", "final_endpoint_error",
+                "raw_collision"]}
     rng = np.random.default_rng(0)
+
+    alm_cfg, corridor_cfg = cfg.get("alm") or {}, cfg.get("corridor") or {}
+    if args.ablation:
+        from src.diffusion.sampler import ablation_configs
+        alm_cfg, corridor_cfg = ablation_configs(alm_cfg, corridor_cfg,
+                                                 args.ablation)
+        print("[eval] ablation %s -> alm.mode=%s enabled=%s bridge=%s"
+              % (args.ablation, alm_cfg.get("mode"), alm_cfg.get("enabled"),
+                 (corridor_cfg.get("bridge") or {}).get("enabled")),
+              flush=True)
 
     for bi in range(args.num_batches):
         idxs = list(range(bi * batch_size, min((bi + 1) * batch_size, len(ds))))
@@ -135,13 +167,32 @@ def main():
             mask[:, keep:] = False
         runs = []
         for r in range(max(1, args.runs)):
+            started = time.perf_counter()
             runs.append(sample(
                 model, schedule, cond, occ_t,
                 batch["candidate_xy"].to(device), mask,
                 batch["candidate_geometry"].to(device),
                 batch["candidate_geometry_lengths"].to(device),
                 device=device, steps=args.steps, seed=1000 * bi + r,
-                return_trace=True))
+                return_trace=True, alm_config=alm_cfg,
+                corridor_config=corridor_cfg))
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            alm_agg["alm_runtime_ms"].append(
+                (time.perf_counter() - started) * 1000.0 / len(idxs))
+
+        raw_runs = []
+        if args.compare_raw:
+            from src.diffusion.sampler import ablation_configs as _abl
+            raw_alm, raw_cor = _abl(alm_cfg, corridor_cfg, "A")
+            raw_runs.append(sample(
+                model, schedule, cond, occ_t,
+                batch["candidate_xy"].to(device), mask,
+                batch["candidate_geometry"].to(device),
+                batch["candidate_geometry_lengths"].to(device),
+                device=device, steps=args.steps, seed=1000 * bi + 0,
+                return_trace=False, alm_config=raw_alm,
+                corridor_config=raw_cor))
         best = batch["topology_best"].numpy()
         occ_all = batch["occupancy"][:, 0].numpy()
         curve_gt = batch["pos"].numpy()
@@ -216,7 +267,79 @@ def main():
             agg["step_jitter"].append(float(switches))
             agg["step_switch_rate"].append(
                 float(switches) / max(len(per_step) - 1, 1))
+
+            # ---------------- corridor / ALM bridge diagnostics ------------
+            run0 = runs[0]
+            alm_agg["alm_activation_rate"].append(
+                float(bool(run0["guided"][b])))
+            alm_agg["topology_fallback_rate"].append(float(
+                run0["activation_info"]["topology_fallback"][b]))
+            alm_agg["activation_step"].append(
+                float(run0["activation_step"][b]) if bool(run0["guided"][b])
+                else float("nan"))
+            alm_agg["activation_attempts"].append(
+                float(run0["activation_info"]["attempts"][b]))
+            corridor = run0["corridors"][b]
+            if corridor is not None:
+                alm_agg["corridor_base_cells"].append(
+                    float(corridor["base_cell_count"]))
+                alm_agg["corridor_bridge_cells"].append(
+                    float(corridor["bridge_cell_count"]))
+                ov = corridor["overlap_ratio"]
+                alm_agg["corridor_min_overlap"].append(
+                    float(min(ov)) if ov else float("nan"))
+                alm_agg["corridor_mean_overlap"].append(
+                    float(sum(ov) / len(ov)) if ov else float("nan"))
+                alm_agg["corridor_region_faces"].append(float(
+                    sum(c["face_count"] for c in corridor["cells"])))
+            pack = run0["pack_summary"]
+            if pack is not None:
+                alm_agg["constraint_pieces"].append(
+                    float(max(pack["num_pieces"])))
+                alm_agg["constraint_active_faces"].append(
+                    float(pack["num_active_constraints"]))
+            stats = [s["alm_stats"] for s in run0["trace"]
+                     if s["alm_stats"] is not None]
+            if stats:
+                alm_agg["alm_max_violation_before"].append(float(np.mean(
+                    [float(s["max_violation_before"][b]) for s in stats])))
+                alm_agg["alm_max_violation_after"].append(float(np.mean(
+                    [float(s["max_violation_after"][b]) for s in stats])))
+                alm_agg["alm_mean_violation_before"].append(float(np.mean(
+                    [float(s["mean_positive_violation_before"][b])
+                     for s in stats])))
+                alm_agg["alm_mean_violation_after"].append(float(np.mean(
+                    [float(s["mean_positive_violation_after"][b])
+                     for s in stats])))
+                alm_agg["alm_feasible_rate"].append(float(np.mean(
+                    [float(s["constraint_feasible_rate"][b])
+                     for s in stats])))
+                alm_agg["alm_curve_correction_m"].append(float(np.mean(
+                    [float(s["max_curve_correction_m"][b])
+                     for s in stats])))
+                alm_agg["alm_lambda_max"].append(float(np.mean(
+                    [float(s["lambda_max"][b]) for s in stats])))
+                alm_agg["alm_inner_steps"].append(float(np.mean(
+                    [float(s["inner_steps_used"][b]) for s in stats])))
+            final = run0["final_validation"][b]
+            alm_agg["final_collision"].append(float(final["final_collision"]))
+            alm_agg["final_endpoint_error"].append(
+                float(final["endpoint_error"]))
+            if final["final_max_constraint_violation"] is not None:
+                alm_agg["final_max_constraint_violation"].append(
+                    float(final["final_max_constraint_violation"]))
+            if final["final_corridor_membership_rate"] is not None:
+                alm_agg["final_corridor_membership_rate"].append(
+                    float(final["final_corridor_membership_rate"]))
+            raw_run = raw_runs[0] if raw_runs else None
+            if raw_run is not None:
+                alm_agg["raw_collision"].append(
+                    float(raw_run["final_validation"][b]["final_collision"]))
         print("[eval] batch %d/%d" % (bi + 1, args.num_batches), flush=True)
+
+    def _mean(values):
+        finite = [v for v in values if v is not None and np.isfinite(v)]
+        return float(np.mean(finite)) if finite else None
 
     summary = {}
     for k, v in agg.items():
@@ -226,13 +349,26 @@ def main():
             summary[k] = float(np.sum(v))
         else:
             summary[k] = float(np.mean(v))
+    for k, v in alm_agg.items():
+        summary[k] = _mean(v)
     summary.update({"M": args.max_candidates or int(
         (cfg.get("topology") or {}).get("num_candidates", 4)),
         "steps": args.steps, "runs": args.runs, "ckpt": args.ckpt,
-        "epoch": ckpt.get("epoch"), "split": args.split})
+        "epoch": ckpt.get("epoch"), "split": args.split,
+        "ablation": args.ablation,
+        "alm_settings": {"enabled": alm_cfg.get("enabled"),
+                         "mode": alm_cfg.get("mode"),
+                         "warmup_reverse_steps":
+                             alm_cfg.get("warmup_reverse_steps"),
+                         "max_activation_delay_steps":
+                             alm_cfg.get("max_activation_delay_steps"),
+                         "bridge_enabled":
+                             (corridor_cfg.get("bridge") or {}).get("enabled")}})
     out = args.out or os.path.join(
         os.path.dirname(args.ckpt),
-        "eval_%s_M%s.json" % (args.split, summary["M"]))
+        "eval_%s_M%s%s.json" % (args.split, summary["M"],
+                                ("_abl%s" % args.ablation)
+                                if args.ablation else ""))
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
