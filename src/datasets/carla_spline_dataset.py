@@ -1,4 +1,4 @@
-"""CARLA dataset for the control-space (32 B-spline controls) TrajSafe-Diffuser.
+"""CARLA dataset for the control-space (C B-spline controls) TrajSafe-Diffuser.
 
 Consumes the FIXED processed snapshot written by ``scripts/data/carla/*``
 (see ``docs/CARLA_BSPLINE_PIPELINE_SPEC.md``).  It never scans the live
@@ -8,7 +8,7 @@ change the DataLoader mid-training.
 Returned per sample:
 
     pos                    [128,2]  curve GT (scene) = trajectory_128
-    control_gt             [32,2]   endpoint-constrained control GT
+    control_gt             [C,2]    endpoint-constrained control GT
     cond                   [2,2]    [start, goal]
     occupancy              [1,256,256] float32 (canonical, already y-flipped)
     candidate_xy           [M,128,2]
@@ -20,9 +20,14 @@ Returned per sample:
     ellipse_shape4_gt      [128,4]
     shape_valid            [128]    bool
 
+``C`` is NOT hard-coded: it is read from the ``control_gt.npy`` snapshot and,
+when the caller passes ``num_controls`` (from ``configs/config.yaml``), the two
+are checked against each other so a config change can never be silently paired
+with a stale snapshot.
+
 There is deliberately no progress target, no ellipse-centre target and no
 stored ``ellipse_mask``: the ellipse centres are the fixed Skeleton centres
-``Gamma_m(i/127)`` and the GT soft mask is built at training time from the
+``Gamma_m(i/(Q-1))`` and the GT soft mask is built at training time from the
 DETACHED predicted centres plus the offline ``shape4`` labels.
 """
 
@@ -42,7 +47,8 @@ LOG_INTERVAL = 500
 
 class CarlaSplineDataset(Dataset):
     def __init__(self, split, processed_root, geometry_points=1280,
-                 limit=None, indices=None, require_labels=True):
+                 limit=None, indices=None, require_labels=True,
+                 num_controls=None, num_safety_queries=None):
         self.split = str(split)
         self.processed_root = str(processed_root)
         self.dir = os.path.join(self.processed_root, self.split)
@@ -92,6 +98,24 @@ class CarlaSplineDataset(Dataset):
         self.horizon = int(self.curve_gt.shape[1])
         self.num_controls = int(self.control_gt.shape[1])
         self.cell = 2.0 / float(RES)
+        # The configured C must match the snapshot: a mismatch means the
+        # processed data has to be regenerated (scripts/data/carla/00_clean...).
+        if num_controls is not None and int(num_controls) != self.num_controls:
+            raise ValueError(
+                "config num_controls=%d != control_gt.npy C=%d in %s; "
+                "re-run scripts/data/carla/00_clean_dataset.py with the new "
+                "bspline.num_controls (the control labels are offline data)"
+                % (int(num_controls), self.num_controls, self.dir))
+        # The ellipse labels / safety queries are indexed by Skeleton progress.
+        if num_safety_queries is not None \
+                and int(num_safety_queries) != self.candidate_points:
+            raise ValueError(
+                "model.num_safety_queries=%d != candidate_points=%d"
+                % (int(num_safety_queries), self.candidate_points))
+        if self.shape4_gt.shape[1] != self.candidate_points:
+            raise ValueError(
+                "ellipse_shape4_gt has %d rows but candidate_xy has %d points"
+                % (self.shape4_gt.shape[1], self.candidate_points))
         if int(self.geom_lengths.max(initial=0)) > self.geometry_points:
             raise ValueError(
                 "dense geometry longer than the padding budget: %d > %d "
@@ -191,10 +215,13 @@ def make_collate(ds: CarlaSplineDataset):
 
 def make_loader(split, processed_root, batch_size=16, shuffle=True,
                 num_workers=0, geometry_points=1280, limit=None, indices=None,
-                require_labels=True):
+                require_labels=True, num_controls=None,
+                num_safety_queries=None):
     ds = CarlaSplineDataset(split, processed_root,
                             geometry_points=geometry_points, limit=limit,
-                            indices=indices, require_labels=require_labels)
+                            indices=indices, require_labels=require_labels,
+                            num_controls=num_controls,
+                            num_safety_queries=num_safety_queries)
     loader = torch.utils.data.DataLoader(
         ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
         drop_last=False, collate_fn=make_collate(ds))

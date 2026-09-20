@@ -51,3 +51,50 @@ def get(cfg, dotted_key, default=None):
             return default
         node = node[part]
     return node
+
+
+def num_controls(cfg, default=32):
+    """The ONE number of B-spline control points, read from the config.
+
+    ``bspline.num_controls`` (the codec) and ``model.num_controls`` (the
+    network / diffusion state) must agree when both are present, so changing C
+    is a one-line edit in configs/config.yaml.  Nothing in the code hard-codes
+    32 any more.
+    """
+    bs = get(cfg, "bspline.num_controls")
+    md = get(cfg, "model.num_controls")
+    if bs is not None and md is not None and int(bs) != int(md):
+        raise ValueError(
+            "config mismatch: bspline.num_controls=%s != model.num_controls=%s"
+            % (bs, md))
+    value = bs if bs is not None else md
+    if value is None:
+        value = default
+    value = int(value)
+    if value < 2:
+        raise ValueError("num_controls must be >= 2, got %d" % value)
+    return value
+
+
+def curve_points(cfg, default=128):
+    """Decoded curve sampling density (``bspline.curve_points``)."""
+    value = get(cfg, "bspline.curve_points")
+    if value is None:
+        value = get(cfg, "model.horizon")
+    return int(default if value is None else value)
+
+
+def num_safety_queries(cfg, default=None):
+    """Number of Skeleton / ellipse geometry queries (``model.num_safety_queries``).
+
+    Defaults to ``topology.candidate_points`` because the safety queries are
+    exactly the selected Skeleton tokens; the decoded curve density is only a
+    last-resort fallback (conflating the two is what this refactor removes).
+    """
+    value = get(cfg, "model.num_safety_queries")
+    if value is None:
+        value = get(cfg, "topology.candidate_points")
+    if value is None:
+        value = get(cfg, "model.horizon")
+    return int(default if value is None else value)
+

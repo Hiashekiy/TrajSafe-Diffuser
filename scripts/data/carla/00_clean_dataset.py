@@ -47,6 +47,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.geometry.bspline import (  # noqa: E402  (import after sys.path tweak)
     bspline_basis_matrix,
+    default_knots,
     default_knots_path,
     numpy_fit_curve_to_controls,
 )
@@ -56,6 +57,9 @@ from src.geometry.bspline import (  # noqa: E402  (import after sys.path tweak)
 # ---------------------------------------------------------------------------
 
 SPLITS: Tuple[str, ...] = ("train", "val", "test")
+# DEFAULTS only: ``configure_codec`` overrides them from the config / CLI so the
+# number of B-spline control points is a config knob (bspline.num_controls), not
+# a constant baked into the data pipeline.
 NUM_CONTROLS = 32
 DEGREE = 3
 CURVE_POINTS = 128
@@ -71,6 +75,26 @@ MAX_REPORT_SAMPLES_DEFAULT = 300
 PROGRESS_EVERY = 500
 
 EXPECTED_KNOTS_LEN = NUM_CONTROLS + DEGREE + 1
+
+
+def configure_codec(num_controls: Optional[int] = None,
+                    curve_points: Optional[int] = None) -> None:
+    """Apply the configured control count / curve density to this module.
+
+    The offline control labels are data, so changing ``bspline.num_controls``
+    in the config means this script has to be re-run with the same value; the
+    knot vector is regenerated (clamped uniform) when the stored one does not
+    match, so no knot file has to be hand-edited.
+    """
+    global NUM_CONTROLS, CURVE_POINTS, EXPECTED_KNOTS_LEN
+    if num_controls is not None:
+        NUM_CONTROLS = int(num_controls)
+    if curve_points is not None:
+        CURVE_POINTS = int(curve_points)
+    if NUM_CONTROLS <= DEGREE:
+        raise SystemExit("[error] bspline.num_controls=%d must be > degree=%d"
+                         % (NUM_CONTROLS, DEGREE))
+    EXPECTED_KNOTS_LEN = NUM_CONTROLS + DEGREE + 1
 
 
 # ---------------------------------------------------------------------------
@@ -518,8 +542,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="processed output root (default: "
                              "data/carla_processed or config data.processed_root)")
     parser.add_argument("--config", default="configs/config.yaml",
-                        help="YAML config; only bspline.knots, data.root and "
+                        help="YAML config; bspline.num_controls, "
+                             "bspline.curve_points, bspline.knots, data.root and "
                              "data.processed_root are read")
+    parser.add_argument("--num-controls", type=int, default=None,
+                        help="override bspline.num_controls (B-spline control "
+                             "points; must match the trained model)")
+    parser.add_argument("--curve-points", type=int, default=None,
+                        help="override bspline.curve_points (decoded density)")
     parser.add_argument("--limit", type=int, default=None,
                         help="process at most N records (debugging aid)")
     parser.add_argument("--max-fit-rmse-m", type=float,
@@ -542,6 +572,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
     cfg_path = _resolve(args.config)
     cfg = load_config(cfg_path)
+
+    # ---- C (control points) and the curve density come from the config ----
+    c_cfg = _cfg_get(cfg, "bspline.num_controls")
+    h_cfg = _cfg_get(cfg, "bspline.curve_points")
+    configure_codec(args.num_controls if args.num_controls is not None else c_cfg,
+                    args.curve_points if args.curve_points is not None
+                    else h_cfg)
+
     root, out, knots_path, knots_source = resolve_paths(args, cfg)
 
     print("=" * 78, flush=True)
@@ -550,6 +588,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("  root (read)  : %s" % root, flush=True)
     print("  out (write)  : %s" % out, flush=True)
     print("  config       : %s" % cfg_path, flush=True)
+    print("  num_controls : %d (degree %d, curve_points %d)"
+          % (NUM_CONTROLS, DEGREE, CURVE_POINTS), flush=True)
     print("  knots        : %s (%s)" % (knots_path, knots_source), flush=True)
     print("=" * 78, flush=True)
 
@@ -557,15 +597,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("[error] raw root does not exist: %s" % root, flush=True)
         return 2
 
-    if not knots_path.exists():
-        print("[error] knots file does not exist: %s" % knots_path, flush=True)
-        return 2
-    knots = np.load(knots_path)
-    knots = np.asarray(knots, dtype=np.float64).reshape(-1)
-    if knots.shape[0] != EXPECTED_KNOTS_LEN:
-        print("[error] knots length %d != %d"
-              % (knots.shape[0], EXPECTED_KNOTS_LEN), flush=True)
-        return 2
+    knots = None
+    if knots_path.exists():
+        knots = np.asarray(np.load(knots_path), dtype=np.float64).reshape(-1)
+    if knots is None or knots.shape[0] != EXPECTED_KNOTS_LEN:
+        knots = default_knots(NUM_CONTROLS, DEGREE)
+        print("[warn] knots vector regenerated for num_controls=%d "
+              "(clamped uniform, len=%d)" % (NUM_CONTROLS, knots.shape[0]),
+              flush=True)
 
     params = np.linspace(0.0, 1.0, CURVE_POINTS)
     basis = bspline_basis_matrix(knots, NUM_CONTROLS, DEGREE, params)

@@ -5,9 +5,10 @@ geometry data: it never enters the network.  Its ONLY use is the centre decode
 
     s_i -> c_i = Gamma_m(s_i)
 
-implemented as arc-length interpolation on the dense safe polyline (report
-section 10.2 / 16 / 27.1).  Interpolating on the 128-point network feature path
-instead would allow a chord to cut an obstacle corner.
+implemented as arc-length interpolation on the dense safe polyline.  The
+progress grid is ``s_i = i/(Q-1)`` with Q = ``model.num_safety_queries`` (one
+fixed Skeleton centre per safety/ellipse query); interpolating on the Q-point
+network feature path instead would allow a chord to cut an obstacle corner.
 """
 
 from __future__ import annotations

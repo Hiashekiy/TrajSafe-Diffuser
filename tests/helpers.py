@@ -19,15 +19,44 @@ SKELETON_ROOT = os.path.join(REPO_ROOT, "data", "skeleton")
 SCENES_ROOT = os.path.join(REPO_ROOT, "data", "scenes")
 
 
-def tiny_model(horizon=8, d_model=32, traj_blocks=2, skeleton_blocks=1,
-               final_blocks=2, map_res=64, global_res=8, geo_res=16):
-    cfg = dict(horizon=horizon, d_model=d_model, num_heads=4,
+def tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
+               rel_bias_len=8, d_model=32, traj_blocks=2, skeleton_blocks=1,
+               final_blocks=1, control_space=True, horizon=None,
+               map_res=64, global_res=8, geo_res=16, **extra):
+    """Tiny ``TrajSafePlanner`` for tests, valid for BOTH forward chains.
+
+    The three token counts are written consistently into the model and the
+    fixed B-spline codec (``bspline.num_controls`` == ``model.num_controls``,
+    ``bspline.curve_points`` == ``model.horizon``, ``model.num_safety_queries``
+    = the Skeleton / ellipse query count) and ``knots: "auto"`` generates the
+    clamped uniform knot vector, so no knot file is needed.
+
+    Backwards compatible keyword names kept for the rest of the suite:
+    ``horizon=`` is the decoded curve density (``curve_points``), plus the
+    historical ``d_model`` / ``traj_blocks`` / ``skeleton_blocks`` /
+    ``final_blocks`` / ``map_res`` / ``global_res`` / ``geo_res``.
+    """
+    if horizon is not None:
+        curve_points = int(horizon)
+    nc = int(num_controls)
+    cp = int(curve_points)
+    nq = int(num_safety_queries)
+    # the relative-bias table must be long enough for every token stack
+    bias = max(int(rel_bias_len), nc, cp, nq)
+    cfg = dict(horizon=cp,                # alias of bspline.curve_points
+               num_controls=nc,
+               control_space=bool(control_space),
+               num_safety_queries=nq,
+               rel_bias_len=bias,
+               d_model=d_model, num_heads=4,
                traj_blocks=traj_blocks, skeleton_blocks=skeleton_blocks,
                final_blocks=final_blocks, ffn_dim=64, map_res=map_res,
                global_mem_res=global_res, geo_decode_res=geo_res,
                geo_mem_res=geo_res // 2, coord_hidden=32, head_hidden=32,
                dropout=0.0, assert_shapes=True)
-    return TrajSafePlanner(cfg)
+    cfg.update(extra)
+    bspline_cfg = dict(degree=3, num_controls=nc, curve_points=cp, knots="auto")
+    return TrajSafePlanner(cfg, None, bspline_cfg)
 
 
 def tiny_batch(B=2, H=8, M=3, L=8, G=24, res=64, mask_res=32, seed=0):

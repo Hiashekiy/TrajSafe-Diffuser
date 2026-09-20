@@ -1,21 +1,31 @@
 """Losses for the control-space TrajSafe-Diffuser.
 
-    L = lambda_traj    * L_traj      (MSE on the decoded 128-point curve)
-      + lambda_control * L_ctrl      (MSE on the 30 interior B-spline controls)
-      + lambda_coarse  * L_coarse
-      + lambda_smooth  * L_smooth
-      + lambda_topo    * L_topo
-      + lambda_shape   * L_shape
-      + lambda_iou     * L_iou
-      + lambda_safe    * L_safe
+    L = lambda_ctrl   * L_ctrl      (raw final controls vs GT controls)
+      + lambda_coarse * L_coarse    (raw coarse controls vs GT controls)
+      + lambda_smooth * L_smooth    (2nd/3rd differences OF THE CONTROLS)
+      + lambda_bound  * L_boundary  (raw controls near start/goal)
+      + lambda_topo   * L_topo
+      + lambda_shape  * L_shape
+      + lambda_iou    * L_iou
+      + lambda_safe   * L_safe
 
-There is NO alignment loss: the ellipse centre is the FIXED Skeleton centre
-``c_i = Gamma_m(i/127)``, so there is nothing to align and nothing to predict.
-No progress target, no centre target and no alignment weight exist anywhere in
-the training chain.
+There is NO ``L_traj``: the decoded 128-point curve never enters the loss, and
+nothing is ever decoded inside the training chain.  ``L_smooth`` is computed on
+the CONTROL POLYGON (second and third differences of ``Q``), and ``L_boundary``
+supervises the RAW control polygon around both endpoints against the GT local
+control-polygon shape translated to this sample's start/goal::
 
-``L_shape`` is the ellipse-parameter loss and touches only the Ellipse Shape
-Head; the centre is deliberately NOT part of it.
+    T^s_i = S + (Q^GT_i - Q^GT_0)
+    T^g_j = G + (Q^GT_j - Q^GT_{C-1})
+
+so the network itself has to produce a sane local polygon instead of relying on
+the (fixed, untrained) boundary decoder.  The correction profile is read from
+``model.boundary_decoder`` - one single definition, never duplicated here.
+
+There is also NO alignment loss: the ellipse centre is the FIXED Skeleton centre
+``c_i = Gamma_m(i/(Q-1))``, so there is nothing to align and nothing to predict.
+No progress target and no centre target exist anywhere in the training chain.
+``L_shape`` touches only the Ellipse Shape Head; the centre is not part of it.
 """
 
 from __future__ import annotations
@@ -26,11 +36,12 @@ import torch
 import torch.nn.functional as F
 
 from src.geometry.ellipse_raster import ellipse_soft_mask
+from src.models.trajsafe.boundary import boundary_targets
 
 __all__ = [
-    "trajectory_smoothness_loss",
-    "trajectory_x0_loss",
     "control_x0_loss",
+    "control_smoothness_loss",
+    "boundary_control_loss",
     "topology_ce",
     "ellipse_shape_loss",
     "ellipse_iou_loss",
@@ -47,38 +58,41 @@ def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return (values * mask).sum() / mask.sum().clamp_min(1.0)
 
 
-def trajectory_x0_loss(p_hat: torch.Tensor, p_gt: torch.Tensor) -> torch.Tensor:
-    """MSE on the interior waypoints (endpoints are hard-conditioned)."""
-    return F.mse_loss(p_hat[:, 1:-1], p_gt[:, 1:-1])
-
-
 def control_x0_loss(q_hat: torch.Tensor, q_gt: torch.Tensor) -> torch.Tensor:
-    """MSE on the 30 INTERIOR B-spline controls.
+    """MSE on the INTERIOR B-spline controls (``Q_1 .. Q_{C-2}``).
 
     The first and the last control are hard-conditioned to start / goal
     (clamped knots => curve endpoints), so they carry no training signal and
-    must not contribute to the loss.
+    must not contribute to the loss.  Used for BOTH ``L_ctrl`` and
+    ``L_coarse``; both take the RAW (pre boundary decoder) control polygon.
     """
     if q_hat.shape != q_gt.shape:
         raise ValueError("control shapes differ: %s vs %s"
                          % (tuple(q_hat.shape), tuple(q_gt.shape)))
-    return F.mse_loss(q_hat[:, 1:-1], q_gt[:, 1:-1])
+    interior_hat, interior_gt = q_hat[:, 1:-1], q_gt[:, 1:-1]
+    if interior_hat.numel() == 0:              # degenerate C == 2
+        return q_hat.sum() * 0.0
+    return F.mse_loss(interior_hat, interior_gt)
 
 
-def trajectory_smoothness_loss(p_pred: torch.Tensor, p_gt: torch.Tensor,
-                               acc_weight: float = 0.25,
-                               jerk_weight: float = 1.0,
-                               eps: float = 1e-3) -> torch.Tensor:
-    """Penalise geometric acceleration and high-frequency jerk.
+def control_smoothness_loss(q_pred: torch.Tensor, q_gt: torch.Tensor,
+                            acc_weight: float = 0.25,
+                            jerk_weight: float = 1.0,
+                            eps: float = 1e-3) -> torch.Tensor:
+    """Penalise the second and third differences of the CONTROL polygon.
 
-    Both finite differences are scaled by the detached mean GT step length,
-    so the regulariser is resolution independent.
+        Delta^2 Q_i = Q_{i+2} - 2 Q_{i+1} + Q_i
+        Delta^3 Q_i = Q_{i+3} - 3 Q_{i+2} + 3 Q_{i+1} - Q_i
+
+    Both are scaled by the detached mean GT control step length, so the
+    regulariser does not depend on the control count C.  NOTHING is decoded:
+    the control polygon itself has to be smooth.
     """
-    velocity = p_pred[:, 1:] - p_pred[:, :-1]
+    velocity = q_pred[:, 1:] - q_pred[:, :-1]
     acceleration = velocity[:, 1:] - velocity[:, :-1]
     jerk = acceleration[:, 1:] - acceleration[:, :-1]
 
-    gt_velocity = p_gt[:, 1:] - p_gt[:, :-1]
+    gt_velocity = q_gt[:, 1:] - q_gt[:, :-1]
     step_scale = gt_velocity.norm(dim=-1).mean(dim=1, keepdim=True)
     step_scale = step_scale.detach().clamp_min(1e-4)[:, :, None]
     acceleration = acceleration / step_scale
@@ -89,6 +103,31 @@ def trajectory_smoothness_loss(p_pred: torch.Tensor, p_gt: torch.Tensor,
     loss_acc = torch.log1p(acc_norm).mean()
     loss_jerk = torch.log1p(jerk_norm).mean()
     return acc_weight * loss_acc + jerk_weight * loss_jerk
+
+
+def boundary_control_loss(q_raw: torch.Tensor, q_gt: torch.Tensor,
+                          cond: torch.Tensor, ws: torch.Tensor,
+                          wg: torch.Tensor) -> torch.Tensor:
+    """Weighted local supervision of the RAW controls at both ends.
+
+        L_boundary = [ sum_i w^s_i ||Q~_i    - T^s_i||^2
+                     + sum_i w^g_i ||Q~_{C-1-i} - T^g_{C-1-i}||^2 ] / (2 sum_i w_i)
+
+    ``T^s`` / ``T^g`` are the GT control polygons rigidly translated to THIS
+    sample's start / goal (see :meth:`BoundaryDecoder.boundary_targets`), so the
+    loss enforces the GT *shape* of the local polygon, not a collapse onto S/G.
+    ``ws`` / ``wg`` come from the model's fixed boundary decoder.
+    """
+    if q_raw.shape != q_gt.shape:
+        raise ValueError("control shapes differ: %s vs %s"
+                         % (tuple(q_raw.shape), tuple(q_gt.shape)))
+    target_s, target_g = boundary_targets(q_gt, cond)
+    ws = ws.to(q_raw.dtype)[None, :, None]
+    wg = wg.to(q_raw.dtype)[None, :, None]
+    err_s = ((q_raw - target_s) ** 2).sum(dim=-1) * ws[:, :, 0]
+    err_g = ((q_raw - target_g) ** 2).sum(dim=-1) * wg[:, :, 0]
+    denom = ws.sum() + wg.sum()
+    return (err_s.sum() + err_g.sum()) / denom.clamp_min(1e-9)
 
 
 def topology_ce(pi: torch.Tensor, best: torch.Tensor,

@@ -43,6 +43,12 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # restarted backend can never replay a payload produced by older code.
 PAYLOAD_FORMAT = 4
 CACHE_FORMAT = PAYLOAD_FORMAT
+
+# UI/cache contract string shared with the web client (``/health.engine`` and
+# the cached payload signature).  It is deliberately NOT derived from the
+# control count: it identifies the control-space backend, the actual C travels
+# in the payload (``pack_summary.num_controls``) and comes from the config.
+CONTROL_SPACE_ENGINE = "carla-controlspace-32"
 CATALOG_PATH = os.path.join(SITE_ROOT, "lib", "dashboard-catalog-carla.json")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -169,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self.send_json(200, {
                 "status": "ready", "device": str(device),
-                "engine": "carla-controlspace-32",
+                "engine": CONTROL_SPACE_ENGINE,
                 "format": PAYLOAD_FORMAT,
                 "features": ["control_history", "topology", "ellipse_history",
                              "corridor", "alm_stats", "raw_vs_safe"],
@@ -197,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
             if seed < 0 or seed > 2_147_483_647:
                 raise ValueError("seed 超出范围")
             cache_payload = json.dumps(
-                {"format": CACHE_FORMAT, "engine": "carla-controlspace-32",
+                {"format": CACHE_FORMAT, "engine": CONTROL_SPACE_ENGINE,
                  "features": ["control_history", "topology", "corridor",
                               "alm_stats", "raw_vs_safe"],
                  "sample": sample_key,

@@ -3,7 +3,8 @@
 Metrics:
   curve       collision rate, goal distance, smoothness, cross-seed diversity,
               curve RMSE vs the GT curve (m), B-spline control RMSE (m)
-  centre      free-space rate and minimum clearance (c_i = Gamma_m(i/127))
+              (the curve is decoded from Q_final only for these metrics)
+  centre      free-space rate and minimum clearance (c_i = Gamma_m(i/(Q-1)))
   ellipse     boundary+interior collision rate, mean area, free fraction
   topology    selected-vs-GT nDTW, Recall@M, entropy, cross-seed diversity,
               per-step selection jitter, argmax(pi)==m* rate
@@ -25,10 +26,10 @@ import torch
 ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, ROOT)
 
-from src.utils.config import load_config
+from src.utils.config import load_config, num_controls, num_safety_queries
+from src.utils.checkpoint import load_model
 from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.sampler import sample
-from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import (CarlaSplineDataset,
                                                make_collate)
 from src.geometry.skeleton_paths import normalized_dtw, resample_polyline
@@ -99,6 +100,10 @@ def main():
     ap.add_argument("--compare-raw", action="store_true",
                     help="also run one raw (ALM disabled) sample per batch so "
                          "the collision delta is reported")
+    ap.add_argument("--arch", default="auto",
+                    choices=["auto", "control", "legacy"],
+                    help="forward chain: auto = from the checkpoint (legacy "
+                         "checkpoints replay the 128-curve-token chain)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -108,17 +113,20 @@ def main():
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
     batch_size = int(cfg["data"].get("batch_size", 16))
+    n_ctrl = num_controls(cfg)
+    n_safety = num_safety_queries(cfg)
 
     ds = CarlaSplineDataset(args.split, processed_root,
-                            geometry_points=geo_points, require_labels=False)
+                            geometry_points=geo_points, require_labels=False,
+                            num_controls=n_ctrl, num_safety_queries=n_safety)
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label"),
-                            cfg.get("bspline")).to(device)
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt.get("model_state", ckpt))
+    model, ckpt, _ = load_model(cfg, args.ckpt, arch=args.arch, device=device)
     model.eval()
+    print("[eval] arch=%s controls=%d"
+          % ("control_space" if model.control_space else "legacy_curve",
+             model.num_controls), flush=True)
 
     agg = {k: [] for k in
            ["traj_collision", "goal_dist_m", "smooth", "center_free",

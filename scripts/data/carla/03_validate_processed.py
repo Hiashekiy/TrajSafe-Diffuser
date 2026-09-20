@@ -7,11 +7,14 @@ Checks the contract of ``docs/CARLA_BSPLINE_PIPELINE_SPEC.md`` before training:
   * control_gt endpoints == start/goal and decode(control_gt) == curve_gt;
   * candidate mask / offset / length consistency;
   * topology_best is a valid index whenever the sample has a candidate;
-  * the fixed ellipse centres Gamma_m(i/127) are finite, in range, monotone;
+  * the fixed ellipse centres Gamma_m(i/(Q-1)) are finite, in range, monotone;
   * the ellipse labels are valid where flagged and a>=b>0;
   * no progress / ellipse-centre label file exists;
   * no episode crosses splits;
   * clean_manifest.jsonl sample order matches sample_id.npy.
+
+The number of control points is read from the config (``bspline.num_controls``)
+and must match the cache, so a config edit cannot silently validate stale data.
 
 Exit code 0 when there is no ERROR (warnings are allowed with --allow-warnings).
 
@@ -29,7 +32,7 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, ROOT)
 
-from src.utils.config import load_config
+from src.utils.config import load_config, num_controls, curve_points
 from src.geometry.skeleton_graph import build_skeleton_graph
 from src.geometry.skeleton_paths import interpolate_path
 from src.geometry.bspline import BSplineCodec
@@ -37,23 +40,33 @@ from src.geometry.bspline import BSplineCodec
 SPLITS = ["train", "val", "test"]
 CELL = 2.0 / 256.0
 METERS = 40.0
-FILES = {
-    "conditions": ((None, 2, 2), np.float32),
-    "control_gt": ((None, 32, 2), np.float32),
-    "curve_gt": ((None, 128, 2), np.float32),
-    "occupancy": ((None, 256, 256), np.uint8),
-    "episode_id": ((None,), np.int64),
-    "sample_id": ((None,), np.int64),
-    "candidate_xy": ((None, None, 128, 2), np.float32),
-    "candidate_mask": ((None, None), np.bool_),
-    "candidate_lengths": ((None, None), np.float32),
-    "candidate_geometry": ((None, 2), np.int16),
-    "candidate_geometry_offsets": ((None, None), np.int64),
-    "candidate_geometry_lengths": ((None, None), np.int32),
-    "topology_best": ((None,), np.int64),
-    "ellipse_shape4_gt": ((None, 128, 4), np.float32),
-    "shape_valid": ((None, 128), np.bool_),
-}
+
+
+def expected_files(cfg) -> dict:
+    """Contract of the processed cache, sized by the config (no hard-coded C)."""
+    C = num_controls(cfg)
+    H = curve_points(cfg)
+    Q = int((cfg.get("topology") or {}).get("candidate_points", H))
+    return {
+        "conditions": ((None, 2, 2), np.float32),
+        "control_gt": ((None, C, 2), np.float32),
+        "curve_gt": ((None, H, 2), np.float32),
+        "occupancy": ((None, 256, 256), np.uint8),
+        "episode_id": ((None,), np.int64),
+        "sample_id": ((None,), np.int64),
+        "candidate_xy": ((None, None, Q, 2), np.float32),
+        "candidate_mask": ((None, None), np.bool_),
+        "candidate_lengths": ((None, None), np.float32),
+        "candidate_geometry": ((None, 2), np.int16),
+        "candidate_geometry_offsets": ((None, None), np.int64),
+        "candidate_geometry_lengths": ((None, None), np.int32),
+        "topology_best": ((None,), np.int64),
+        "ellipse_shape4_gt": ((None, Q, 4), np.float32),
+        "shape_valid": ((None, Q), np.bool_),
+    }
+
+
+FILES = expected_files({})
 
 
 class Checker:
@@ -69,14 +82,16 @@ class Checker:
         self.warnings.append(msg)
 
 
-def validate_split(chk, processed, split, knots_path, geometry_points):
+def validate_split(chk, processed, split, knots_path, geometry_points,
+                   files=None):
+    files = files or FILES
     d = os.path.join(processed, split)
     info = {"split": split}
     if not os.path.isdir(d):
         chk.error("%s: missing split directory %s" % (split, d))
         return info
     arrays = {}
-    for name, (shape, dtype) in FILES.items():
+    for name, (shape, dtype) in files.items():
         p = os.path.join(d, name + ".npy")
         if not os.path.exists(p):
             chk.error("%s: missing %s" % (split, p))
@@ -256,10 +271,16 @@ def main():
     geometry_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
     chk = Checker(limit=args.limit)
+    files = expected_files(cfg)
+    print("[validate] num_controls=%d curve_points=%d safety_queries=%d"
+          % (num_controls(cfg), curve_points(cfg),
+             int((cfg.get("topology") or {}).get("candidate_points", 128))),
+          flush=True)
     report = {"processed": processed, "config": args.config, "splits": {}}
     for split in args.splits:
         report["splits"][split] = validate_split(chk, processed, split,
-                                                 knots_path, geometry_points)
+                                                 knots_path, geometry_points,
+                                                 files=files)
 
     # episode leakage
     eps = {}

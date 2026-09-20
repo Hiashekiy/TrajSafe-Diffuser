@@ -1,18 +1,20 @@
 """Train the control-space TrajSafe-Diffuser on the CARLA v1 snapshot.
 
-    L = lam_traj   L_traj    (decoded 128-point curve  vs curve_gt)
-      + lam_ctrl   L_ctrl    (30 interior B-spline controls vs control_gt)
-      + lam_coarse L_coarse
-      + lam_smooth L_smooth
+    L = lam_ctrl   L_ctrl     (raw final controls   vs control_gt)
+      + lam_coarse L_coarse   (raw coarse controls  vs control_gt)
+      + lam_smooth L_smooth   (2nd/3rd differences of the CONTROL polygon)
+      + lam_bound  L_boundary (raw controls near start/goal vs GT local shape)
       + lam_topo   L_topo
       + lam_shape  L_shape
       + lam_iou    L_iou
       + lam_safe   L_safe
 
-The diffusion state is the 32-control polygon Q_t (``control_gt``).  The
-network still runs on the decoded 128-point curve.  There is NO alignment loss,
-no learned progress and no ellipse-centre label: the ellipse centre is the
-fixed Skeleton centre Gamma_m(i/127).
+The diffusion state is the C-control polygon Q_t (``control_gt``, C from the
+config).  The network runs on the control tokens themselves; NO decoded
+trajectory point ever enters the network or the loss (there is no L_traj), and
+the 128-point curve only exists at the very end for plotting/metrics.  There is
+NO alignment loss, no learned progress and no ellipse-centre label: the ellipse
+centre is the fixed Skeleton centre Gamma_m(i/(Q-1)).
 
 Training routing uses m* = argmin_m nDTW(curve_gt, S_m) (cached
 ``topology_best``); inference routing uses argmax(pi).
@@ -36,21 +38,35 @@ os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, ROOT)
 
-from src.utils.config import load_config
+from src.utils.config import load_config, num_controls
 from src.utils.seed import set_seed
-from src.utils.checkpoint import save_checkpoint, load_checkpoint
+from src.utils.checkpoint import (ARCH_CONTROL_SPACE, ARCH_LEGACY_CURVE,
+                                  detect_architecture, load_checkpoint,
+                                  save_checkpoint)
 from src.diffusion.schedule import NoiseSchedule
 from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import make_loader, make_collate
 from src.geometry.ellipse_raster import ellipse_soft_mask
 from src.geometry.ellipse_shape import shape4_to_abtheta
-from src.losses.losses import (ellipse_iou_loss, ellipse_safety_loss,
-                               ellipse_shape_loss, topology_ce,
-                               trajectory_smoothness_loss, trajectory_x0_loss,
-                               control_x0_loss)
+from src.losses.losses import (boundary_control_loss, control_smoothness_loss,
+                               control_x0_loss, ellipse_iou_loss,
+                               ellipse_safety_loss, ellipse_shape_loss,
+                               topology_ce)
+from src.models.trajsafe.boundary import boundary_targets
 
-LOSS_KEYS = ["Ltraj", "Lctrl", "Lcoarse", "Lsmooth", "Ltopo", "Lshape",
+LOSS_KEYS = ["Lctrl", "Lcoarse", "Lsmooth", "Lboundary", "Ltopo", "Lshape",
              "Liou", "Lsafe"]
+LOSS_WEIGHT_KEYS = {
+    "Lctrl": "lambda_control", "Lcoarse": "lambda_coarse",
+    "Lsmooth": "lambda_smooth", "Lboundary": "lambda_boundary",
+    "Ltopo": "lambda_topology", "Lshape": "lambda_shape",
+    "Liou": "lambda_iou", "Lsafe": "lambda_safe",
+}
+DEFAULT_LOSS_WEIGHTS = {
+    "lambda_control": 0.2, "lambda_coarse": 0.5, "lambda_smooth": 0.08,
+    "lambda_boundary": 0.2, "lambda_topology": 0.25, "lambda_shape": 0.08,
+    "lambda_iou": 0.25, "lambda_safe": 0.15,
+}
 SCENE_TO_METER = 40.0
 
 
@@ -82,11 +98,13 @@ def _point_collision(points: torch.Tensor, occ: torch.Tensor) -> torch.Tensor:
 def metrics(batch, out, occ, device):
     """Evaluation metrics that are NOT just the training losses."""
     p_gt = batch["pos"].to(device)
+    q_gt = batch["control_gt"].to(device)
     cond = batch["cond"].to(device)
     best = batch["topology_best"].to(device)
     has_cand = batch["has_candidate"].to(device)
     ell = out["ellipse"]
     final = out["final"]
+    control = out["control"]
     res = {}
     with torch.no_grad():
         # predicted topology accuracy against the cached m*
@@ -99,9 +117,17 @@ def metrics(batch, out, occ, device):
         err = torch.linalg.norm(final - p_gt, dim=-1)              # [B,H]
         res["curve_rmse_m"] = float(err.pow(2).mean().sqrt()) * SCENE_TO_METER
         res["curve_max_err_m"] = float(err.max()) * SCENE_TO_METER
-        q_err = torch.linalg.norm(out["control"] - batch["control_gt"].to(device),
-                                  dim=-1)[:, 1:-1]
+        q_err = torch.linalg.norm(control - q_gt, dim=-1)[:, 1:-1]
         res["ctrl_rmse_m"] = float(q_err.pow(2).mean().sqrt()) * SCENE_TO_METER
+        # boundary window: how well the RAW polygon keeps the GT local shape
+        ws, wg = out["boundary_weights"]
+        target_s, target_g = boundary_targets(q_gt, cond)
+        raw = out["q_raw_final"]
+        ds = torch.linalg.norm(raw - target_s, dim=-1) * (ws[None, :] > 0)
+        dg = torch.linalg.norm(raw - target_g, dim=-1) * (wg[None, :] > 0)
+        res["boundary_raw_err_m"] = float(
+            torch.maximum(ds.max(dim=1).values, dg.max(dim=1).values).mean()
+        ) * SCENE_TO_METER
         goal_err = torch.linalg.norm(final[:, -1] - cond[:, 1], dim=-1)
         res["goal_error_m"] = float(goal_err.mean()) * SCENE_TO_METER
         coll = _point_collision(final, occ)
@@ -123,7 +149,6 @@ def metrics(batch, out, occ, device):
 
 def batch_losses(batch, model, schedule, lcfg, device):
     q0 = batch["control_gt"].to(device)
-    p_gt = batch["pos"].to(device)
     cond = batch["cond"].to(device)
     occ = batch["occupancy"].to(device)
     cand_xy = batch["candidate_xy"].to(device)
@@ -145,12 +170,22 @@ def batch_losses(batch, model, schedule, lcfg, device):
                             select_index=best)
     ell = out["ellipse"]
 
-    l_traj = trajectory_x0_loss(out["final"], p_gt)
-    l_ctrl = control_x0_loss(out["control"], q0)
-    l_coarse = trajectory_x0_loss(out["coarse"], p_gt)
-    l_smooth = trajectory_smoothness_loss(
-        out["final"], p_gt, acc_weight=float(lcfg.get("smooth_acc_weight", 0.25)),
+    # The fixed boundary-decoder profile is the ONLY definition of the
+    # correction window; the loss reads it from the model, never from the YAML.
+    ws, wg = model.boundary_decoder.weights(
+        q0.shape[1], device=device, dtype=q0.dtype)
+    out["boundary_weights"] = (ws, wg)
+
+    l_ctrl = control_x0_loss(out["q_raw_final"], q0)
+    l_coarse = control_x0_loss(out["q_coarse_raw"], q0)
+    l_smooth = control_smoothness_loss(
+        out["q_raw_final"], q0,
+        acc_weight=float(lcfg.get("smooth_acc_weight", 0.25)),
         jerk_weight=float(lcfg.get("smooth_jerk_weight", 1.0)))
+    l_boundary = (
+        boundary_control_loss(out["q_raw_final"], q0, cond, ws, wg)
+        + float(lcfg.get("boundary_coarse_weight", 0.5))
+        * boundary_control_loss(out["q_coarse_raw"], q0, cond, ws, wg))
     l_topo = topology_ce(out["topo"]["pi"], best, has_cand)
     l_shape = ellipse_shape_loss(ell["shape4"], shape_gt, shape_valid, has_cand)
 
@@ -172,17 +207,11 @@ def batch_losses(batch, model, schedule, lcfg, device):
         cvar_weight=float(lcfg.get("safe_cvar_weight", 1.0)),
         sample_mask=has_cand)
 
-    raw = {"Ltraj": l_traj, "Lctrl": l_ctrl, "Lcoarse": l_coarse,
-           "Lsmooth": l_smooth, "Ltopo": l_topo, "Lshape": l_shape,
-           "Liou": l_iou, "Lsafe": l_safe}
-    weights = {"Ltraj": float(lcfg.get("lambda_traj", 1.0)),
-               "Lctrl": float(lcfg.get("lambda_control", 0.2)),
-               "Lcoarse": float(lcfg.get("lambda_coarse", 0.5)),
-               "Lsmooth": float(lcfg.get("lambda_smooth", 0.08)),
-               "Ltopo": float(lcfg.get("lambda_topology", 0.25)),
-               "Lshape": float(lcfg.get("lambda_shape", 0.08)),
-               "Liou": float(lcfg.get("lambda_iou", 0.25)),
-               "Lsafe": float(lcfg.get("lambda_safe", 0.15))}
+    raw = {"Lctrl": l_ctrl, "Lcoarse": l_coarse,
+           "Lsmooth": l_smooth, "Lboundary": l_boundary, "Ltopo": l_topo,
+           "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe}
+    weights = {k: float(lcfg.get(key, DEFAULT_LOSS_WEIGHTS[key]))
+               for k, key in LOSS_WEIGHT_KEYS.items()}
     total = sum(weights[k] * raw[k] for k in LOSS_KEYS)
     stats = {
         "safe_mean": float(safe_mean.detach()),
@@ -348,12 +377,13 @@ def main():
         "candidate_geometry_points", 1280))
     batch_size = int(args.batch_size or data_cfg.get("batch_size", 16))
     num_workers = int(data_cfg.get("num_workers", 0))
+    n_ctrl = num_controls(cfg)
 
     if args.overfit:
         train_loader, train_ds = make_loader(
             "train", processed_root, batch_size=min(batch_size, args.overfit),
             shuffle=True, num_workers=num_workers, geometry_points=geo_points,
-            limit=args.overfit)
+            limit=args.overfit, num_controls=n_ctrl)
         train_loader = torch.utils.data.DataLoader(
             train_ds, batch_size=min(batch_size, args.overfit), shuffle=True,
             num_workers=num_workers, drop_last=False,
@@ -362,15 +392,16 @@ def main():
         train_loader, train_ds = make_loader(
             "train", processed_root, batch_size=batch_size, shuffle=True,
             num_workers=num_workers, geometry_points=geo_points,
-            limit=args.limit)
+            limit=args.limit, num_controls=n_ctrl)
     val_loader = val_ds = None
     if not args.no_val:
         val_loader, val_ds = make_loader(
             "val", processed_root, batch_size=batch_size, shuffle=False,
-            num_workers=0, geometry_points=geo_points, limit=args.limit)
-    print("[data] train=%d val=%s batch=%d geometry_points=%d"
+            num_workers=0, geometry_points=geo_points, limit=args.limit,
+            num_controls=n_ctrl)
+    print("[data] train=%d val=%s batch=%d geometry_points=%d controls=%d"
           % (len(train_ds), len(val_ds) if val_ds else "-", batch_size,
-             geo_points), flush=True)
+             geo_points, n_ctrl), flush=True)
 
     schedule = NoiseSchedule(
         diff_cfg["timesteps"],
@@ -380,10 +411,14 @@ def main():
     model = TrajSafePlanner(model_cfg, cfg.get("ellipse_label"),
                             cfg.get("bspline")).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    print("[model] params=%.2fM controls=%d traj_blocks=%d skeleton_blocks=%d "
-          "final_blocks=%d curve=%d"
-          % (n_params / 1e6, model.num_controls, model.traj_blocks,
-             model.skeleton_blocks, model.final_blocks, model.horizon),
+    print("[model] params=%.2fM controls=%d safety_queries=%d mode=%s "
+          "traj_blocks=%d skeleton_blocks=%d final_blocks=%d curve=%d "
+          "boundary_profile=%s"
+          % (n_params / 1e6, model.num_controls, model.num_safety_queries,
+             "control_space" if model.control_space else "legacy_curve",
+             model.traj_blocks, model.skeleton_blocks, model.final_blocks,
+             model.curve_points,
+             [float(v) for v in model.boundary_decoder.profile.tolist()]),
           flush=True)
 
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
@@ -403,6 +438,14 @@ def main():
     if args.resume:
         ck = load_checkpoint(args.resume, model, optim, map_location=device)
         start_epoch = int(ck.get("epoch", 0)) + 1
+        ckpt_arch = detect_architecture(ck.get("model_state", ck))
+        running = (ARCH_CONTROL_SPACE if model.control_space
+                   else ARCH_LEGACY_CURVE)
+        if ckpt_arch != running:
+            print("[resume] NOTE: the checkpoint was written by the %s model but "
+                  "the config runs %s: the shared weights are reused and the new "
+                  "modules (safety_query_head / safety_cross_attention) start "
+                  "from their initialisation" % (ckpt_arch, running), flush=True)
         print("[resume] epoch %d" % start_epoch, flush=True)
     if args.init_best_val is not None:
         best_val = float(args.init_best_val)
@@ -429,11 +472,16 @@ def main():
 
     def write_summary(extra=None):
         payload = {
-            "model": "TrajSafePlanner-controlspace-32",
+            "model": "TrajSafePlanner-controlspace-%d" % model.num_controls,
             "config": args.config,
             "processed_root": processed_root,
             "device": str(device),
             "params_m": n_params / 1e6,
+            "num_controls": int(model.num_controls),
+            "num_safety_queries": int(model.num_safety_queries),
+            "control_space": bool(model.control_space),
+            "boundary_profile": [float(v) for v in
+                                 model.boundary_decoder.profile.tolist()],
             "lr": lr,
             "batch_size": batch_size,
             "train_samples": int(len(train_ds)),
@@ -451,11 +499,8 @@ def main():
             "best_task_epoch": best_task_epoch,
             "elapsed_seconds": time.time() - t0,
             "history": history,
-            "loss_weights": {k: float(loss_cfg.get(m, 0.0)) for k, m in [
-                ("Ltraj", "lambda_traj"), ("Lctrl", "lambda_control"),
-                ("Lcoarse", "lambda_coarse"), ("Lsmooth", "lambda_smooth"),
-                ("Ltopo", "lambda_topology"), ("Lshape", "lambda_shape"),
-                ("Liou", "lambda_iou"), ("Lsafe", "lambda_safe")]},
+            "loss_weights": {k: float(loss_cfg.get(m, DEFAULT_LOSS_WEIGHTS[m]))
+                             for k, m in LOSS_WEIGHT_KEYS.items()},
             "alm_enabled": bool((cfg.get("alm") or {}).get("enabled", False)),
         }
         if extra:

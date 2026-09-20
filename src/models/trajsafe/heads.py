@@ -1,17 +1,20 @@
 """Task heads for the control-space TrajSafe-Diffuser.
 
-    TopologyHead        R [B,M,H,D] -> MeanPool_H -> MLP_score -> l_m -> pi
+    TopologyHead        R [B,M,C,D] -> MeanPool_C -> MLP_score -> l_m -> pi
                         (masked softmax; invalid logits are -inf)
-    PathFeatureHead     R_use [B,H,D] -> MLP_path -> H_path [B,H,D]
-                        Pure feature transform.  The old learned per-waypoint
-                        progress MLP with its cumulative softplus parameterisation
-                        is GONE: the ellipse centres now come from the fixed
-                        progress s_i = i/127 on the selected dense Skeleton curve.
+    PathFeatureHead     R_use [B,C,D] -> MLP_path -> H_path [B,C,D]
+                        Pure feature transform.  The SAME module class is used a
+                        second time (``safety_query_head``) to project the Q
+                        selected-Skeleton tokens into the ellipse/safety query.
+                        The old learned per-waypoint progress MLP with its
+                        cumulative softplus parameterisation is GONE: the ellipse
+                        centres use the fixed progress s_i = i/(Q-1) on the
+                        selected dense Skeleton curve.
     TrajectoryToControlHead
                         fixed endpoint-constrained LS projection of a decoded
-                        128-point curve onto the 32 B-spline controls
-                        (re-exported from ``src.geometry.bspline``).
-    EllipseShapeHead    H_ell [B,H,D] -> AdaLN -> MLP -> [l1,l2,u,v]
+                        curve onto the B-spline controls (LEGACY chain only;
+                        re-exported from ``src.geometry.bspline``).
+    EllipseShapeHead    H_ell [B,Q,D] -> AdaLN -> MLP -> [l1,l2,u,v]
                         -> shape4 = [log a, log b, cos 2t, sin 2t]
 
 There is deliberately NO ellipse-centre output and NO progress output anywhere
@@ -76,8 +79,10 @@ class PathFeatureHead(nn.Module):
 
     This is the former ``MLP_prog`` with its semantics fixed: it produces a
     path feature, NOT a progress distribution.  It is followed by the fixed
-    buffer ``s_i = i/127`` in the planner; nothing here is monotone, cumulative
-    or supervised by an alignment loss.
+    buffer ``s_i = i/(Q-1)`` in the planner; nothing here is monotone, cumulative
+    or supervised by an alignment loss.  A second, independent instance
+    (``safety_query_head``) maps the selected Skeleton tokens to the ellipse
+    geometry query.
     """
 
     def __init__(self, d_model: int, hidden: int = 256):

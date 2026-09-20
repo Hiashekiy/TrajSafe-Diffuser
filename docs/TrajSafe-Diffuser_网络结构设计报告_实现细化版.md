@@ -1,5 +1,20 @@
 # TrajSafe-Diffuser 网络结构设计报告
 
+> **重要说明（控制点空间重构之后）**
+>
+> 本报告描述的是**重构前**的设计：扩散状态为解码后的 128 点轨迹 token
+> `P_t ∈ R^{B×H×2}`，损失中包含 `L_traj` 与 `L_align`。
+>
+> 当前实现（权威说明见 `docs/CONTROL_SPACE_REFACTOR.md`）已改为**控制点 token 链路**：
+>
+> * 轨迹主变量自始至终是 B 样条控制多边形 `Q_t ∈ R^{B×C×2}`，网络内部不再出现 128 轨迹点；
+> * 控制点数 `C` 由配置驱动（`model.num_controls` = `bspline.num_controls`），不写死；
+> * `L_traj` / `L_align` 已删除并新增 `L_boundary`，损失固定为 8 项；
+> * 曲线端点由**固定、零参数、不训练**的 Boundary Decoder 保证。
+>
+> 实现细节与权威说明见 [`docs/CONTROL_SPACE_REFACTOR.md`](CONTROL_SPACE_REFACTOR.md)；
+> 两者冲突时**以该重构说明为准**，本报告仅作为重构前的设计记录保留。
+
 ## 1. 总体任务
 
 唯一参与 diffusion 的状态是轨迹：

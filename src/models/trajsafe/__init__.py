@@ -1,10 +1,11 @@
-"""TrajSafe-Diffuser: control-space (32 cubic B-spline controls) package."""
+"""TrajSafe-Diffuser: control-space (configurable C cubic B-spline controls)."""
 
 from ...geometry.bspline import BSplineCodec, TrajectoryToControlHead
 from .blocks import CrossAttention, MatchBlock, TrajBlock, TrajSelfAttention
+from .boundary import BoundaryDecoder
 from .ellipse import EllipseGeometry
 from .encoders import CoordMLP, SkeletonEncoder, TrajectoryEncoder
-from .fusion import FinalDenoiser, FusionMLP
+from .fusion import FinalDenoiser, FusionMLP, SafetyControlFusion
 from .geometry import CurveDecoder, dense_arclength, gather_dense_path_points
 from .heads import EllipseShapeHead, PathFeatureHead, TopologyHead
 from .planner import TrajSafePlanner
@@ -20,6 +21,8 @@ __all__ = [
     "TopologyHead",
     "PathFeatureHead",
     "CurveDecoder",
+    "BoundaryDecoder",
+    "SafetyControlFusion",
     "EllipseGeometry",
     "EllipseShapeHead",
     "FusionMLP",

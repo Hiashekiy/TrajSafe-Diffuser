@@ -1,47 +1,56 @@
-"""TrajSafe-Diffuser planner, control-space version.
+"""TrajSafe-Diffuser planner, control-token version.
 
-The diffusion state is the 32-control cubic B-spline polygon:
+The diffusion state is the C-control cubic B-spline polygon
 
-    Q_t in R^{B x 32 x 2}          <- noisy state, hard-conditioned endpoints
-        |  BSplineCodec.decode_controls (fixed, differentiable)
-    P_t in R^{B x 128 x 2}         <- the SAME 128-token curve the network sees
+    Q_t in R^{B x C x 2}          C = model.num_controls (config, default 32)
 
-The network internals are unchanged (128 trajectory tokens, Skeleton match,
-128 ellipse geometries) and the only progress definition is the fixed buffer
+and the network NEVER sees decoded trajectory points any more.  The control
+polygon itself is the token sequence; ``128`` survives only as the number of
+Skeleton / ellipse geometry queries (``model.num_safety_queries``).
 
-    s_i = i / 127           (there is NO learned progress head any more)
-
-Forward chain::
+Forward chain (``model.control_space: true``)::
 
     C_G, C_E = SceneCNN(occ)
     h_t      = TimeEmbedding(t)
 
-    Q_t  = hard_control_endpoints(Q_t, cond)
-    P_t  = B_128 Q_t
-    H_traj  = TrajectoryBackbone(TrajectoryEncoder(P_t), C_G, h_t)
-    coarse_raw = Head_P(H_traj);  Q_coarse = Fit(coarse_raw, start, goal)
-    coarse     = B_128 Q_coarse
+    Q_t   = hard_control_endpoints(Q_t, cond)          # exact curve endpoints
+    H_ctrl = ControlEncoder(Q_t)                       # [B,C,D]
+    H_ctrl = ControlBackbone(H_ctrl, C_G, h_t)         # [B,C,D]
+    Q~_coarse = Head_Q(H_ctrl)                         # [B,C,2]
+    Q_coarse  = BoundaryDecoder(Q~_coarse)             # exact endpoints
 
-    H_S   = SkeletonEncoder(candidate_xy)
-    R     = MatchBlock(H_traj, H_S, h_t)
+    H_S   = SkeletonEncoder(candidate_xy)              # [B,M,L,D]
+    R     = MatchBlock(H_ctrl, H_S, h_t)               # [B,M,C,D]
     pi    = TopologyHead(R, candidate_mask)
     m     = m* (training) or argmax(pi) (inference)
-    H_path = PathFeatureHead(R[m])
-    center = Gamma_m(fixed s)            # fixed Skeleton centre, no head
-    H_ell  = EllipseGeometry(H_path, center, C_E, h_t, ab)
-    shape4 = EllipseShapeHead(H_ell, h_t)
+    H_path = PathFeatureHead(R[m])                     # [B,C,D]
 
-    F       = MLP_fuse([H_traj, H_path, H_ell])
-    H_clean = FinalDenoiser(F, C_G, h_t)
-    raw_final = Head_P(H_clean)
-    Q_final   = Fit(raw_final, start, goal)
-    final     = B_128 Q_final
+    H_Gamma = SafetyQueryHead(H_S[m])                  # [B,Q,D]  Q = L
+    c_i     = Gamma_m(s_i),  s_i = i/(Q-1)             # fixed, no head
+    H_ell   = EllipseGeometry(H_Gamma, c, C_E, h_t, ab)   # [B,Q,D]
+    shape4  = EllipseShapeHead(H_ell, h_t)                # [B,Q,4]
+
+    A_safe = SafetyControlFusion(H_path, H_ell, h_t)   # [B,C,D] cross attention
+    F      = FusionMLP([H_ctrl, H_path, A_safe])       # [B,C,D]
+    H_clean = FinalDenoiser(F, C_G, h_t)               # [B,C,D]
+    Q~_final = Head_Q(H_clean)                         # [B,C,2]
+    Q_final  = BoundaryDecoder(Q~_final)               # exact endpoints
+
+The decoded curve ``B_128 Q`` is produced ONLY at the very end for plotting,
+collision evaluation and the controller.  ``L_traj`` (MSE on decoded points) no
+longer exists.
+
+Legacy path (``model.control_space: false``): the pre-refactor chain that runs
+the network on the decoded 128-point curve is kept byte-for-byte so a checkpoint
+trained before this refactor can still be replayed for demos; see
+:meth:`TrajSafePlanner.forward_curve_tokens`.
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ...geometry.bspline import BSplineCodec, TrajectoryToControlHead
 from ...geometry.ellipse_raster import scene_grid_centres
@@ -50,9 +59,10 @@ from ..position_encoding import (Sinusoidal1DPositionEmbedding,
                                  Sinusoidal2DPositionEmbedding,
                                  SinusoidalTimestepEmbedding)
 from .blocks import MatchBlock, TrajBlock
+from .boundary import BoundaryDecoder
 from .ellipse import EllipseGeometry
 from .encoders import SkeletonEncoder, TrajectoryEncoder
-from .fusion import FinalDenoiser, FusionMLP
+from .fusion import FinalDenoiser, FusionMLP, SafetyControlFusion
 from .geometry import CurveDecoder
 from .heads import EllipseShapeHead, PathFeatureHead, TopologyHead
 
@@ -64,7 +74,38 @@ class TrajSafePlanner(nn.Module):
         super().__init__()
         ellipse_cfg = dict(ellipse_cfg or {})
         bspline_cfg = dict(bspline_cfg or {})
-        self.horizon = int(model_cfg["horizon"])
+        model_cfg = dict(model_cfg or {})
+
+        # ---- the ONE trajectory representation: C B-spline controls --------
+        # ``bspline.num_controls`` (codec) and ``model.num_controls`` (network /
+        # diffusion state) are two views of the same number and must agree.
+        c_bs = bspline_cfg.get("num_controls")
+        c_md = model_cfg.get("num_controls")
+        if c_bs is not None and c_md is not None and int(c_bs) != int(c_md):
+            raise ValueError(
+                "config mismatch: bspline.num_controls=%s != "
+                "model.num_controls=%s" % (c_bs, c_md))
+        self.num_controls = int(c_bs if c_bs is not None else (c_md or 32))
+        if self.num_controls < 2:
+            raise ValueError("num_controls must be >= 2")
+
+        # density of the (final, plot/metric only) B-spline decode
+        self.curve_points = int(bspline_cfg.get(
+            "curve_points", model_cfg.get("horizon", 128)))
+        # backwards compatible alias: ``horizon`` used to be the curve density
+        self.horizon = self.curve_points
+        # number of Skeleton / ellipse geometry queries
+        self.num_safety_queries = int(model_cfg.get(
+            "num_safety_queries", self.curve_points))
+        # relative-bias table length of the self-attention stacks; decoupled
+        # from the token count so both the C control tokens and the legacy 128
+        # curve tokens can use the same table (checkpoint compatibility).
+        self.rel_bias_len = int(model_cfg.get(
+            "rel_bias_len",
+            max(self.num_controls, self.num_safety_queries, self.curve_points)))
+
+        self.control_space = bool(model_cfg.get("control_space", True))
+
         self.d_model = int(model_cfg.get("d_model", 128))
         self.num_heads = int(model_cfg.get("num_heads", 4))
         self.traj_blocks = int(model_cfg.get("traj_blocks", 8))
@@ -86,21 +127,17 @@ class TrajSafePlanner(nn.Module):
             "geo_sigma", ellipse_cfg.get("geo_sigma", 0.25)))
         geo_bias_clip = float(model_cfg.get(
             "geo_bias_clip", ellipse_cfg.get("geo_bias_clip", 8.0)))
-        H = self.horizon
 
         # ---- fixed B-spline codec (control <-> curve) ---------------------
         degree = int(bspline_cfg.get("degree", model_cfg.get("bspline_degree", 3)))
-        self.num_controls = int(bspline_cfg.get(
-            "num_controls", model_cfg.get("num_controls", 32)))
-        curve_points = int(bspline_cfg.get(
-            "curve_points", model_cfg.get("curve_points", H)))
         knots_path = bspline_cfg.get("knots")
         knots = bspline_cfg.get("knots_vector")
         self.bspline = BSplineCodec(
             degree=degree, num_controls=self.num_controls,
-            curve_points=curve_points, knots=knots, knots_path=knots_path,
+            curve_points=self.curve_points, knots=knots, knots_path=knots_path,
             endpoint_constrained=bool(bspline_cfg.get(
                 "endpoint_constrained", True)))
+        # legacy-only helper (endpoint-constrained LS fit of a decoded curve)
         self.traj_to_control = TrajectoryToControlHead(self.bspline)
 
         self.scene_cnn = SceneCNN(
@@ -114,14 +151,19 @@ class TrajSafePlanner(nn.Module):
         self.index_pe = Sinusoidal1DPositionEmbedding(self.d_model)
         self.time_pe = SinusoidalTimestepEmbedding(self.d_model)
 
-        # ---- trajectory branch -------------------------------------------
+        # ---- control branch ----------------------------------------------
+        # (attribute names kept from the curve-token version: the module is
+        #  token-count agnostic, which is what lets an old checkpoint load)
         self.traj_encoder = TrajectoryEncoder(
-            self.d_model, self.spatial_pe, self.index_pe, H, coord_hidden)
+            self.d_model, self.spatial_pe, self.index_pe, self.curve_points,
+            coord_hidden)
         self.traj_backbone = nn.ModuleList([
-            TrajBlock(self.d_model, self.num_heads, self.ffn_dim, H, dropout)
+            TrajBlock(self.d_model, self.num_heads, self.ffn_dim,
+                      self.curve_points, dropout,
+                      rel_bias_len=self.rel_bias_len)
             for _ in range(self.traj_blocks)
         ])
-        # ONE trajectory head, shared by the coarse and final decode
+        # ONE control head, shared by the coarse and the final decode
         self.head_p = nn.Linear(self.d_model, 2)
 
         # ---- skeleton branch -------------------------------------------
@@ -133,6 +175,17 @@ class TrajSafePlanner(nn.Module):
                                       self.ffn_dim, dropout)
         self.topology_head = TopologyHead(self.d_model, head_hidden)
         self.path_feature_head = PathFeatureHead(self.d_model, head_hidden)
+        # selected-Skeleton -> safety/ellipse geometry query (own parameters)
+        self.safety_query_head = PathFeatureHead(self.d_model, head_hidden)
+        # safety (Q tokens) -> control (C tokens) cross attention
+        self.safety_cross_attention = SafetyControlFusion(
+            self.d_model, self.num_heads, dropout)
+
+        # ---- fixed boundary decoder (no parameters, never trained) --------
+        boundary_cfg = dict(model_cfg.get("boundary_decoder") or {})
+        self.boundary_decoder = BoundaryDecoder(
+            profile=boundary_cfg.get("profile"),
+            span=boundary_cfg.get("span"))
 
         # ---- ellipse branch (centre from the FIXED progress on Gamma_m) ---
         self.curve_decoder = CurveDecoder()
@@ -146,11 +199,14 @@ class TrajSafePlanner(nn.Module):
         # ---- fusion + final denoiser -----------------------------------
         self.fusion_mlp = FusionMLP(self.d_model)
         self.final_denoiser = FinalDenoiser(
-            self.d_model, self.num_heads, self.ffn_dim, H,
-            blocks=self.final_blocks, dropout=dropout)
+            self.d_model, self.num_heads, self.ffn_dim, self.curve_points,
+            blocks=self.final_blocks, dropout=dropout,
+            rel_bias_len=self.rel_bias_len)
 
         # ---- the ONLY progress definition: a fixed buffer -----------------
-        self.register_buffer("fixed_progress", torch.linspace(0.0, 1.0, H))
+        # s_i = i / (Q-1) on the selected dense Skeleton (Q safety queries).
+        self.register_buffer("fixed_progress",
+                             torch.linspace(0.0, 1.0, self.num_safety_queries))
 
     # ------------------------------------------------------------------ scene
     def scene_tokens(self, occ: torch.Tensor):
@@ -192,42 +248,31 @@ class TrajSafePlanner(nn.Module):
             x = blk(x, c_g, h_t)
         return x
 
-    # ---------------------------------------------------------------- full
-    def forward_all(self, q_t: torch.Tensor, occ: torch.Tensor,
-                    cond: torch.Tensor, t: torch.Tensor, ab: torch.Tensor,
-                    candidate_xy: torch.Tensor, candidate_mask: torch.Tensor,
-                    geometry: torch.Tensor, geometry_lengths: torch.Tensor,
-                    select_index: torch.Tensor | None = None):
-        """One full forward pass of the control-space diffusion model.
+    # --------------------------------------------------------------- helpers
+    def progress_for(self, count: int, device=None, dtype=None) -> torch.Tensor:
+        """Fixed progress buffer of length ``count`` (``i / (count - 1)``)."""
+        count = int(count)
+        if count == int(self.fixed_progress.numel()):
+            dev = device if device is not None else self.fixed_progress.device
+            dt = dtype if dtype is not None else self.fixed_progress.dtype
+            return self.fixed_progress.to(device=dev, dtype=dt)
+        return torch.linspace(0.0, 1.0, max(count, 2),
+                              device=device, dtype=dtype)
 
-        ``q_t`` is the 32-control diffusion state.  ``select_index`` is the
-        training-time m* (argmin nDTW); when it is ``None`` inference routing
-        ``argmax(pi)`` is used.  Invalid rows are routed to slot 0, masked out
-        of every loss, and their output degenerates to the coarse curve.
-        """
-        B, C, _ = q_t.shape
-        if C != self.num_controls:
-            raise ValueError("q_t must be [B,%d,2], got %s"
-                             % (self.num_controls, tuple(q_t.shape)))
-        dev = q_t.device
-        H = self.horizon
+    @staticmethod
+    def _resample_curve(p: torch.Tensor, count: int) -> torch.Tensor:
+        """p [B,H,2] -> [B,count,2] (linear; degenerate fallback only)."""
+        if p.shape[1] == int(count):
+            return p
+        y = F.interpolate(p.transpose(1, 2), size=int(count), mode="linear",
+                          align_corners=True)
+        return y.transpose(1, 2)
 
-        # control-space hard conditioning, then the fixed decode
-        q_t = self.hard_control_endpoints(q_t, cond)
-        p_t = self.bspline.decode_controls(q_t)
-
-        c_g, c_e = self.scene_tokens(occ)
-        h_t = self.time_pe(t.to(dev))
-
-        h_traj = self.encode_trajectory(p_t, c_g, h_t)
-        coarse_raw = self.head_p(h_traj)
-        q_coarse = self.traj_to_control(coarse_raw, cond)
-        coarse = self.bspline.decode_controls(q_coarse)
-
-        h_s = self.skeleton_encoder(candidate_xy)              # [B,M,L,D]
-        r = self.match_block(h_traj, h_s, h_t)                 # [B,M,H,D]
-        topo = self.topology_head(r, candidate_mask)
-
+    def _route_topology(self, r: torch.Tensor, topo: dict,
+                        candidate_mask: torch.Tensor,
+                        select_index: torch.Tensor | None):
+        B = r.shape[0]
+        dev = r.device
         if select_index is None:
             idx = topo["pi"].argmax(dim=-1)
         else:
@@ -235,36 +280,104 @@ class TrajSafePlanner(nn.Module):
         has_cand = candidate_mask.any(dim=-1)
         idx = torch.where(has_cand, idx, torch.zeros_like(idx))
         ar = torch.arange(B, device=dev)
-        r_use = r[ar, idx]                                     # [B,H,D]
-        h_path = self.path_feature_head(r_use)                 # [B,H,D]
+        return idx, has_cand, ar
 
-        # FIXED progress: s_i = i / (H-1); NO learned progress anywhere.
-        s = self.fixed_progress.to(dtype=p_t.dtype)[None].expand(B, H)
-        gamma = geometry[ar, idx]                              # [B,G,2]
-        gamma_len = geometry_lengths[ar, idx]                  # [B]
-        center = self.curve_decoder(gamma, gamma_len, s)       # [B,H,2]
-        center = torch.where(has_cand[:, None, None], center, coarse)
+    # ---------------------------------------------------------------- full
+    def forward_all(self, q_t: torch.Tensor, occ: torch.Tensor,
+                    cond: torch.Tensor, t: torch.Tensor, ab: torch.Tensor,
+                    candidate_xy: torch.Tensor, candidate_mask: torch.Tensor,
+                    geometry: torch.Tensor, geometry_lengths: torch.Tensor,
+                    select_index: torch.Tensor | None = None):
+        """One full forward pass of the diffusion model (mode aware).
 
-        h_ell, a_e = self.ellipse_geometry(h_path, center, c_e, h_t, ab)
+        ``q_t`` is the C-control diffusion state.  ``select_index`` is the
+        training-time m* (argmin nDTW); when it is ``None`` inference routing
+        ``argmax(pi)`` is used.  Invalid rows are routed to slot 0, masked out
+        of every loss, and their output degenerates to the coarse polygon.
+        """
+        if self.control_space:
+            return self.forward_controls(
+                q_t, occ, cond, t, ab, candidate_xy, candidate_mask,
+                geometry, geometry_lengths, select_index=select_index)
+        return self.forward_curve_tokens(
+            q_t, occ, cond, t, ab, candidate_xy, candidate_mask,
+            geometry, geometry_lengths, select_index=select_index)
+
+    # --------------------------------------------------- control-token chain
+    def forward_controls(self, q_t: torch.Tensor, occ: torch.Tensor,
+                         cond: torch.Tensor, t: torch.Tensor, ab: torch.Tensor,
+                         candidate_xy: torch.Tensor,
+                         candidate_mask: torch.Tensor,
+                         geometry: torch.Tensor,
+                         geometry_lengths: torch.Tensor,
+                         select_index: torch.Tensor | None = None):
+        """Control-space chain: C control tokens, Q safety geometry queries."""
+        B, C, _ = q_t.shape
+        if C != self.num_controls:
+            raise ValueError("q_t must be [B,%d,2], got %s"
+                             % (self.num_controls, tuple(q_t.shape)))
+        dev = q_t.device
+
+        # control-space hard conditioning (clamped knots => exact curve ends)
+        q_t = self.hard_control_endpoints(q_t, cond)
+        p_t = self.bspline.decode_controls(q_t)          # plot / fallback only
+
+        c_g, c_e = self.scene_tokens(occ)
+        h_t = self.time_pe(t.to(dev))
+
+        # ---- control backbone -------------------------------------------
+        h_ctrl = self.encode_trajectory(q_t, c_g, h_t)          # [B,C,D]
+        q_coarse_raw = self.head_p(h_ctrl)                      # [B,C,2]
+        q_coarse = self.boundary_decoder(q_coarse_raw, cond)    # exact ends
+        coarse = self.bspline.decode_controls(q_coarse)         # [B,H,2]
+
+        # ---- topology ----------------------------------------------------
+        h_s = self.skeleton_encoder(candidate_xy)               # [B,M,L,D]
+        r = self.match_block(h_ctrl, h_s, h_t)                  # [B,M,C,D]
+        topo = self.topology_head(r, candidate_mask)
+        idx, has_cand, ar = self._route_topology(r, topo, candidate_mask,
+                                                 select_index)
+        r_use = r[ar, idx]                                      # [B,C,D]
+        h_path = self.path_feature_head(r_use)                  # [B,C,D]
+
+        # ---- Q safety geometry queries on the SELECTED Skeleton -----------
+        h_gamma = self.safety_query_head(h_s[ar, idx])          # [B,Q,D]
+        Q = h_gamma.shape[1]
+        s = self.progress_for(Q, device=dev, dtype=h_gamma.dtype)
+        s = s[None].expand(B, Q)
+        gamma = geometry[ar, idx]                               # [B,G,2]
+        gamma_len = geometry_lengths[ar, idx]                   # [B]
+        center = self.curve_decoder(gamma, gamma_len, s)        # [B,Q,2]
+        fallback = self._resample_curve(coarse, Q)
+        center = torch.where(has_cand[:, None, None], center, fallback)
+
+        h_ell, a_e = self.ellipse_geometry(h_gamma, center, c_e, h_t, ab)
         shape = self.ellipse_shape_head(h_ell, h_t)
 
-        f = self.fusion_mlp(h_traj, h_path, h_ell)
+        # ---- safety -> control cross attention + fusion --------------------
+        h_safe_ctrl = self.safety_cross_attention(h_path, h_ell, h_t)
+        f = self.fusion_mlp(h_ctrl, h_path, h_safe_ctrl)
         h_clean = self.final_denoiser(f, c_g, h_t)
-        raw_final = self.head_p(h_clean)
-        q_final = self.traj_to_control(raw_final, cond)
+        q_raw_final = self.head_p(h_clean)                      # [B,C,2]
+        q_final = self.boundary_decoder(q_raw_final, cond)      # [B,C,2]
+        raw_curve = self.bspline.decode_controls(q_raw_final)
         final = self.bspline.decode_controls(q_final)
         final = torch.where(has_cand[:, None, None], final, coarse)
 
         out = {
             "input_control": q_t,
             "input_curve": p_t,
+            "q_coarse_raw": q_coarse_raw,
+            "coarse_raw": q_coarse_raw,
             "q_coarse": q_coarse,
-            "coarse_raw": coarse_raw,
             "coarse": coarse,
+            "q_raw_final": q_raw_final,
+            "control_raw": q_raw_final,
             "control": q_final,
-            "raw_curve": raw_final,
+            "raw_curve": raw_curve,
             "final": final,
-            "H_traj": h_traj,
+            "H_traj": h_ctrl,
+            "H_ctrl": h_ctrl,
             "H_S": h_s,
             "R": r,
             "topo": topo,
@@ -272,6 +385,9 @@ class TrajSafePlanner(nn.Module):
             "has_candidate": has_cand,
             "R_use": r_use,
             "H_path": h_path,
+            "H_safety": h_gamma,
+            "H_safety_ell": h_ell,
+            "A_safety": h_safe_ctrl,
             "gamma": gamma,
             "gamma_lengths": gamma_len,
             "ellipse": {
@@ -289,38 +405,125 @@ class TrajSafePlanner(nn.Module):
             "H_clean": h_clean,
         }
         if self.assert_shapes:
-            self._assert_forward_shapes(out, B, H)
+            self._assert_forward_shapes(out, B, C, Q)
         return out
 
-    # ------------------------------------------------------------- assertions
-    def _assert_forward_shapes(self, out: dict, B: int, H: int) -> None:
+    # --------------------------------------------------------- legacy chain
+    def forward_curve_tokens(self, q_t: torch.Tensor, occ: torch.Tensor,
+                             cond: torch.Tensor, t: torch.Tensor,
+                             ab: torch.Tensor, candidate_xy: torch.Tensor,
+                             candidate_mask: torch.Tensor,
+                             geometry: torch.Tensor,
+                             geometry_lengths: torch.Tensor,
+                             select_index: torch.Tensor | None = None):
+        """Pre-refactor chain: the network runs on the decoded 128-point curve.
+
+        Kept ONLY so a checkpoint trained before the control-space refactor can
+        still be replayed (demo / regression).  Training uses
+        :meth:`forward_controls`; see ``checkpoint.detect_architecture``.
+        """
+        B, C, _ = q_t.shape
+        if C != self.num_controls:
+            raise ValueError("q_t must be [B,%d,2], got %s"
+                             % (self.num_controls, tuple(q_t.shape)))
+        dev = q_t.device
+        H = self.curve_points
+
+        q_t = self.hard_control_endpoints(q_t, cond)
+        p_t = self.bspline.decode_controls(q_t)
+
+        c_g, c_e = self.scene_tokens(occ)
+        h_t = self.time_pe(t.to(dev))
+
+        h_traj = self.encode_trajectory(p_t, c_g, h_t)          # [B,H,D]
+        coarse_raw = self.head_p(h_traj)                        # curve-space
+        q_coarse = self.traj_to_control(coarse_raw, cond)       # LS fit
+        coarse = self.bspline.decode_controls(q_coarse)
+
+        h_s = self.skeleton_encoder(candidate_xy)               # [B,M,L,D]
+        r = self.match_block(h_traj, h_s, h_t)                  # [B,M,H,D]
+        topo = self.topology_head(r, candidate_mask)
+        idx, has_cand, ar = self._route_topology(r, topo, candidate_mask,
+                                                 select_index)
+        r_use = r[ar, idx]
+        h_path = self.path_feature_head(r_use)
+
+        s = torch.linspace(0.0, 1.0, H, device=dev, dtype=p_t.dtype)
+        s = s[None].expand(B, H)
+        gamma = geometry[ar, idx]
+        gamma_len = geometry_lengths[ar, idx]
+        center = self.curve_decoder(gamma, gamma_len, s)
+        center = torch.where(has_cand[:, None, None], center, coarse)
+
+        h_ell, a_e = self.ellipse_geometry(h_path, center, c_e, h_t, ab)
+        shape = self.ellipse_shape_head(h_ell, h_t)
+
+        f = self.fusion_mlp(h_traj, h_path, h_ell)
+        h_clean = self.final_denoiser(f, c_g, h_t)
+        raw_final = self.head_p(h_clean)
+        q_final = self.traj_to_control(raw_final, cond)
+        final = self.bspline.decode_controls(q_final)
+        final = torch.where(has_cand[:, None, None], final, coarse)
+
+        out = {
+            "input_control": q_t,
+            "input_curve": p_t,
+            "q_coarse_raw": q_coarse,
+            "coarse_raw": coarse_raw,
+            "q_coarse": q_coarse,
+            "coarse": coarse,
+            "q_raw_final": q_final,
+            "control_raw": q_final,
+            "control": q_final,
+            "raw_curve": raw_final,
+            "final": final,
+            "H_traj": h_traj,
+            "H_ctrl": None,
+            "H_S": h_s,
+            "R": r,
+            "topo": topo,
+            "selected_idx": idx,
+            "has_candidate": has_cand,
+            "R_use": r_use,
+            "H_path": h_path,
+            "H_safety": None,
+            "H_safety_ell": h_ell,
+            "A_safety": None,
+            "gamma": gamma,
+            "gamma_lengths": gamma_len,
+            "ellipse": {
+                "progress": s,
+                "center": center,
+                "H_ell": h_ell,
+                "shape_raw": shape["raw"],
+                "shape4": shape["shape4"],
+                "a": shape["a"],
+                "b": shape["b"],
+                "theta": shape["theta"],
+                "geo_attn": a_e,
+            },
+            "F": f,
+            "H_clean": h_clean,
+        }
+        if self.assert_shapes:
+            self._assert_legacy_shapes(out, B, H)
+        return out
+
+    # ------------------------------------------------------------ assertions
+    def _assert_common_shapes(self, out: dict, B: int) -> None:
         D = self.d_model
         C = self.num_controls
         M = out["H_S"].shape[1]
         L = out["H_S"].shape[2]
         assert out["input_control"].shape == (B, C, 2)
-        assert out["input_curve"].shape == (B, H, 2)
-        assert out["H_traj"].shape == (B, H, D), out["H_traj"].shape
         assert out["H_S"].shape == (B, M, L, D), out["H_S"].shape
-        assert out["R"].shape == (B, M, H, D), out["R"].shape
         assert out["topo"]["pi"].shape == (B, M), out["topo"]["pi"].shape
-        assert out["H_path"].shape == (B, H, D), out["H_path"].shape
-        assert out["control"].shape == (B, C, 2), out["control"].shape
-        assert out["q_coarse"].shape == (B, C, 2), out["q_coarse"].shape
-        assert out["ellipse"]["progress"].shape == (B, H)
-        assert out["ellipse"]["center"].shape == (B, H, 2)
-        assert out["ellipse"]["H_ell"].shape == (B, H, D)
-        assert out["ellipse"]["shape4"].shape == (B, H, 4)
-        assert out["F"].shape == (B, H, D)
-        assert out["H_clean"].shape == (B, H, D)
-        assert out["final"].shape == (B, H, 2)
-        assert out["coarse"].shape == (B, H, 2)
-
-        s = out["ellipse"]["progress"]
-        assert torch.allclose(s[:, 0], torch.zeros_like(s[:, 0]), atol=1e-6)
-        assert torch.allclose(s[:, -1], torch.ones_like(s[:, -1]), atol=1e-6)
-        assert bool((s[:, 1:] > s[:, :-1]).all())
-        assert bool((out["ellipse"]["a"] >= out["ellipse"]["b"] - 1e-7).all())
+        assert out["coarse"].shape[-1] == 2
+        assert out["final"].shape[-1] == 2
+        assert out["ellipse"]["center"].shape[-1] == 2
+        assert out["ellipse"]["shape4"].shape[-1] == 4
+        a, b = out["ellipse"]["a"], out["ellipse"]["b"]
+        assert bool((a >= b - 1e-7).all())
         assert bool(torch.isfinite(out["ellipse"]["shape4"]).all())
         direction = (out["ellipse"]["shape4"][..., 2] ** 2
                      + out["ellipse"]["shape4"][..., 3] ** 2)
@@ -331,3 +534,44 @@ class TrajSafePlanner(nn.Module):
             err0 = (p[:, 0] - out["input_curve"][:, 0]).abs().max()
             err1 = (p[:, -1] - out["input_curve"][:, -1]).abs().max()
             assert float(err0.detach()) < 1e-5 and float(err1.detach()) < 1e-5
+
+    def _assert_forward_shapes(self, out: dict, B: int, C: int, Q: int) -> None:
+        D = self.d_model
+        H = self.curve_points
+        self._assert_common_shapes(out, B)
+        assert C == self.num_controls
+        assert out["H_traj"].shape == (B, C, D), out["H_traj"].shape
+        assert out["R"].shape == (B, out["H_S"].shape[1], C, D)
+        assert out["H_path"].shape == (B, C, D), out["H_path"].shape
+        assert out["F"].shape == (B, C, D), out["F"].shape
+        assert out["H_clean"].shape == (B, C, D), out["H_clean"].shape
+        assert out["control"].shape == (B, C, 2), out["control"].shape
+        assert out["q_coarse"].shape == (B, C, 2), out["q_coarse"].shape
+        assert out["q_raw_final"].shape == (B, C, 2)
+        assert out["raw_curve"].shape == (B, H, 2)
+        assert out["H_safety"].shape == (B, Q, D), out["H_safety"].shape
+        assert out["A_safety"].shape == (B, C, D), out["A_safety"].shape
+        assert out["ellipse"]["progress"].shape == (B, Q)
+        assert out["ellipse"]["center"].shape == (B, Q, 2)
+        assert out["ellipse"]["H_ell"].shape == (B, Q, D)
+        assert out["ellipse"]["shape4"].shape == (B, Q, 4)
+        s = out["ellipse"]["progress"]
+        assert torch.allclose(s[:, 0], torch.zeros_like(s[:, 0]), atol=1e-6)
+        assert torch.allclose(s[:, -1], torch.ones_like(s[:, -1]), atol=1e-6)
+        assert bool((s[:, 1:] > s[:, :-1]).all())
+        assert out["final"].shape == (B, H, 2)
+        assert out["coarse"].shape == (B, H, 2)
+
+    def _assert_legacy_shapes(self, out: dict, B: int, H: int) -> None:
+        D = self.d_model
+        self._assert_common_shapes(out, B)
+        assert out["H_traj"].shape == (B, H, D), out["H_traj"].shape
+        assert out["R"].shape == (B, out["H_S"].shape[1], H, D)
+        assert out["H_path"].shape == (B, H, D)
+        assert out["F"].shape == (B, H, D)
+        assert out["H_clean"].shape == (B, H, D)
+        assert out["ellipse"]["center"].shape == (B, H, 2)
+        assert out["ellipse"]["H_ell"].shape == (B, H, D)
+        assert out["ellipse"]["shape4"].shape == (B, H, 4)
+        assert out["final"].shape == (B, H, 2)
+        assert out["coarse"].shape == (B, H, 2)

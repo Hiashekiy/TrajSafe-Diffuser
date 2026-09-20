@@ -15,7 +15,8 @@ Two related utilities live here:
 
   The centre is ABSOLUTE (scene coordinates).  The old ``center = p0 + delta``
   semantics is GONE: the ellipse centres are the fixed Skeleton progress points
-  ``c_i = Gamma_m(i/127)`` and the head only predicts the shape.
+  ``c_i = Gamma_m(i/(Q-1))`` and the head only predicts the shape (there is no
+  centre head).
 
 * :func:`halfspaces_to_vertices` — convert ``A x <= b`` into polygon vertices
   (used for the overlap check and for drawing).

@@ -42,6 +42,7 @@ from src.geometry.convex_region import EllipseRegionBuilder
 from src.geometry.skeleton_graph import build_skeleton_graph
 from src.geometry.skeleton_paths import CandidateConfig, generate_candidates
 from src.models.trajsafe import TrajSafePlanner
+from src.utils.checkpoint import load_model
 from src.utils.config import load_config
 
 CONFIG_PATH = os.path.join(ROOT, "configs", "config.yaml")
@@ -100,12 +101,13 @@ class Engine:
     def get_model(self, model_id):
         if model_id not in self.models:
             path = os.path.join(ROOT, CHECKPOINTS[model_id])
-            model_cfg = dict(self.cfg["model"])
+            cfg = dict(self.cfg)
+            model_cfg = dict(cfg.get("model") or {})
             model_cfg["assert_shapes"] = False          # inference speed
-            model = TrajSafePlanner(model_cfg,
-                                      self.cfg.get("ellipse_label")).to(self.device)
-            ckpt = torch.load(path, map_location="cpu", weights_only=False)
-            model.load_state_dict(ckpt.get("model_state", ckpt))
+            cfg["model"] = model_cfg
+            # arch='auto': pre-refactor checkpoints replay the legacy chain
+            model, ckpt, _ = load_model(cfg, path, arch="auto",
+                                        device=self.device)
             model.eval()
             self.models[model_id] = (model, ckpt.get("epoch"))
         return self.models[model_id]

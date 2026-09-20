@@ -28,6 +28,7 @@ import torch
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
+from src.utils.checkpoint import load_model
 from src.utils.config import load_config
 from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.sampler import sample
@@ -95,10 +96,8 @@ def main():
                             indices=list(range(args.offset,
                                                args.offset + args.pool)),
                             require_labels=False)
-    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label"),
-                            cfg.get("bspline")).to(device)
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt.get("model_state", ckpt))
+    # arch='auto': pre-refactor checkpoints replay the legacy curve-token chain
+    model, ckpt, _ = load_model(cfg, args.ckpt, arch="auto", device=device)
     model.eval()
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(

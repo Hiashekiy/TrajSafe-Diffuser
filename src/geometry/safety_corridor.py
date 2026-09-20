@@ -143,7 +143,7 @@ def overlap_ratio(poly_a, poly_b) -> float:
 def progress_alignment_stats(raw_curve, skeleton_centers):
     """V1 ``u <-> s`` correspondence diagnostics (report section 13).
 
-    Compares ``P_i = C(i/127)`` with ``c_i = Gamma(i/127)``.  Recorded ONLY; the
+    Compares ``P_i = C(i/(H-1))`` with ``c_i = Gamma(i/(H-1))``.  Recorded ONLY; the
     mapping itself is never adapted from these numbers.
     """
     p = np.asarray(raw_curve, dtype=np.float64).reshape(-1, 2)

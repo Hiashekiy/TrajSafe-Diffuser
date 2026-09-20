@@ -172,12 +172,14 @@ def test_5_6_7_forward_shapes_backward():
     assert tuple(out["ellipse"]["shape4"].shape) == (2, 128, 4)
     assert torch.allclose(out["ellipse"]["progress"][0], model.fixed_progress)
 
-    from src.losses.losses import (control_x0_loss, topology_ce,
-                                   trajectory_x0_loss,
-                                   trajectory_smoothness_loss)
-    l = (trajectory_x0_loss(out["final"], batch["pos"])
-         + control_x0_loss(out["control"], batch["control_gt"])
-         + trajectory_smoothness_loss(out["final"], batch["pos"])
+    from src.losses.losses import (boundary_control_loss, control_smoothness_loss,
+                                   control_x0_loss, topology_ce)
+    ws, wg = model.boundary_decoder.weights(batch["control_gt"].shape[1])
+    l = (control_x0_loss(out["q_raw_final"], batch["control_gt"])
+         + control_x0_loss(out["q_coarse_raw"], batch["control_gt"])
+         + control_smoothness_loss(out["q_raw_final"], batch["control_gt"])
+         + boundary_control_loss(out["q_raw_final"], batch["control_gt"],
+                                 batch["cond"], ws, wg)
          + topology_ce(out["topo"]["pi"], batch["topology_best"],
                        batch["has_candidate"])
          + out["ellipse"]["shape4"].pow(2).mean())
@@ -191,13 +193,18 @@ def test_5_6_7_forward_shapes_backward():
     assert checked > 50
     for name in ("traj_encoder", "traj_backbone", "head_p",
                  "skeleton_encoder", "match_block", "topology_head",
-                 "path_feature_head", "ellipse_shape_head", "fusion_mlp",
+                 "path_feature_head", "safety_query_head",
+                 "safety_cross_attention", "ellipse_geometry",
+                 "ellipse_shape_head", "fusion_mlp",
                  "final_denoiser"):
         mod = model
         for part in name.split("."):
             mod = getattr(mod, part)
         assert any(p.grad is not None and p.grad.abs().sum() > 0
                    for p in mod.parameters()), "no gradient for %s" % name
+    # the fixed boundary decoder is parameter-free and never in the checkpoint
+    assert list(model.boundary_decoder.parameters()) == []
+    assert "boundary_decoder.profile" not in model.state_dict()
 
 
 def test_8_carla_y_axis():

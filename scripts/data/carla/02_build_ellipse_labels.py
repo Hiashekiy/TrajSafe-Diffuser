@@ -5,7 +5,7 @@ For every cleaned sample this script:
   1. takes m* = ``topology_best`` (from 01) and decodes its DENSE safe polyline
      from the stored cell indices: ``scene = (px + 0.5) * (2/256) - 1`` with the
      first/last point forced to ``start`` / ``goal``;
-  2. fixes the progress to ``s_i = i / 127`` and decodes the 128 ellipse centres
+  2. fixes the progress to ``s_i = i / (Q-1)`` and decodes the Q ellipse centres
      by ARC LENGTH interpolation on that dense chain
      (``skeleton_paths.interpolate_path``) - never on the 128-point resample;
   3. computes, on the SAME canonical occupancy, the largest safe axis-aligned
@@ -15,8 +15,11 @@ For every cleaned sample this script:
 
 Outputs per split (consumed by ``src/datasets/carla_spline_dataset.py``):
 
-    ellipse_shape4_gt.npy  [N, 128, 4] f32  [log a, log b, cos 2t, sin 2t]
-    shape_valid.npy        [N, 128]    bool
+    ellipse_shape4_gt.npy  [N, Q, 4] f32    [log a, log b, cos 2t, sin 2t]
+    shape_valid.npy        [N, Q]    bool
+
+``Q`` = ``model.num_safety_queries`` (= ``topology.candidate_points``), default
+128; it is read from the config, not hard-coded.
 
 There is NO progress label and NO ellipse-centre label.
 Per-sample caching in ``<split>/_cache/ell_<i:06d>.npz`` makes the run
@@ -46,6 +49,9 @@ from src.geometry.skeleton_paths import interpolate_path
 
 SPLITS = ["train", "val", "test"]
 CELL = 2.0 / 256.0
+# Default only: main() overwrites it from the config (model.num_safety_queries /
+# topology.candidate_points), because the ellipse labels are indexed by the
+# Skeleton progress grid of the safety queries.
 HORIZON = 128
 _W = {}
 
@@ -330,7 +336,11 @@ def main():
     ap.add_argument("--min-semi-axis", type=float, default=None)
     args = ap.parse_args()
 
+    global HORIZON
     cfg = load_config(args.config)
+    HORIZON = int((cfg.get("model") or {}).get("num_safety_queries")
+                  or (cfg.get("topology") or {}).get("candidate_points")
+                  or HORIZON)
     lab = cfg.get("ellipse_label") or {}
     processed = args.processed or cfg["data"].get("processed_root",
                                                   "data/carla_processed")

@@ -34,6 +34,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from src.utils.config import load_config
+from src.utils.checkpoint import load_model
 from src.diffusion.sampler import ablation_configs, sample
 from src.diffusion.schedule import NoiseSchedule
 from src.geometry.skeleton_graph import build_skeleton_graph
@@ -114,10 +115,10 @@ class Engine:
             path = CHECKPOINTS[model_id]
             if not os.path.exists(path):
                 raise FileNotFoundError("checkpoint not found: %s" % path)
-            model = TrajSafePlanner(self.cfg["model"], self.cfg.get("ellipse_label"),
-                                    self.cfg.get("bspline")).to(self.device)
-            ckpt = torch.load(path, map_location=self.device, weights_only=False)
-            model.load_state_dict(ckpt.get("model_state", ckpt))
+            # arch='auto': a checkpoint written before the control-space
+            # refactor replays the legacy 128-curve-token chain unchanged.
+            model, ckpt, _ = load_model(self.cfg, path, arch="auto",
+                                        device=self.device)
             model.eval()
             self._models[model_id] = (model, ckpt.get("epoch"))
         return self._models[model_id]
@@ -340,7 +341,8 @@ class Engine:
                 "selected_idx": int(st["selected_idx"]),
                 "pi": self._rounded(st["pi"]),
                 "progress": self._rounded(
-                    model.fixed_progress[None].expand(1, model.horizon)[0]),
+                    model.fixed_progress[None].expand(
+                        1, int(model.fixed_progress.numel()))[0]),
                 "center": self._rounded(center),
                 "shape4": self._rounded(shape4),
                 "regions": [],

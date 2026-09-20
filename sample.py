@@ -1,10 +1,15 @@
-"""Sample the control-space (32 B-spline controls) TrajSafe-Diffuser.
+"""Sample the control-space (C B-spline controls) TrajSafe-Diffuser.
 
     python sample.py --config configs/config.yaml \
         --ckpt outputs/bspline_carla/ckpt/best.pt --split test --num 6 --seed 0
 
-Inference routing is always argmax(pi).  The DDIM loop runs on the 32-control
+Inference routing is always argmax(pi).  The DDIM loop runs on the C-control
 polygon; the 128-point curve is obtained by decoding the final controls.
+
+``--arch auto`` (default) picks the forward chain from the checkpoint itself: a
+checkpoint written BEFORE the control-space refactor is replayed through the
+legacy 128-curve-token chain, so it keeps working unchanged; a new checkpoint
+uses the control-token chain.  ``--arch control`` / ``--arch legacy`` forces one.
 """
 import argparse
 import json
@@ -17,10 +22,10 @@ import torch
 ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, ROOT)
 
-from src.utils.config import load_config
+from src.utils.config import load_config, num_controls, num_safety_queries
+from src.utils.checkpoint import load_model
 from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.sampler import sample
-from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import (CarlaSplineDataset,
                                                make_collate)
 
@@ -168,6 +173,12 @@ def main():
                     help="report section 48 ablation preset "
                          "(A raw / B final-only / C guided / D no-bridge). "
                          "Default: the configs/config.yaml settings.")
+    ap.add_argument("--arch", default="auto",
+                    choices=["auto", "control", "legacy"],
+                    help="forward chain: auto = from the checkpoint "
+                         "(a pre-refactor checkpoint replays the legacy "
+                         "128-curve-token chain), control = control tokens, "
+                         "legacy = 128 curve tokens")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -176,9 +187,12 @@ def main():
     processed_root = cfg["data"].get("processed_root", "data/carla_processed")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
+    n_ctrl = num_controls(cfg)
+    n_safety = num_safety_queries(cfg)
 
     ds = CarlaSplineDataset(args.split, processed_root,
-                            geometry_points=geo_points, require_labels=False)
+                            geometry_points=geo_points, require_labels=False,
+                            num_controls=n_ctrl, num_safety_queries=n_safety)
     idxs = list(range(args.offset, min(args.offset + args.num, len(ds))))
     if not idxs:
         raise SystemExit("offset beyond the split")
@@ -188,12 +202,13 @@ def main():
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label"),
-                            cfg.get("bspline")).to(device)
-    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt.get("model_state", ckpt))
+    model, ckpt, _ = load_model(cfg, args.ckpt, arch=args.arch, device=device)
     model.eval()
-    print("[sample] ckpt epoch=%s" % ckpt.get("epoch"), flush=True)
+    print("[sample] ckpt epoch=%s controls=%d arch=%s"
+          % (ckpt.get("epoch") if isinstance(ckpt, dict) else None,
+             model.num_controls,
+             "control_space" if model.control_space else "legacy_curve"),
+          flush=True)
 
     cond = batch["cond"].to(device)
     occ = batch["occupancy"].to(device)
@@ -283,6 +298,10 @@ def main():
     with open(os.path.join(args.out, "samples_%s.json" % tag), "w",
               encoding="utf-8") as f:
         json.dump({"ckpt": args.ckpt, "epoch": ckpt.get("epoch"),
+                   "arch": ("control_space" if model.control_space
+                            else "legacy_curve"),
+                   "num_controls": int(model.num_controls),
+                   "num_safety_queries": int(model.num_safety_queries),
                    "seed": args.seed, "steps": args.steps,
                    "ablation": args.ablation,
                    "selected_idx": out["selected_idx"].cpu().tolist(),

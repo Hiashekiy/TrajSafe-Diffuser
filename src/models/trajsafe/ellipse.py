@@ -6,8 +6,11 @@
     H_ell = q^E + A^E
 
 ``h_i^path`` is the ``PathFeatureHead`` output (the renamed former MLP_prog).
-``c_i`` is the FIXED Skeleton centre ``Gamma_m(i/127)``: there is no centre
-head and no learned progress.
+``c_i`` is the FIXED Skeleton centre ``Gamma_m(i/(Q-1))`` (Q = number of
+Skeleton queries = ``model.num_safety_queries``): there is no centre head and
+no learned progress.  The query feature ``h_i^path`` is the output of
+``safety_query_head`` on the SELECTED Skeleton tokens (the safety branch lives
+on the Q geometry queries, the trajectory branch on the C control tokens).
 
 The spatial bias uses the *diffusion strength* exactly as specified:
 

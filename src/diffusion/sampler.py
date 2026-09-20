@@ -1,14 +1,18 @@
 """DDIM sampler for the CONTROL-space diffusion state with guided B-spline ALM.
 
-The diffusion state is the 32-control cubic B-spline polygon::
+The diffusion state is the C-control cubic B-spline polygon (C = num_controls,
+read from the config)::
 
-    q = torch.randn(B, 32, 2); q[:, 0] = start; q[:, -1] = goal
+    q = torch.randn(B, C, 2); q[:, 0] = start; q[:, -1] = goal
     for t in reverse_times:
         out = model.forward_all(q, ...)     # argmax(pi) or the FROZEN topology
         q0  = out["control"]                # predicted clean control polygon
         q   = ddim_step(q, q0)
         q   = hard_control_endpoints(q, cond)
     p = model.bspline.decode_controls(q)    # dense validation only
+
+The sampler is agnostic to how the network turns the control polygon into
+``out["control"]`` (control-token chain or the legacy curve-token chain).
 
 Three-stage state machine (report sections 1-3, 9, 10, 31, 32, 35, 36):
 
@@ -363,6 +367,8 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
 
     B, C = cond.shape[0], int(model.num_controls)
     H = int(model.horizon)
+    # the ellipse / safety branch runs on Q Skeleton queries, not on the curve
+    Q = int(getattr(model, "num_safety_queries", H))
     T = schedule.num_timesteps
     dev = device
     start, goal = cond[:, 0], cond[:, 1]
@@ -387,7 +393,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         max_delay = 0
     warmup = max(0, warmup)
 
-    anchors = torch.linspace(0.0, 1.0, H, device=dev)
+    anchors = torch.linspace(0.0, 1.0, Q, device=dev)
 
     q = torch.randn(B, C, 2, device=dev, dtype=torch.float32)
     q[:, 0] = start
@@ -580,7 +586,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     # ---- progress alignment diagnostics (V1 u <-> s correspondence) --------
     from ..models.trajsafe.geometry import gather_dense_path_points
     s_grid = torch.linspace(0.0, 1.0, H, device=dev)[None]
-    # ``P_i = C(i/127)`` of the FINAL curve vs ``c_i = Gamma_m(i/127)``
+    # ``P_i = C(i/(H-1))`` of the FINAL curve vs ``c_i = Gamma_m(i/(H-1))``
     final_curve = model.bspline.decode_controls(q)
     alignment = []
     sel_final = (frozen_idx if bool(guided.any())

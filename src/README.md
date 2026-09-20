@@ -38,7 +38,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `losses.py` | `trajectory_x0_loss` / `trajectory_smoothness_loss` / `topology_ce` / `center_alignment_loss` / `ellipse_shape_loss` / `ellipse_iou_loss` / `ellipse_safety_loss` |
+| `losses.py` | `control_x0_loss`（= `L_ctrl` / `L_coarse`）/ `control_smoothness_loss`（控制点二阶三阶差分）/ `boundary_control_loss` / `topology_ce` / `ellipse_shape_loss` / `ellipse_iou_loss` / `ellipse_safety_loss`（无 `L_traj`、无 `L_align`） |
 
 ## src/geometry
 

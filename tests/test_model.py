@@ -3,18 +3,23 @@
 The tests assert the structural contracts that the implementation report makes
 explicit:
 
-  * only the trajectory is a diffusion state;
+  * only the trajectory is a diffusion state, and it is the C-control polygon
+    (the network never sees the decoded curve; Q = num_safety_queries is the
+    number of Skeleton / ellipse geometry queries);
   * every denoising block gets the timestep through AdaLN;
-  * coarse and final share the SAME Head_P;
+  * coarse and final share the SAME Head_P in BOTH forward chains;
   * there is exactly ONE trajectory-skeleton MatchBlock;
-  * progress is structurally monotone with s_0 = 0, s_{H-1} = 1;
-  * the ellipse centre always comes from the selected Skeleton Curve;
+  * the progress query grid is FIXED (not a head), monotone with s_0 = 0 and
+    s_{Q-1} = 1;
+  * the ellipse centre always comes from the selected Skeleton Curve and the
+    fixed grid (a loss on the centre alone gives no parameter gradient);
   * the ellipse head has no centre output;
   * a >= b > 0 and (cos 2t, sin 2t) is a unit vector, including the (0, 0)
     fallback with finite gradients;
   * invalid candidates never receive probability mass;
   * ShapeValid=False entries do not enter shape / IoU supervision;
-  * L_center reaches the Progress Head, L_shape / L_safe reach the Ellipse Head;
+  * the control-space losses (L_ctrl / L_coarse / L_smooth / L_boundary) are
+    finite and L_shape / L_safe reach the Ellipse Head;
   * all key tensor shapes match report section 27.
 """
 from __future__ import annotations
@@ -46,22 +51,38 @@ def _forward(model, b, select_index=None):
 # --------------------------------------------------------------------- shapes
 def test_forward_shapes_and_structural_constraints():
     model = tiny_model(horizon=8, d_model=32)
-    b = tiny_batch(H=8)
+    b = tiny_batch(H=model.num_controls)
     out = _forward(model, b)
-    B, H, D = 2, 8, 32
+    B, D = 2, 32
+    C = model.num_controls
+    Q = model.num_safety_queries
+    Hc = model.curve_points
     M, L = b["candidate_mask"].shape[1], b["candidate_xy"].shape[2]
-    assert out["H_traj"].shape == (B, H, D)
+    # the trajectory stream is the C-control polygon (no 128-token stream)
+    assert out["H_traj"].shape == (B, C, D)
+    assert out["H_ctrl"].shape == (B, C, D)
     assert out["H_S"].shape == (B, M, L, D)
-    assert out["R"].shape == (B, M, H, D)
+    assert out["R"].shape == (B, M, C, D)
+    assert out["R_use"].shape == (B, C, D)
+    assert out["H_path"].shape == (B, C, D)
     assert out["topo"]["pi"].shape == (B, M)
-    assert out["H_prog"].shape == (B, H, D)
-    assert out["ellipse"]["progress"].shape == (B, H)
-    assert out["ellipse"]["center"].shape == (B, H, 2)
-    assert out["ellipse"]["H_ell"].shape == (B, H, D)
-    assert out["ellipse"]["shape4"].shape == (B, H, 4)
-    assert out["F"].shape == (B, H, D)
-    assert out["H_clean"].shape == (B, H, D)
-    assert out["final"].shape == (B, H, 2)
+    # Q = selected-Skeleton / ellipse geometry queries, NOT the controls
+    assert out["H_safety"].shape == (B, Q, D)
+    assert out["A_safety"].shape == (B, C, D)
+    assert out["ellipse"]["progress"].shape == (B, Q)
+    assert out["ellipse"]["center"].shape == (B, Q, 2)
+    assert out["ellipse"]["H_ell"].shape == (B, Q, D)
+    assert out["ellipse"]["shape4"].shape == (B, Q, 4)
+    assert out["F"].shape == (B, C, D)
+    assert out["H_clean"].shape == (B, C, D)
+    # raw (pre boundary decoder) and corrected control polygons
+    assert out["q_raw_final"].shape == (B, C, 2)
+    assert out["q_coarse_raw"].shape == (B, C, 2)
+    assert out["control"].shape == (B, C, 2)
+    assert out["q_coarse"].shape == (B, C, 2)
+    assert out["coarse"].shape == (B, Hc, 2)
+    assert out["raw_curve"].shape == (B, Hc, 2)
+    assert out["final"].shape == (B, Hc, 2)
 
     s = out["ellipse"]["progress"]
     assert torch.allclose(s[:, 0], torch.zeros(B), atol=1e-6)
@@ -73,6 +94,11 @@ def test_forward_shapes_and_structural_constraints():
             + out["ellipse"]["shape4"][..., 3] ** 2)
     assert torch.allclose(unit, torch.ones_like(unit), atol=1e-5)
     assert torch.isfinite(out["final"]).all()
+    # the corrected controls hit the endpoints exactly; the raw ones do not
+    assert torch.allclose(out["control"][:, 0], b["cond"][:, 0], atol=1e-6)
+    assert torch.allclose(out["control"][:, -1], b["cond"][:, 1], atol=1e-6)
+    assert torch.allclose(out["q_coarse"][:, 0], b["cond"][:, 0], atol=1e-6)
+    assert torch.allclose(out["q_coarse"][:, -1], b["cond"][:, 1], atol=1e-6)
 
 
 def test_timestep_enters_every_denoising_block_through_adaln():
@@ -105,19 +131,24 @@ def test_skeleton_encoder_does_not_receive_timestep_or_handcrafted_features():
 # ------------------------------------------------------------------ shared head
 def test_coarse_and_final_share_the_same_head_p():
     model = tiny_model()
-    b = tiny_batch()
+    b = tiny_batch(H=model.num_controls)
     out = _forward(model, b)
     before = model.head_p.weight.detach().clone()
     with torch.no_grad():
         model.head_p.weight.mul_(0.0).add_(1.0)
     out2 = _forward(model, b)
+    assert not torch.allclose(out["q_coarse_raw"], out2["q_coarse_raw"])
+    assert not torch.allclose(out["q_raw_final"], out2["q_raw_final"])
     assert not torch.allclose(out["coarse"], out2["coarse"])
     assert not torch.allclose(out["final"], out2["final"])
     with torch.no_grad():
         model.head_p.weight.copy_(before)
 
-    src = inspect.getsource(TrajSafePlanner)
-    assert src.count("self.head_p(") == 2
+    # exactly ONE control head is applied twice in EACH forward chain
+    src_ctrl = inspect.getsource(TrajSafePlanner.forward_controls)
+    src_legacy = inspect.getsource(TrajSafePlanner.forward_curve_tokens)
+    assert src_ctrl.count("self.head_p(") == 2
+    assert src_legacy.count("self.head_p(") == 2
     heads = [m for m in model.modules()
              if isinstance(m, torch.nn.Linear) and m.out_features == 2]
     assert len(heads) == 1 and heads[0] is model.head_p
@@ -151,13 +182,23 @@ def test_no_ellipse_diffusion_state_or_second_cross_attention():
 
 
 # ------------------------------------------------------------------- progress
-def test_progress_head_is_monotone_for_any_input():
+def test_progress_is_a_fixed_monotone_query_grid_not_a_head():
     model = tiny_model(horizon=8, d_model=32)
-    h_prog, s = model.progress_head(torch.randn(3, 8, 32) * 30.0)
-    assert h_prog.shape == (3, 8, 32)
-    assert torch.all(s[:, 1:] > s[:, :-1])
-    assert torch.allclose(s[:, 0], torch.zeros(3), atol=1e-6)
-    assert torch.allclose(s[:, -1], torch.ones(3), atol=1e-5)
+    # no learned progress head exists any more
+    assert not hasattr(model, "progress_head")
+    Q = model.num_safety_queries
+    s = model.fixed_progress
+    assert s.shape == (Q,)
+    assert float(s[0]) == 0.0 and float(s[-1]) == 1.0
+    assert torch.all(s[1:] > s[:-1])
+    assert torch.allclose(s[1:] - s[:-1], torch.full((Q - 1,), 1.0 / (Q - 1)),
+                          atol=1e-7)
+    # the same fixed grid is used by the forward pass for ANY input
+    b = tiny_batch(H=model.num_controls)
+    out = _forward(model, b)
+    assert torch.allclose(out["ellipse"]["progress"], s[None].expand(2, Q))
+    assert torch.allclose(model.progress_for(Q), s)
+    assert not model.progress_for(Q).requires_grad
 
 
 def test_center_always_comes_from_the_selected_skeleton_curve():
@@ -189,8 +230,8 @@ def test_invalid_candidates_get_zero_probability():
     out = _forward(model, b)
     pi = out["topo"]["pi"]
     assert torch.allclose(pi.sum(dim=-1), torch.ones(4), atol=1e-6)
-    assert float(pi[:, 0].abs().sum()) == 0.0
-    assert float(pi[:, 2].abs().sum()) == 0.0
+    assert float(pi[:, 0].abs().sum().detach()) == 0.0
+    assert float(pi[:, 2].abs().sum().detach()) == 0.0
     assert bool((out["selected_idx"] == 1).all())
     assert torch.isinf(out["topo"]["logits"][:, 0]).all()
     assert torch.isinf(out["topo"]["logits"][:, 2]).all()
@@ -204,7 +245,7 @@ def test_all_invalid_candidates_produce_no_nan_and_fall_back_to_coarse():
     out = _forward(model, b)
     assert torch.isfinite(out["final"]).all()
     assert torch.allclose(out["final"], out["coarse"], atol=1e-7)
-    assert float(out["topo"]["pi"].abs().sum()) == 0.0
+    assert float(out["topo"]["pi"].abs().sum().detach()) == 0.0
     assert torch.isfinite(out["ellipse"]["center"]).all()
     assert torch.isfinite(out["ellipse"]["shape4"]).all()
 
@@ -278,20 +319,29 @@ def test_iou_loss_ignores_invalid_locations():
     assert torch.allclose(l1, l2)
 
 
-def test_align_loss_gives_gradient_to_progress_head_only():
+def test_ellipse_center_is_fixed_and_gives_no_parameter_gradient():
+    """There is no learned progress / centre head any more.
+
+    The replaced test asserted that ``L_align`` reached the progress head.  In
+    the new architecture the centre is the FIXED progress query
+    ``c_i = Gamma_m(i/(Q-1))`` on the selected Skeleton, decoded by the
+    parameter-free ``CurveDecoder``, so a loss on the centre alone must not
+    produce a gradient for ANY model parameter.
+    """
     model = tiny_model()
-    b = tiny_batch()
-    out = _forward(model, b)
+    b = tiny_batch(B=2, M=3)
+    out = _forward(model, b, select_index=torch.zeros(2, dtype=torch.long))
+    s = out["ellipse"]["progress"]
+    expected = model.curve_decoder(out["gamma"], out["gamma_lengths"], s)
+    assert torch.allclose(out["ellipse"]["center"], expected, atol=1e-6)
+    assert not hasattr(model, "center_head")
+    assert not hasattr(model, "progress_head")
+    assert not hasattr(losses, "center_alignment_loss")
     model.zero_grad()
-    loss = losses.center_alignment_loss(out["ellipse"]["center"], b["pos"],
-                                           b["has_candidate"])
-    loss.backward()
-    g = model.progress_head.mlp_prog[1].weight.grad
-    assert g is not None and torch.isfinite(g).all()
-    assert float(g.abs().sum()) > 0.0
-    # L_align compares Gamma(s) with the GT trajectory: the shape head is not
-    # involved at all.
-    assert model.ellipse_shape_head.mlp[0].weight.grad is None
+    out["ellipse"]["center"].sum().backward()
+    touched = [n for n, p in model.named_parameters()
+               if p.grad is not None and float(p.grad.abs().sum()) > 0.0]
+    assert touched == []
 
 
 def test_shape_loss_gives_gradient_to_ellipse_head():
@@ -323,19 +373,29 @@ def test_safety_loss_gives_gradient_to_ellipse_shape():
     grads = [p.grad for p in model.ellipse_shape_head.parameters()
              if p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
-    assert any(float(g.abs().sum()) > 0.0 for g in grads)
-    assert float(mean) >= 0.0 and float(cvar) >= 0.0
+    assert any(float(g.abs().sum().detach()) > 0.0 for g in grads)
+    assert float(mean.detach()) >= 0.0 and float(cvar.detach()) >= 0.0
 
 
-def test_trajectory_losses_are_finite():
+def test_control_space_losses_are_finite():
     model = tiny_model()
-    b = tiny_batch()
+    b = tiny_batch(H=model.num_controls)
     out = _forward(model, b)
-    l_traj = losses.trajectory_x0_loss(out["final"], b["pos"])
-    l_coarse = losses.trajectory_x0_loss(out["coarse"], b["pos"])
-    l_smooth = losses.trajectory_smoothness_loss(out["final"], b["pos"])
-    assert torch.isfinite(l_traj) and torch.isfinite(l_coarse)
-    assert torch.isfinite(l_smooth)
+    q0 = b["pos"]                                   # [B,C,2] GT controls
+    ws, wg = model.boundary_decoder.weights(q0.shape[1])
+    l_ctrl = losses.control_x0_loss(out["q_raw_final"], q0)
+    l_coarse = losses.control_x0_loss(out["q_coarse_raw"], q0)
+    l_smooth = losses.control_smoothness_loss(out["q_raw_final"], q0)
+    l_bound = losses.boundary_control_loss(out["q_raw_final"], q0, b["cond"],
+                                           ws, wg)
+    for value in (l_ctrl, l_coarse, l_smooth, l_bound):
+        assert torch.isfinite(value).all()
+    assert float(l_ctrl.detach()) >= 0.0 and float(l_coarse.detach()) >= 0.0
+    assert float(l_smooth.detach()) >= 0.0 and float(l_bound.detach()) >= 0.0
+    # the removed L_traj / L_align names must not exist any more
+    for gone in ("trajectory_x0_loss", "trajectory_smoothness_loss",
+                 "center_alignment_loss"):
+        assert not hasattr(losses, gone), gone
 
 
 # ------------------------------------------------------------------ sampler

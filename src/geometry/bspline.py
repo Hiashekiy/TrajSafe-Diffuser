@@ -38,6 +38,8 @@ __all__ = [
     "bspline_derivative_operator",
     "bspline_basis_derivative_matrix",
     "default_knots_path",
+    "default_knots",
+    "resolve_knots",
     "numpy_fit_curve_to_controls",
     "BSplineCodec",
     "TrajectoryToControlHead",
@@ -57,6 +59,57 @@ def _as_param_array(params) -> np.ndarray:
 
 def default_knots_path() -> str:
     return _DEFAULT_KNOTS
+
+
+def default_knots(num_controls: int, degree: int) -> np.ndarray:
+    """Clamped UNIFORM knot vector for ``num_controls`` / ``degree``.
+
+    ``[0]*(p+1) + linspace(0,1,C-p+1)[1:-1] + [1]*(p+1)`` (length C+p+1).
+    For the shipped 32-control / degree-3 setup this reproduces
+    ``data/carla_v1/bspline_knots.npy`` bit-for-bit, so ``knots: auto`` lets C
+    be changed in the config without regenerating a knot file.
+    """
+    nc, p = int(num_controls), int(degree)
+    if nc <= p:
+        raise ValueError("num_controls (%d) must be > degree (%d)" % (nc, p))
+    interior = np.linspace(0.0, 1.0, nc - p + 1)[1:-1]
+    return np.concatenate([np.zeros(p + 1), interior, np.ones(p + 1)])
+
+
+def resolve_knots(knots, num_controls: int, degree: int,
+                  knots_path: str | None = None, warn=None) -> np.ndarray:
+    """Knot vector from an explicit array, a .npy path, or ``auto``/``None``.
+
+    A path whose stored vector does not match ``num_controls``/``degree`` is
+    NOT silently reused: the clamped uniform vector for the configured C is
+    generated instead and a warning is emitted, so raising ``num_controls`` in
+    the config cannot be broken by a stale knot file.
+    """
+    nc, p = int(num_controls), int(degree)
+    expected = nc + p + 1
+    if knots is not None and not isinstance(knots, str):
+        arr = np.asarray(knots, dtype=np.float64).reshape(-1)
+    else:
+        path = knots if isinstance(knots, str) and knots.strip().lower() not in (
+            "", "auto", "none", "null") else None
+        if path is None:
+            path = knots_path if (knots_path and str(knots_path).strip().lower()
+                                  not in ("", "auto", "none", "null")) else None
+        arr = None
+        if path is not None and os.path.exists(path):
+            arr = np.load(path).astype(np.float64).reshape(-1)
+        if arr is None:
+            if path is not None and warn is not None:
+                warn("knot file not found (%s); using the clamped uniform knot "
+                     "vector for num_controls=%d degree=%d" % (path, nc, p))
+            arr = default_knots(nc, p)
+    if arr.shape[0] != expected:
+        if warn is not None:
+            warn("knot vector length %d != num_controls %d + degree %d + 1 = %d;"
+                 " regenerating the clamped uniform vector for C=%d"
+                 % (arr.shape[0], nc, p, expected, nc))
+        arr = default_knots(nc, p)
+    return arr
 
 
 # ---------------------------------------------------------------------------
@@ -186,13 +239,32 @@ class BSplineCodec(nn.Module):
         self.num_controls = int(num_controls)
         self.curve_points = int(curve_points)
         self.endpoint_constrained = bool(endpoint_constrained)
+        if self.num_controls <= self.degree:
+            raise ValueError(
+                "num_controls (%d) must be > degree (%d) for a clamped "
+                "B-spline (change bspline.num_controls in the config)"
+                % (self.num_controls, self.degree))
+        if self.curve_points < 2:
+            raise ValueError("curve_points must be >= 2")
+        warn = lambda msg: print("[bspline] WARNING: %s" % msg, flush=True)
         if knots is None:
-            path = knots_path or _DEFAULT_KNOTS
-            if not os.path.exists(path):
+            path = knots_path
+            if path is None or str(path).strip() == "":
+                # no explicit config value: keep using the shipped default file
+                path = _DEFAULT_KNOTS if os.path.exists(_DEFAULT_KNOTS) else None
+            sentinel = (path is None
+                        or str(path).strip().lower() in ("auto", "none", "null"))
+            if sentinel:
+                knots = None        # resolve_knots generates clamped uniform
+            elif os.path.exists(str(path)):
+                knots = np.load(str(path))
+            else:
                 raise FileNotFoundError(
-                    "B-spline knot file not found: %s (config: bspline.knots)"
+                    "B-spline knot file not found: %s (config: bspline.knots); "
+                    "use knots: auto to generate the clamped uniform vector"
                     % path)
-            knots = np.load(path)
+        knots = resolve_knots(knots, self.num_controls, self.degree,
+                              knots_path=None, warn=warn)
         knots = np.asarray(knots, dtype=np.float64).reshape(-1)
         if knots.shape[0] != self.num_controls + self.degree + 1:
             raise ValueError(

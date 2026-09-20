@@ -38,18 +38,27 @@ class CoordMLP(nn.Module):
 
 
 class TrajectoryEncoder(nn.Module):
-    """T_i^0 = MLP_T(Phi_xy(p_i^t)) + PE_1D(i), output [B,H,D]."""
+    """Control-token encoder: ``T_i^0 = MLP_T(Phi_xy(q_i)) + PE_1D(i)``.
+
+    Despite the historical attribute name, this is the **Control Encoder** of
+    the control-space model: it is applied to the C control points
+    ``Q_t [B,C,2]`` (2D points, so the shared Phi_xy coordinate encoding is the
+    right input).  The index embedding is computed on the fly, so the module
+    carries no token-count-shaped buffer and the same weights serve both the new
+    C control tokens and the legacy L = 128 curve tokens.
+    """
 
     def __init__(self, d_model: int, spatial_pe: nn.Module, index_pe: nn.Module,
                  horizon: int, hidden: int = 256):
         super().__init__()
         self.spatial_pe = spatial_pe
         self.index_pe = index_pe
+        self.horizon = int(horizon)
         self.mlp_t = CoordMLP(d_model, hidden)
-        self.register_buffer("_idx", torch.arange(int(horizon)))
 
     def forward(self, p_t: torch.Tensor) -> torch.Tensor:
-        idx = self._idx.to(p_t.device)
+        L = p_t.shape[-2]
+        idx = torch.arange(L, device=p_t.device, dtype=torch.long)
         return self.mlp_t(self.spatial_pe(p_t)) + self.index_pe(idx)[None]
 
 
