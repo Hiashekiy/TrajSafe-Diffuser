@@ -1,22 +1,18 @@
-"""Losses for the TrajSafe-Diffuser.
+"""Losses for the control-space TrajSafe-Diffuser.
 
-    L = lambda_traj   * L_traj
-      + lambda_coarse * L_coarse
-      + lambda_smooth * L_smooth
-      + lambda_topo   * L_topo
-      + lambda_align  * L_align
-      + lambda_shape  * L_shape
-      + lambda_iou    * L_iou
-      + lambda_safe   * L_safe
+    L = lambda_traj    * L_traj      (MSE on the decoded 128-point curve)
+      + lambda_control * L_ctrl      (MSE on the 30 interior B-spline controls)
+      + lambda_coarse  * L_coarse
+      + lambda_smooth  * L_smooth
+      + lambda_topo    * L_topo
+      + lambda_shape   * L_shape
+      + lambda_iou     * L_iou
+      + lambda_safe    * L_safe
 
-``L_align`` is the Progress Head's geometric supervision:
-
-    c_i = Gamma(s_i)
-    L_align = (1/H) sum_i SmoothL1(c_i, p_i^GT)
-
-The ellipse centre is compared DIRECTLY with the GT trajectory.  There is no
-GT skeleton projection, no s*, no ``ellipse_center_gt`` and no ``progress_gt``
-anywhere in the training dependency chain.
+There is NO alignment loss: the ellipse centre is the FIXED Skeleton centre
+``c_i = Gamma_m(i/127)``, so there is nothing to align and nothing to predict.
+No progress target, no centre target and no alignment weight exist anywhere in
+the training chain.
 
 ``L_shape`` is the ellipse-parameter loss and touches only the Ellipse Shape
 Head; the centre is deliberately NOT part of it.
@@ -34,8 +30,8 @@ from src.geometry.ellipse_raster import ellipse_soft_mask
 __all__ = [
     "trajectory_smoothness_loss",
     "trajectory_x0_loss",
+    "control_x0_loss",
     "topology_ce",
-    "center_alignment_loss",
     "ellipse_shape_loss",
     "ellipse_iou_loss",
     "ellipse_safety_loss",
@@ -54,6 +50,19 @@ def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 def trajectory_x0_loss(p_hat: torch.Tensor, p_gt: torch.Tensor) -> torch.Tensor:
     """MSE on the interior waypoints (endpoints are hard-conditioned)."""
     return F.mse_loss(p_hat[:, 1:-1], p_gt[:, 1:-1])
+
+
+def control_x0_loss(q_hat: torch.Tensor, q_gt: torch.Tensor) -> torch.Tensor:
+    """MSE on the 30 INTERIOR B-spline controls.
+
+    The first and the last control are hard-conditioned to start / goal
+    (clamped knots => curve endpoints), so they carry no training signal and
+    must not contribute to the loss.
+    """
+    if q_hat.shape != q_gt.shape:
+        raise ValueError("control shapes differ: %s vs %s"
+                         % (tuple(q_hat.shape), tuple(q_gt.shape)))
+    return F.mse_loss(q_hat[:, 1:-1], q_gt[:, 1:-1])
 
 
 def trajectory_smoothness_loss(p_pred: torch.Tensor, p_gt: torch.Tensor,
@@ -90,18 +99,6 @@ def topology_ce(pi: torch.Tensor, best: torch.Tensor,
     return _masked_mean(per, sample_mask)
 
 
-def center_alignment_loss(center: torch.Tensor, gt_traj: torch.Tensor,
-                          sample_mask: torch.Tensor) -> torch.Tensor:
-    """L_align = 1/H sum_i SmoothL1(c_i, p_i^GT), c_i = Gamma(s_i).
-
-    The predicted centre is compared directly with the GT trajectory.  No GT
-    projection, no s*, no centre ground-truth tensor is involved.  The gradient
-    goes to the Progress Head only.
-    """
-    per = F.smooth_l1_loss(center, gt_traj, reduction="none").mean(dim=-1)
-    return _masked_mean(per, sample_mask)
-
-
 def ellipse_shape_loss(shape4: torch.Tensor, shape4_gt: torch.Tensor,
                        shape_valid: torch.Tensor,
                        sample_mask: torch.Tensor) -> torch.Tensor:
@@ -119,7 +116,8 @@ def ellipse_iou_loss(center: torch.Tensor, a: torch.Tensor, b: torch.Tensor,
     """Fuzzy soft-IoU loss on the complete ellipse, only where a label exists.
 
     The prediction is rasterised with the SAME soft rasteriser that produced the
-    GT mask offline.
+    GT mask.  The GT mask is built at training time from the DETACHED fixed
+    Skeleton centres and the offline ``shape4`` labels.
     """
     pred = ellipse_soft_mask(center, a, b, theta, int(raster_res), float(tau))
     gt = gt_mask.to(pred.dtype)

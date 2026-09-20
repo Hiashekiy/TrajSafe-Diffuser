@@ -1,0 +1,11 @@
+CARLA Diffusion Lens API on http://localhost:8765 (cuda)
+[dashboard-carla] "OPTIONS /generate HTTP/1.1" 204 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "OPTIONS /generate HTTP/1.1" 204 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -

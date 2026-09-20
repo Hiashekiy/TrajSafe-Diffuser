@@ -1,9 +1,13 @@
 """Ellipse geometry query (report sections 17 and 18).
 
     e_i^c = MLP_C(Phi_xy(c_i))
-    q_i^E = h_i^prog + e_i^c
+    q_i^E = h_i^path + e_i^c
     A^E   = CenterBiasedCrossAttention(AdaLN(q^E, h_t), C_E, B_geo)
     H_ell = q^E + A^E
+
+``h_i^path`` is the ``PathFeatureHead`` output (the renamed former MLP_prog).
+``c_i`` is the FIXED Skeleton centre ``Gamma_m(i/127)``: there is no centre
+head and no learned progress.
 
 The spatial bias uses the *diffusion strength* exactly as specified:
 
@@ -53,11 +57,11 @@ class EllipseGeometry(_MHABase):
         bias = -strength * dist2 / (2.0 * self.geo_sigma ** 2)
         return bias.clamp(-self.geo_bias_clip, 0.0)[:, None]
 
-    def forward(self, h_prog: torch.Tensor, center: torch.Tensor,
+    def forward(self, h_path: torch.Tensor, center: torch.Tensor,
                 geo_mem: torch.Tensor | None, h_t: torch.Tensor,
                 ab: torch.Tensor | None):
-        """h_prog [B,H,D], center [B,H,2] -> (H_ell [B,H,D], A_E or None)."""
-        q_e = h_prog + self.mlp_c(self.spatial_pe(center))
+        """h_path [B,H,D], center [B,H,2] -> (H_ell [B,H,D], A_E or None)."""
+        q_e = h_path + self.mlp_c(self.spatial_pe(center))
         if geo_mem is None:
             # The report defines A^E = 0 when C_E is unavailable.
             return q_e, None

@@ -1,25 +1,34 @@
-"""Task heads for the report-faithful TrajSafe-Diffuser.
+"""Task heads for the control-space TrajSafe-Diffuser.
 
-    TopologyHead       R [B,M,H,D] -> MeanPool_H -> MLP_score -> l_m -> pi
-                       (masked softmax; invalid logits are -inf)
-    ProgressHead       R_use [B,H,D] -> MLP_prog -> Head_prog ->
-                       positive gaps -> cumulative monotone s [B,H]
-    EllipseShapeHead   H_ell [B,H,D] -> AdaLN -> MLP -> [l1,l2,u,v]
-                       -> shape4 = [log a, log b, cos 2t, sin 2t]
+    TopologyHead        R [B,M,H,D] -> MeanPool_H -> MLP_score -> l_m -> pi
+                        (masked softmax; invalid logits are -inf)
+    PathFeatureHead     R_use [B,H,D] -> MLP_path -> H_path [B,H,D]
+                        Pure feature transform.  The old learned per-waypoint
+                        progress MLP with its cumulative softplus parameterisation
+                        is GONE: the ellipse centres now come from the fixed
+                        progress s_i = i/127 on the selected dense Skeleton curve.
+    TrajectoryToControlHead
+                        fixed endpoint-constrained LS projection of a decoded
+                        128-point curve onto the 32 B-spline controls
+                        (re-exported from ``src.geometry.bspline``).
+    EllipseShapeHead    H_ell [B,H,D] -> AdaLN -> MLP -> [l1,l2,u,v]
+                        -> shape4 = [log a, log b, cos 2t, sin 2t]
 
-There is deliberately NO ellipse-centre output anywhere in these heads.
+There is deliberately NO ellipse-centre output and NO progress output anywhere
+in these heads.
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
+from ...geometry.bspline import TrajectoryToControlHead
 from ...geometry.ellipse_shape import raw_to_shape4, shape4_to_abtheta
 from ..common.blocks import AdaLN
 
-__all__ = ["TopologyHead", "ProgressHead", "EllipseShapeHead"]
+__all__ = ["TopologyHead", "PathFeatureHead", "EllipseShapeHead",
+           "TrajectoryToControlHead"]
 
 
 class TopologyHead(nn.Module):
@@ -62,38 +71,28 @@ class TopologyHead(nn.Module):
         return {"logits": masked, "pi": pi}
 
 
-class ProgressHead(nn.Module):
-    """Token-wise progress head; no cross-attention and no temporal mixing.
+class PathFeatureHead(nn.Module):
+    """Per-waypoint feature transform of the shared matching feature R_use.
 
-    ``MLP_prog`` is a per-waypoint projection of the SHARED matching feature
-    R_use.  Only the first H-1 waypoints feed ``Head_prog`` (the last raw scalar
-    would correspond to a non-existent interval).
+    This is the former ``MLP_prog`` with its semantics fixed: it produces a
+    path feature, NOT a progress distribution.  It is followed by the fixed
+    buffer ``s_i = i/127`` in the planner; nothing here is monotone, cumulative
+    or supervised by an alignment loss.
     """
 
-    def __init__(self, d_model: int, hidden: int = 256, eps: float = 1e-4):
+    def __init__(self, d_model: int, hidden: int = 256):
         super().__init__()
-        self.eps = float(eps)
-        self.mlp_prog = nn.Sequential(
+        self.net = nn.Sequential(
             nn.LayerNorm(d_model),
             nn.Linear(d_model, int(hidden)), nn.SiLU(),
             nn.Linear(int(hidden), d_model),
         )
-        self.head_prog = nn.Sequential(
-            nn.Linear(d_model, int(hidden)), nn.SiLU(),
-            nn.Linear(int(hidden), 1),
-        )
 
-    def forward(self, r_use: torch.Tensor):
-        """r_use [B,H,D] -> (H_prog [B,H,D], s [B,H])."""
+    def forward(self, r_use: torch.Tensor) -> torch.Tensor:
+        """r_use [B,H,D] -> H_path [B,H,D]."""
         if r_use.dim() != 3:
-            raise ValueError("ProgressHead expects R_use [B,H,D]")
-        h_prog = self.mlp_prog(r_use)
-        u = self.head_prog(h_prog[:, :-1]).squeeze(-1)      # [B,H-1]
-        w = F.softplus(u) + self.eps
-        delta = w / w.sum(dim=-1, keepdim=True).clamp_min(1e-9)
-        zero = torch.zeros_like(delta[:, :1])
-        s = torch.cat([zero, torch.cumsum(delta, dim=1)], dim=1)   # [B,H]
-        return h_prog, s
+            raise ValueError("PathFeatureHead expects R_use [B,H,D]")
+        return self.net(r_use)
 
 
 class EllipseShapeHead(nn.Module):

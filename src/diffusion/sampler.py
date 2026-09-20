@@ -1,14 +1,21 @@
-"""DDIM sampler (report section 24).
+"""DDIM sampler for the CONTROL-space diffusion state.
 
-Only the trajectory P_t is a diffusion state.  Every reverse timestep runs the
-WHOLE report network, including a fresh topology choice:
+The diffusion state is the 32-control cubic B-spline polygon::
 
+    q = torch.randn(B, 32, 2); q[:, 0] = start; q[:, -1] = goal
     for t in reverse_times:
-        P0_hat = model(P_t, occ, cond, t, ab, candidates)   # argmax(pi) routing
-        P_t    = ddim_step(P_t, P0_hat, t)
+        out = model.forward_all(q, ...)     # argmax(pi) routing
+        q0  = out["control"]                # predicted clean control polygon
+        q   = ddim_step(q, q0, t)
+        q   = hard_control_endpoints(q, cond)
+    p = model.bspline.decode_controls(q)    # only at the very end
 
-There is no commit timestep, no cached selection and no ellipse diffusion state.
-The trailing ``0 -> -1`` transition is not optional: it sets P = P0_hat exactly.
+Every reverse timestep runs the WHOLE network (including a fresh topology
+choice).  There is no commit timestep and no cached selection.  The trailing
+``0 -> -1`` transition is not optional: it sets q = q0 exactly.
+
+The old waypoint-based ALM guidance is NOT migrated to control space; passing
+``alm_guidance`` raises instead of silently applying wrong semantics.
 """
 
 from __future__ import annotations
@@ -32,28 +39,25 @@ def pick_times(T: int, steps):
 
 @torch.no_grad()
 def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
-              geometry, geometry_lengths, device="cuda", steps=None, seed=None,
-              return_trace=False, alm_guidance=None):
+           geometry, geometry_lengths, device="cuda", steps=None, seed=None,
+           return_trace=False, alm_guidance=None):
     """cond [B,2,2]; occ [B,1,R,R]; candidate_xy [B,M,L,2];
     candidate_mask [B,M]; geometry [B,M,G,2]; geometry_lengths [B,M].
-
-    ``alm_guidance`` is an optional inference-time callback
-    ``fn(x0, out, p_t, t) -> (x0_corrected, info)``.  When it is omitted the
-    sampler is exactly the report-faithful DDIM loop (only the trajectory is a
-    diffusion state).
     """
+    if alm_guidance is not None:
+        raise RuntimeError(
+            "B-spline control-space ALM 尚未迁移，本版本禁用旧 waypoint ALM "
+            "(set alm.enabled=false / do not pass alm_guidance)")
     if seed is not None:
         torch.manual_seed(int(seed))
     model.eval()
-    # Be defensive: callers frequently pass CPU batch tensors while the model is
-    # on CUDA; mismatch shows up as masked_fill(-inf) on a different device.
     cond = cond.to(device)
     occ = occ.to(device)
     candidate_xy = candidate_xy.to(device)
     candidate_mask = candidate_mask.to(device)
     geometry = geometry.to(device)
     geometry_lengths = geometry_lengths.to(device)
-    B, H = cond.shape[0], model.horizon
+    B, C = cond.shape[0], int(model.num_controls)
     T = schedule.num_timesteps
     dev = device
     start, goal = cond[:, 0], cond[:, 1]
@@ -64,12 +68,12 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         pairs = [(t, t - 1) for t in range(T - 1, -1, -1)]
     else:
         pairs = [(times[i], times[i - 1]) for i in range(len(times) - 1, 0, -1)]
-        # close the schedule with the clean transition 0 -> -1 so P_0 is x0(0)
+        # close the schedule with the clean transition 0 -> -1 so q_0 is x0(0)
         pairs.append((times[0], -1))
 
-    p = torch.randn(B, H, 2, device=dev, dtype=torch.float32)
-    p[:, 0] = start
-    p[:, -1] = goal
+    q = torch.randn(B, C, 2, device=dev, dtype=torch.float32)
+    q[:, 0] = start
+    q[:, -1] = goal
     has_cand = candidate_mask.any(dim=1)
     trace = []
     last = None
@@ -77,32 +81,27 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     for t, s_t in pairs:
         tb = torch.full((B,), int(t), device=dev, dtype=torch.long)
         ab = sqrt_ab[int(t)].expand(B).contiguous()
-        out = model.forward_all(p, occ, cond, tb, ab, candidate_xy,
+        out = model.forward_all(q, occ, cond, tb, ab, candidate_xy,
                                 candidate_mask, geometry, geometry_lengths,
                                 select_index=None)
-        x0 = out["final"]
-        x0_raw = x0
-        guide_info = None
-        if alm_guidance is not None:
-            x0, guide_info = alm_guidance(x0, out, p, int(t))
+        q0 = out["control"]                      # clean control prediction
         last = out
         if int(s_t) < 0:
-            p = x0
+            q = q0
         else:
             sa_t, s1_t = sqrt_ab[int(t)], sqrt_1ma[int(t)]
             sa_s, s1_s = sqrt_ab[int(s_t)], sqrt_1ma[int(s_t)]
-            eps = (p - sa_t * x0) / s1_t
-            p = sa_s * x0 + s1_s * eps
-        p[:, 0] = start
-        p[:, -1] = goal
+            eps = (q - sa_t * q0) / s1_t
+            q = sa_s * q0 + s1_s * eps
+        q = model.hard_control_endpoints(q, cond)
         if return_trace:
             trace.append({
                 "t": int(t), "s": int(s_t) if int(s_t) >= 0 else -1,
-                "p": p.detach().cpu().clone(),
+                "q": q.detach().cpu().clone(),
+                "p": model.bspline.decode_controls(q).detach().cpu().clone(),
+                "q0": q0.detach().cpu().clone(),
+                "final": model.bspline.decode_controls(q0).detach().cpu().clone(),
                 "coarse": out["coarse"].detach().cpu().clone(),
-                "final": x0.detach().cpu().clone(),
-                "final_raw": x0_raw.detach().cpu().clone(),
-                "guide": guide_info,
                 "selected_idx": out["selected_idx"].detach().cpu().clone(),
                 "pi": out["topo"]["pi"].detach().cpu().clone(),
                 "progress": out["ellipse"]["progress"].detach().cpu().clone(),
@@ -113,7 +112,8 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "ellipse_shape4": out["ellipse"]["shape4"].detach().cpu().clone(),
             })
 
-    result = {"p": p, "has_candidate": has_cand}
+    p = model.bspline.decode_controls(q)
+    result = {"control": q, "p": p, "final": p, "has_candidate": has_cand}
     if last is not None:
         result["selected_idx"] = last["selected_idx"]
         result["topology_pi"] = last["topo"]["pi"]

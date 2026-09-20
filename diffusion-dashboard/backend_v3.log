@@ -1,0 +1,4 @@
+CARLA Diffusion Lens API on http://localhost:8766 (cuda)
+[dashboard-carla] "GET /health HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -
+[dashboard-carla] "POST /generate HTTP/1.1" 200 -

@@ -1,9 +1,10 @@
-"""Sample the report-faithful TrajSafe-Diffuser.
+"""Sample the control-space (32 B-spline controls) TrajSafe-Diffuser.
 
     python sample.py --config configs/config.yaml \
-        --ckpt outputs/ckpt/best.pt --split test --num 6 --seed 0
+        --ckpt outputs/bspline_carla/ckpt/best.pt --split test --num 6 --seed 0
 
-Inference routing is always argmax(pi), as defined in the report.
+Inference routing is always argmax(pi).  The DDIM loop runs on the 32-control
+polygon; the 128-point curve is obtained by decoding the final controls.
 """
 import argparse
 import json
@@ -20,8 +21,8 @@ from src.utils.config import load_config
 from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.sampler import sample
 from src.models.trajsafe import TrajSafePlanner
-from src.datasets.skeleton_dataset import (MAZE_NAMES, SkeletonDataset,
-                                              make_collate)
+from src.datasets.carla_spline_dataset import (CarlaSplineDataset,
+                                               make_collate)
 
 
 def to_px(points, res):
@@ -40,7 +41,8 @@ def draw_ellipses(ax, center, a, b, theta, res, stride=4, color="#d62728"):
                 color=color, lw=0.7, alpha=0.85)
 
 
-def plot_samples(occ, cond, path, traj, ell, out_png, title, stride=4):
+def plot_samples(occ, cond, path, traj, gt, ell, out_png, title,
+                 controls=None, gt_controls=None, stride=4):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -48,8 +50,18 @@ def plot_samples(occ, cond, path, traj, ell, out_png, title, stride=4):
     res = occ.shape[0]
     fig, ax = plt.subplots(figsize=(6.4, 6.4), dpi=110)
     ax.imshow(occ, origin="lower", cmap="gray_r", interpolation="nearest")
-    ax.plot(*to_px(path, res).T, color="#1f77b4", lw=1.3, label="selected skeleton")
-    ax.plot(*to_px(traj, res).T, color="#2ca02c", lw=1.8, label="trajectory")
+    if path is not None and len(path):
+        ax.plot(*to_px(path, res).T, color="#1f77b4", lw=1.2,
+                label="selected skeleton")
+    ax.plot(*to_px(gt, res).T, color="#2ca02c", lw=1.6, label="GT curve")
+    ax.plot(*to_px(traj, res).T, color="#d62728", lw=1.7, ls="--",
+            label="pred curve")
+    if controls is not None:
+        ax.plot(*to_px(controls, res).T, color="#d62728", lw=0.7, alpha=0.6,
+                marker="o", ms=2, label="pred controls")
+    if gt_controls is not None:
+        ax.plot(*to_px(gt_controls, res).T, color="#2ca02c", lw=0.7, alpha=0.5,
+                marker="o", ms=2, label="GT controls")
     draw_ellipses(ax, ell["center"], ell["a"], ell["b"], ell["theta"], res, stride)
     cp = to_px(ell["center"], res)
     ax.scatter(cp[:, 0], cp[:, 1], s=1.5, c="#d62728")
@@ -63,7 +75,7 @@ def plot_samples(occ, cond, path, traj, ell, out_png, title, stride=4):
 
 
 def plot_trace(occ, trace, geometry, geometry_lengths, out_png, title):
-    """Per-timestep replay: coarse (dashed) vs final, plus the selected chain."""
+    """Per-timestep replay of the control-space DDIM loop."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -83,6 +95,8 @@ def plot_trace(occ, trace, geometry, geometry_lengths, out_png, title):
                 color="#ff9f1c", lw=1.0, ls="--")
         ax.plot(*to_px(np.asarray(step["final"]), res).T,
                 color="#2ca02c", lw=1.4)
+        ax.plot(*to_px(np.asarray(step["p"]), res).T,
+                color="#d62728", lw=0.9, ls=":")
         cp = to_px(np.asarray(step["ellipse_center"]), res)
         ax.scatter(cp[:, 0], cp[:, 1], s=1.2, c="#d62728")
         ax.set_title("t=%d->%d  m=%d  pi(m)=%.2f"
@@ -111,56 +125,54 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default=None)
     ap.add_argument("--no-trace-plot", action="store_true")
-    ap.add_argument("--out", default="outputs/samples")
+    ap.add_argument("--out", default="outputs/bspline_carla")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available() else "cpu"))
-    scenes_root = cfg["data"].get("scenes", "data/scenes")
-    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
+    processed_root = cfg["data"].get("processed_root", "data/carla_processed")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
-    mask_res = int(cfg["data"].get("ellipse_mask_res", 64))
-    mask_tau = float(cfg["data"].get("ellipse_mask_tau", 10.0))
 
-    ds = SkeletonDataset(args.split, scenes_root, skeleton_root, geometry_points=geo_points,
-                           ellipse_mask_res=mask_res,
-                           ellipse_mask_tau=mask_tau,
-                           mazes=cfg["data"].get("mazes"))
+    ds = CarlaSplineDataset(args.split, processed_root,
+                            geometry_points=geo_points, require_labels=False)
     idxs = list(range(args.offset, min(args.offset + args.num, len(ds))))
     if not idxs:
         raise SystemExit("offset beyond the split")
     batch = make_collate(ds)([ds[i] for i in idxs])
-    print("[sample] %d samples from %s (geometry_points=%d)"
-          % (len(idxs), args.split, geo_points), flush=True)
+    print("[sample] %d samples from %s" % (len(idxs), args.split), flush=True)
 
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label")).to(device)
+    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label"),
+                            cfg.get("bspline")).to(device)
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt.get("model_state", ckpt))
     model.eval()
     print("[sample] ckpt epoch=%s" % ckpt.get("epoch"), flush=True)
 
     cond = batch["cond"].to(device)
-    occ = batch["map_tensor"].to(device)
+    occ = batch["occupancy"].to(device)
     geom_cpu = batch["candidate_geometry"].numpy()
     glen_cpu = batch["candidate_geometry_lengths"].numpy()
     out = sample(model, schedule, cond, occ,
-                    batch["candidate_xy"].to(device),
-                    batch["candidate_mask"].to(device),
-                    batch["candidate_geometry"].to(device),
-                    batch["candidate_geometry_lengths"].to(device),
-                    device=device, steps=args.steps, seed=args.seed,
-                    return_trace=True)
+                 batch["candidate_xy"].to(device),
+                 batch["candidate_mask"].to(device),
+                 batch["candidate_geometry"].to(device),
+                 batch["candidate_geometry_lengths"].to(device),
+                 device=device, steps=args.steps, seed=args.seed,
+                 return_trace=True)
 
     os.makedirs(args.out, exist_ok=True)
     tag = "%s_%d_s%d" % (args.split, args.offset, args.seed)
     np.savez_compressed(
         os.path.join(args.out, "samples_%s.npz" % tag),
         p=out["p"].cpu().numpy(),
+        control=out["control"].cpu().numpy(),
+        control_gt=batch["control_gt"].numpy(),
+        curve_gt=batch["pos"].numpy(),
         center=out["ellipse_center"].cpu().numpy(),
         a=out["ellipse_a"].cpu().numpy(),
         b=out["ellipse_b"].cpu().numpy(),
@@ -170,37 +182,36 @@ def main():
         pi=out["topology_pi"].cpu().numpy(),
         cond=cond.cpu().numpy(),
         idx=np.asarray(idxs))
-    per_maze = {}
     for k, i in enumerate(idxs):
-        per_maze.setdefault(int(batch["maze_id"][k]), []).append(k)
-    for maze, rows in per_maze.items():
-        occ_map = ds.maps[maze][0, 0].numpy()
-        for k in rows:
-            sel = int(out["selected_idx"][k])
-            n = max(2, int(glen_cpu[k, sel]))
-            plot_samples(
-                occ_map, cond[k].cpu().numpy(), geom_cpu[k, sel, :n],
-                out["p"][k].cpu().numpy(),
-                {"center": out["ellipse_center"][k].cpu().numpy(),
-                 "a": out["ellipse_a"][k].cpu().numpy(),
-                 "b": out["ellipse_b"][k].cpu().numpy(),
-                 "theta": out["ellipse_theta"][k].cpu().numpy()},
-                os.path.join(args.out, "samples_%s_%d.png" % (tag, idxs[k])),
-                "%s #%d  m=%d" % (MAZE_NAMES[maze], idxs[k], sel))
-            if not args.no_trace_plot:
-                trace_k = [{**step,
-                            "coarse": step["coarse"][k].numpy(),
-                            "final": step["final"][k].numpy(),
-                            "p": step["p"][k].numpy(),
-                            "selected_idx": step["selected_idx"][k].numpy(),
-                            "pi": step["pi"][k].numpy(),
-                            "ellipse_center": step["ellipse_center"][k].numpy()}
-                           for step in out["trace"]]
-                plot_trace(occ_map, trace_k, geom_cpu[k], glen_cpu[k],
-                           os.path.join(args.out,
-                                        "trace_%s_%d.png" % (tag, idxs[k])),
-                           "reverse replay #%d (dashed=coarse, solid=final)"
-                           % idxs[k])
+        sel = int(out["selected_idx"][k])
+        n = max(2, int(glen_cpu[k, sel]))
+        plot_samples(
+            batch["occupancy"][k, 0].numpy(), cond[k].cpu().numpy(),
+            geom_cpu[k, sel, :n], out["p"][k].cpu().numpy(),
+            batch["pos"][k].numpy(),
+            {"center": out["ellipse_center"][k].cpu().numpy(),
+             "a": out["ellipse_a"][k].cpu().numpy(),
+             "b": out["ellipse_b"][k].cpu().numpy(),
+             "theta": out["ellipse_theta"][k].cpu().numpy()},
+            os.path.join(args.out, "samples_%s_%d.png" % (tag, i)),
+            "%s #%d  m=%d" % (args.split, i, sel),
+            controls=out["control"][k].cpu().numpy(),
+            gt_controls=batch["control_gt"][k].numpy())
+        if not args.no_trace_plot:
+            trace_k = [{**step,
+                        "coarse": step["coarse"][k].numpy(),
+                        "final": step["final"][k].numpy(),
+                        "p": step["p"][k].numpy(),
+                        "q": step["q"][k].numpy(),
+                        "selected_idx": step["selected_idx"][k].numpy(),
+                        "pi": step["pi"][k].numpy(),
+                        "ellipse_center": step["ellipse_center"][k].numpy()}
+                       for step in out["trace"]]
+            plot_trace(batch["occupancy"][k, 0].numpy(), trace_k, geom_cpu[k],
+                       glen_cpu[k],
+                       os.path.join(args.out, "trace_%s_%d.png" % (tag, i)),
+                       "reverse replay #%d (orange=coarse, green=final)"
+                       % i)
     with open(os.path.join(args.out, "samples_%s.json" % tag), "w",
               encoding="utf-8") as f:
         json.dump({"ckpt": args.ckpt, "epoch": ckpt.get("epoch"),

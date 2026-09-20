@@ -1,0 +1,12 @@
+
+> sites-project@0.1.0 dev
+> vinext dev
+
+
+  vinext dev  (Vite 8.0.13)
+
+Sites local sign-in: seedy@sites.test
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m3000[22m/[39m
+  [32m➜[39m  [1mDebug[22m:   [2m[33mhttp://localhost:[1m3000[22m[2m/__debug[39m[22m
+ GET / 200 in 4.3s (compile: 1789883560.6s, render: 4.1s)
+[2m13:53:44[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mpage.html[22m

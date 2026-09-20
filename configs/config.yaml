@@ -1,9 +1,11 @@
 # ============================================================
-# TrajSafe-Diffuser - report-faithful architecture
-#   docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md
-#   ONE diffusion state: trajectory P_t [B,H,2].
-#   Ellipse is NOT a diffusion state and ellipse centres come from
-#   c_i = Gamma_m(s_i) - there is no centre head.
+# TrajSafe-Diffuser - CARLA v1 + 32-control cubic B-spline diffusion
+#
+#   ONE diffusion state: the control polygon Q_t [B,32,2].
+#   The network still reasons on the decoded curve P_t = B_128 Q_t [B,128,2].
+#   Ellipse centres are NOT a diffusion state, NOT a head output and NOT a
+#   progress prediction: c_i = Gamma_m(i/127) on the selected dense Skeleton.
+#   There is no learned progress and no L_align.
 # ============================================================
 
 env:
@@ -12,14 +14,18 @@ env:
   seed: 42
 
 data:
-  scenes: "data/scenes"    # trajectory / endpoints / maps
-  skeleton: "data/skeleton"      # candidate cache + ellipse labels
-  mazes: ["large"]                     # only the large map is used for training
+  dataset: "carla_v1"
+  root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_v1"
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed"
   batch_size: 16
   num_workers: 0
   splits: ["train", "val", "test"]
-  ellipse_mask_res: 64                 # lazy GT soft mask resolution
-  ellipse_mask_tau: 10.0               # same rasteriser as the loss
+  ellipse_mask_res: 64                 # GT / prediction soft-mask resolution
+  ellipse_mask_tau: 10.0
+  # legacy Maze2D roots (kept so old tooling can still read the config)
+  scenes: "data/scenes"
+  skeleton: "data/skeleton"
+  mazes: ["large"]
 
 skeleton:
   safety_dilation_cells: 1
@@ -39,6 +45,7 @@ topology:
 
 model:
   horizon: 128
+  num_controls: 32                     # cubic B-spline control polygon
   d_model: 128
   num_heads: 4
   traj_blocks: 8                       # Trajectory Backbone N_T
@@ -52,19 +59,31 @@ model:
   geo_sigma: 0.25
   geo_bias_clip: 8.0
   dropout: 0.0
-  coord_hidden: 256                    # MLP_T / MLP_S / MLP_C hidden width
-  head_hidden: 256                     # score / shape head hidden width
-  assert_shapes: true                  # report section 27.4 assertions
+  coord_hidden: 256
+  head_hidden: 256
+  assert_shapes: true
 
-# --- ellipse label generation (scripts/data/03_build_ellipse_labels.py)
+# --- fixed B-spline codec (src/geometry/bspline.py) ---------------------
+bspline:
+  degree: 3
+  num_controls: 32
+  curve_points: 128
+  knots: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_v1/bspline_knots.npy"
+  endpoint_constrained: true
+
+# --- ellipse label generation (scripts/data/carla/02_build_ellipse_labels.py)
 ellipse_label:
   num_orientations: 36
   local_radius: 0.25
   dilation: 1
-  boundary_points: 128
-  interior_rings: 4
-  interior_angles: 32
-  binary_iters: 12
+  # The safe ellipse is TINY (semi-axes <= local_radius = 0.25 m = 0.8 cells),
+  # so 48 boundary + 2x12 interior samples already cover every cell the ellipse
+  # can touch; 8 binary steps give a ~0.4 % axis resolution.  The exact same
+  # safety criterion as scripts/data/03_build_ellipse_labels.py is used.
+  boundary_points: 48
+  interior_rings: 2
+  interior_angles: 12
+  binary_iters: 8
   min_semi_axis: 1.0e-3
 
 diffusion:
@@ -74,26 +93,18 @@ diffusion:
   beta_end: 0.02
   prediction_type: "x0"
 
-# --- loss (report section 25) -------------------------------------------
+# --- loss ---------------------------------------------------------------
 loss:
   lambda_traj: 1.0
+  lambda_control: 0.2
   lambda_coarse: 0.5
   lambda_smooth: 0.08
   smooth_acc_weight: 0.25
   smooth_jerk_weight: 1.0
-
   lambda_topology: 0.25
-
-  # balanced initial contributions (20-batch large-only probe):
-  # Ltraj 13% / Lcoarse 13% / Lsmooth 13% / Ltopo 15%
-  # Lalign ~0.5% / Lshape 17% / Liou 15% / Lsafe 14%
-  # Lalign is naturally small because Gamma(s) already starts near the GT
-  # trajectory; raise lambda_align only if progress visibly lags.
-  lambda_align: 5.0
   lambda_shape: 0.08
   lambda_iou: 0.25
   lambda_safe: 0.15
-
   ellipse_safe_res: 64
   ellipse_mask_tau: 10.0
   ellipse_safe_chunk: 32
@@ -101,58 +112,42 @@ loss:
   safe_cvar_weight: 1.0
 
 train:
-  epochs: 100
+  epochs: 200
   lr: 2.0e-4
   weight_decay: 1.0e-4
   grad_clip: 1.0
-  log_interval: 50
-  save_every: 10
-  eval_every: 10
-  val_batches: 25
-  ckpt_dir: "outputs/ckpt"
+  log_interval: 20
+  save_every: 5
+  eval_every: 1
+  val_batches: 12
+  max_hours: 6.5
+  ckpt_dir: "outputs/bspline_carla/ckpt"
 
 eval:
   num_candidates_ablation: [1, 2, 4]
   samples_per_od: 4
 
 # --- inference-only ALM (augmented Lagrangian) guidance ------------------
-# Strictly inference-time: the network, the checkpoint and the training losses
-# are untouched.  It consumes the model prediction (center = Gamma(s), shape4)
-# and first-order corrects x0 inside verified convex regions built online from
-# the current occupancy.  The dashboard reads this section; training ignores it.
+# NOT migrated to the B-spline control-space state in this version.
+# It stays DISABLED; enabling it would apply the old waypoint semantics to a
+# control polygon, so the sampler refuses to run it.
 alm:
-  enabled: true
+  enabled: false
   log_per_step: true
-
-  # Apply ALM only to the final eight levels of the 16-step reverse process.
   start_t: 7
   inner_steps: 4
-
-  # Constraints use exact max + active-face subgradient. This avoids the
-  # positive tau*log(N) bias of an unnormalised smooth maximum.
-
-  # Each reverse step rebuilds corridors and starts fresh dual variables. The
-  # primal objective also keeps corrections close to and as smooth as raw P0.
   step_size: 0.03
   rho: 5.0
   proximity_weight: 1.0
   correction_smooth_weight: 20.0
   max_grad_norm: 1.0
   max_correction_per_step: 0.10
-
-  # One predicted ellipse -> one local Neural-IRIS convex region. A dense ring
-  # of local-map border points prevents unbounded regions. All real and border
-  # obstacle points use the same Mahalanobis ordering/filtering, without caps.
   safety_margin: 0.02
   obstacle_window_half: 0.35
   obstacle_dilation: 0
-  # Do not move physically safe waypoints merely because a predicted local
-  # convex region is conservative. One-cell dilation supplies a small margin.
   guidance_dilation_cells: 1
   guidance_occupancy_threshold: 1.0e-3
   segment_collision_samples: 8
   corridor_chunk_size: 512
   ellipse_axis_min: 0.002
   ellipse_axis_max: 2.0
-  # filter_eps defaults to Neural-IRIS's 1e-3 pixel tolerance converted to
-  # scene coordinates.

@@ -63,3 +63,7 @@ button { cursor: pointer; }
 @media (max-width: 1080px) { .workspace { grid-template-columns: 210px 1fr; }.right-rail { display: none; } }
 @media (max-width: 760px) { .workspace { display: block; }.left-rail { border: 0; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }.left-rail section { margin: 0; }.layer-section { grid-column: 1/-1; }.stage-column { padding: 18px 12px; }.canvas-shell, .edit-toolbar { width: 100%; }.edit-toolbar { flex-wrap: wrap; }.edit-toolbar em { width: 100%; margin-left: 0; }.transport-main { flex-wrap: wrap; }.timeline { order: 3; flex-basis: 100%; }.right-rail { display: block; border: 0; border-top: 1px solid var(--border); }.speed-control { margin-left: auto; } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* select popup: never clip long option labels */
+[data-slot="select-content"] { min-width: max-content; max-width: 340px; }
+[data-slot="select-item"] { white-space: nowrap; }

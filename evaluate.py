@@ -1,16 +1,17 @@
-"""Evaluate the report-faithful TrajSafe-Diffuser.
+"""Evaluate the control-space (32 B-spline controls) TrajSafe-Diffuser.
 
 Metrics:
-
-  trajectory   collision rate, goal distance, smoothness, cross-seed diversity
-  centre       free-space rate and minimum clearance (c_i = Gamma(s_i))
-  ellipse      boundary+interior collision rate, mean area
-  topology     selected-vs-GT nDTW, Recall@M, entropy, cross-seed diversity,
-               per-step selection jitter
-  progress     monotonicity violations (must be 0)
+  curve       collision rate, goal distance, smoothness, cross-seed diversity,
+              curve RMSE vs the GT curve (m), B-spline control RMSE (m)
+  centre      free-space rate and minimum clearance (c_i = Gamma_m(i/127))
+  ellipse     boundary+interior collision rate, mean area, free fraction
+  topology    selected-vs-GT nDTW, Recall@M, entropy, cross-seed diversity,
+              per-step selection jitter, argmax(pi)==m* rate
+  progress    monotonicity violations (must be 0; the progress is a fixed
+              buffer so this only guards against regressions)
 
     python evaluate.py --config configs/config.yaml \
-        --ckpt outputs/ckpt/best.pt --split test --runs 4
+        --ckpt outputs/bspline_carla/ckpt/best.pt --split test --runs 4
 """
 import argparse
 import json
@@ -27,9 +28,11 @@ from src.utils.config import load_config
 from src.diffusion.schedule import NoiseSchedule
 from src.diffusion.sampler import sample
 from src.models.trajsafe import TrajSafePlanner
-from src.datasets.skeleton_dataset import (MAZE_NAMES, SkeletonDataset,
-                                              make_collate)
+from src.datasets.carla_spline_dataset import (CarlaSplineDataset,
+                                               make_collate)
 from src.geometry.skeleton_paths import normalized_dtw, resample_polyline
+
+SCENE_TO_METER = 40.0
 
 
 def _collides(points, occ):
@@ -94,33 +97,29 @@ def main():
     cfg = load_config(args.config)
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available() else "cpu"))
-    scenes_root = cfg["data"].get("scenes", "data/scenes")
-    skeleton_root = cfg["data"].get("skeleton", "data/skeleton")
+    processed_root = cfg["data"].get("processed_root", "data/carla_processed")
     geo_points = int((cfg.get("topology") or {}).get(
         "candidate_geometry_points", 1280))
-    mask_res = int(cfg["data"].get("ellipse_mask_res", 64))
-    mask_tau = float(cfg["data"].get("ellipse_mask_tau", 10.0))
-    batch_size = int(cfg["data"].get("batch_size", 32))
+    batch_size = int(cfg["data"].get("batch_size", 16))
 
-    ds = SkeletonDataset(args.split, scenes_root, skeleton_root, geometry_points=geo_points,
-                           ellipse_mask_res=mask_res,
-                           ellipse_mask_tau=mask_tau,
-                           mazes=cfg["data"].get("mazes"))
+    ds = CarlaSplineDataset(args.split, processed_root,
+                            geometry_points=geo_points, require_labels=False)
     schedule = NoiseSchedule(cfg["diffusion"]["timesteps"],
                              beta_schedule=cfg["diffusion"].get(
                                  "beta_schedule", "squaredcos_cap_v2")).to(device)
-    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label")).to(device)
+    model = TrajSafePlanner(cfg["model"], cfg.get("ellipse_label"),
+                            cfg.get("bspline")).to(device)
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt.get("model_state", ckpt))
     model.eval()
 
-    occ_maps = [ds.maps[i][0, 0].numpy() for i in range(len(MAZE_NAMES))]
     agg = {k: [] for k in
-           ["traj_collision", "goal_dist", "smooth", "center_free",
-            "center_min_clearance", "ellipse_collision", "area", "center_mae",
-            "progress_violations", "topo_entropy", "selected_ndtw", "recall",
-            "topo_diversity", "traj_diversity", "step_jitter",
-            "step_switch_rate", "sel_best_rate"]}
+           ["traj_collision", "goal_dist_m", "smooth", "center_free",
+            "center_min_clearance", "ellipse_collision", "area",
+            "curve_rmse_m", "ctrl_rmse_m", "progress_violations",
+            "topo_entropy", "selected_ndtw", "recall", "topo_diversity",
+            "traj_diversity", "step_jitter", "step_switch_rate",
+            "sel_best_rate", "pred_topo_best_rate"]}
     rng = np.random.default_rng(0)
 
     for bi in range(args.num_batches):
@@ -129,7 +128,7 @@ def main():
             break
         batch = make_collate(ds)([ds[i] for i in idxs])
         cond = batch["cond"].to(device)
-        occ_t = batch["map_tensor"].to(device)
+        occ_t = batch["occupancy"].to(device)
         mask = batch["candidate_mask"].clone()
         if args.max_candidates is not None:
             keep = min(int(args.max_candidates), mask.shape[1])
@@ -144,21 +143,28 @@ def main():
                 device=device, steps=args.steps, seed=1000 * bi + r,
                 return_trace=True))
         best = batch["topology_best"].numpy()
-        feats = batch["candidate_xy"].numpy()
+        occ_all = batch["occupancy"][:, 0].numpy()
+        curve_gt = batch["pos"].numpy()
+        ctrl_gt = batch["control_gt"].numpy()
         geom = batch["candidate_geometry"].numpy()
         glen = batch["candidate_geometry_lengths"].numpy()
-        pos = batch["pos"].numpy()
         for b in range(len(idxs)):
-            maze = int(batch["maze_id"][b])
-            occ_map = occ_maps[maze]
+            occ_map = occ_all[b]
             p_runs = [run["p"][b].cpu().numpy() for run in runs]
             agg["traj_collision"].append(
                 float(np.mean([1.0 if _collides(p, occ_map) else 0.0
                                for p in p_runs])))
-            agg["goal_dist"].append(float(np.mean(
+            agg["goal_dist_m"].append(float(np.mean(
                 [np.linalg.norm(p[-1] - cond[b, 1].cpu().numpy())
-                 for p in p_runs])))
+                 for p in p_runs])) * SCENE_TO_METER)
             agg["smooth"].append(float(np.mean([_smoothness(p) for p in p_runs])))
+            agg["curve_rmse_m"].append(float(np.mean(
+                [np.sqrt(((p - curve_gt[b]) ** 2).sum(1).mean())
+                 for p in p_runs])) * SCENE_TO_METER)
+            agg["ctrl_rmse_m"].append(float(np.mean(
+                [np.sqrt(((run["control"][b].cpu().numpy()[1:-1]
+                           - ctrl_gt[b][1:-1]) ** 2).sum(1).mean())
+                 for run in runs])) * SCENE_TO_METER)
             if len(p_runs) > 1:
                 d = [np.linalg.norm(p_runs[i] - p_runs[j])
                      for i in range(len(p_runs)) for j in range(i + 1, len(p_runs))]
@@ -170,18 +176,17 @@ def main():
             th = runs[0]["ellipse_theta"][b].cpu().numpy()
             agg["center_free"].append(float(_free(center, occ_map).mean()))
             j, i = np.nonzero(occ_map.astype(bool))
-            cx = (i + 0.5) * 2.0 / occ_map.shape[0] - 1.0
-            cy = (j + 0.5) * 2.0 / occ_map.shape[0] - 1.0
-            d = np.sqrt((center[:, 0:1] - cx[None]) ** 2
-                        + (center[:, 1:2] - cy[None]) ** 2)
-            agg["center_min_clearance"].append(
-                float(d.min() * occ_map.shape[0] / 2.0))
+            if len(j):
+                cx = (i + 0.5) * 2.0 / occ_map.shape[0] - 1.0
+                cy = (j + 0.5) * 2.0 / occ_map.shape[0] - 1.0
+                d = np.sqrt((center[:, 0:1] - cx[None]) ** 2
+                            + (center[:, 1:2] - cy[None]) ** 2)
+                agg["center_min_clearance"].append(
+                    float(d.min() * occ_map.shape[0] / 2.0))
             pts = _ellipse_points(center, a, bb, th, rng=rng)
             agg["ellipse_collision"].append(float(np.mean(
                 [1.0 if _collides(p, occ_map) else 0.0 for p in pts])))
             agg["area"].append(float((np.pi * a * bb).mean()))
-            agg["center_mae"].append(float(np.linalg.norm(center - pos[b],
-                                                          axis=-1).mean()))
             s = runs[0]["progress"][b].cpu().numpy()
             agg["progress_violations"].append(float((np.diff(s) < -1e-6).sum()))
 
@@ -192,15 +197,18 @@ def main():
             pi = pi / max(pi.sum(), 1e-12)
             nz = pi > 1e-12
             agg["topo_entropy"].append(float(-(pi[nz] * np.log(pi[nz])).sum()))
-            gt_poly = resample_polyline(pos[b], 128)
-            dd = [normalized_dtw(gt_poly, feats[b, m]) for m in valid]
+            gt_poly = curve_gt[b]
+            dd = [normalized_dtw(gt_poly, batch["candidate_xy"][b, m].numpy())
+                  for m in valid]
             agg["recall"].append(float(min(dd) <= args.recall_tau))
             sel = int(runs[0]["selected_idx"][b])
             sel_poly = (geom[b, sel, :int(glen[b, sel])]
-                        if glen[b, sel] > 1 else feats[b, sel])
+                        if glen[b, sel] > 1 else batch["candidate_xy"][b, sel].numpy())
             agg["selected_ndtw"].append(float(normalized_dtw(
                 gt_poly, resample_polyline(sel_poly, 128))))
             agg["sel_best_rate"].append(float(sel == int(best[b])))
+            agg["pred_topo_best_rate"].append(
+                float(int(pi.argmax()) == int(best[b])))
             sel_all = [int(run["selected_idx"][b]) for run in runs]
             agg["topo_diversity"].append(float(len(set(sel_all)) > 1))
             per_step = [int(step["selected_idx"][b]) for step in runs[0]["trace"]]
@@ -225,6 +233,7 @@ def main():
     out = args.out or os.path.join(
         os.path.dirname(args.ckpt),
         "eval_%s_M%s.json" % (args.split, summary["M"]))
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))

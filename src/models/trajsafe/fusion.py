@@ -1,8 +1,12 @@
 """Final feature fusion and clean-trajectory denoiser (report sections 21/22).
 
-    Z_i = [h_i^traj ; h_i^prog ; h_i^ell]        (3D channels)
+    Z_i = [h_i^traj ; h_i^path ; h_i^ell]        (3D channels)
     F   = MLP_fuse(Z)                           (LN(3D) -> 2D -> GELU -> D)
     H_clean = FinalDenoiser_{N_F}(F, C_G, h_t)
+
+``h_path`` is the output of ``PathFeatureHead`` (the renamed former MLP_prog);
+it is NOT a learned-progress feature.  The progress feeding the ellipse centre
+decoder is the fixed buffer ``s_i = i/127`` inside the planner.
 
 The Final Denoiser blocks have exactly the structure of the Trajectory Backbone
 ``TrajBlock`` (AdaLN self-attention -> AdaLN global-map cross-attention ->
@@ -31,9 +35,9 @@ class FusionMLP(nn.Module):
             nn.Linear(2 * d_model, d_model),
         )
 
-    def forward(self, h_traj: torch.Tensor, h_prog: torch.Tensor,
+    def forward(self, h_traj: torch.Tensor, h_path: torch.Tensor,
                 h_ell: torch.Tensor) -> torch.Tensor:
-        return self.net(torch.cat([h_traj, h_prog, h_ell], dim=-1))
+        return self.net(torch.cat([h_traj, h_path, h_ell], dim=-1))
 
 
 class FinalDenoiser(nn.Module):
