@@ -1,0 +1,38 @@
+[
+  {
+    "name": "A_oneshot",
+    "note": "Arm A：一步到位 —— 从零开始直接开启历史安全反馈（两步 rollout）训练。用于和 Arm B（先基座、再反馈微调）对比。65 epoch ≈ 2.4 h（实测带 rollout 约 119 s/epoch + val）。",
+    "config": "configs/config_160k8p.yaml",
+    "ckpt_dir": "outputs/campaign_a_oneshot/ckpt",
+    "out_dir": "outputs/campaign_a_oneshot",
+    "epochs": 65,
+    "max_hours": 2.4,
+    "batch": 8,
+    "accum": 2,
+    "lr": 2e-4
+  },
+  {
+    "name": "B1_base",
+    "note": "Arm B 阶段1：基座训练，关闭 feedback（单步），等价参考 run 的 recipe。100 epoch ≈ 1.4 h（实测 41-50 s/epoch）。参考 run 的任务指标在 epoch 175 达峰，今晚按墙钟取 100。",
+    "config": "configs/config_160k8p_s1.yaml",
+    "ckpt_dir": "outputs/campaign_b1_base/ckpt",
+    "out_dir": "outputs/campaign_b1_base",
+    "epochs": 100,
+    "max_hours": 1.5,
+    "batch": 16,
+    "lr": 2e-4
+  },
+  {
+    "name": "B2_feedback",
+    "note": "Arm B 阶段2：从 B1 的 best_task.pt 初始化，开启 feedback 两步 rollout 微调 42 epoch（lr 5e-5 = 基座的 1/4，batch 8 × accum 2），≈1.6 h。",
+    "config": "configs/config_160k8p.yaml",
+    "ckpt_dir": "outputs/campaign_b2_feedback/ckpt",
+    "out_dir": "outputs/campaign_b2_feedback",
+    "epochs": "+42",
+    "max_hours": 1.6,
+    "batch": 8,
+    "accum": 2,
+    "lr": 5e-5,
+    "resume_best_task_of": "B1_base"
+  }
+]

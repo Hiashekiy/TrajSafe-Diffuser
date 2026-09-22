@@ -1,0 +1,45 @@
+# ============================================================
+# config_160k8p_s1 —— 阶段 1：基座训练（关闭历史安全反馈）
+#
+# 数据与阶段 2 完全一致（data/carla_processed_160k8p），只改三件事：
+#   * model.feedback.enabled: false   不构建 FeedbackEncoder / FeedbackFusion
+#                                     （等价于旧网络，逐位一致）
+#   * train.feedback.rollout: false   不做两步真实 rollout（回到单步训练）
+#   * train.epochs: 200               stage-1 预算（依据见下）
+# 其余（数据、几何、损失权重、lr、batch、alm 段）全部继承 config_160k8p.yaml。
+#
+# 为什么是 200 epoch？
+#   参照 run `outputs/bspline_carla_160k8`（同一份数据的 k=8 版本、同一套 recipe）：
+#     * 最长那次跑到 epoch 264，任务指标
+#         task = curve_rmse_m + 80 * collision_rate
+#       的最好成绩出现在 **epoch 175**，此后 175 -> 264 共 89 个 epoch 再没刷新；
+#     * 另一次从零开始的 111-epoch run（training_summary.json）最好在 epoch 50
+#       （task 28.35，rmse 22.32 m，coll 0.0754），50 -> 110 一直在 30~33 徘徊；
+#       而 val 总损失的最小值出现在 epoch 10（0.4263），之后被 L_topo 的 CE
+#       过拟合抬高到 1.3+，所以 best.pt(epoch 10) 不能当作任务模型，
+#       任务模型应取 best_task.pt；
+#   => 任务指标的有效改善窗口约在 epoch 175 附近结束，故 stage-1 预算取 200
+#      （+14% 余量）：短了会截断改善窗口，再长只是重复 plateau。
+#   实测速度 ~40-53 s/epoch（train 3850 / val 1550，batch 16），200 epoch ≈ 2.5 h，
+#   因此 max_hours 设 4.0 作为墙钟保险。
+#
+# 阶段 2（本文件不启用）：
+#   python scripts/night_train.py --config configs/config_160k8p.yaml \
+#       --resume outputs/bspline_carla_160k8p_s1/ckpt/best_task.pt \
+#       --lr 5e-5 --batch-size 8 --accum 2 \
+#       --ckpt-dir outputs/bspline_carla_160k8p/ckpt \
+#       --out-dir  outputs/bspline_carla_160k8p --max-hours 5.0
+# ============================================================
+base: "configs/config_160k8p.yaml"
+
+model:
+  feedback:
+    enabled: false          # 阶段 1：不构建反馈模块（旧网络行为）
+
+train:
+  epochs: 200               # 依据见文件头：参考 run 的 best_task 在 epoch 175
+  lr: 2.0e-4                # 与参考 run 相同
+  max_hours: 4.0            # 墙钟保险（200 epoch 预计 ~2.5 h）
+  ckpt_dir: "outputs/bspline_carla_160k8p_s1/ckpt"
+  feedback:
+    rollout: false          # 阶段 1：单步训练，不做两步 rollout
