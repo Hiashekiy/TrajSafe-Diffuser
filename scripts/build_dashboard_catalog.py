@@ -104,10 +104,16 @@ def main():
         if (len(samples)) % 8 == 0:
             print("[catalog] %d/%d" % (len(samples), len(idxs)), flush=True)
 
-    ckpt_dir = os.path.join(ROOT, "outputs", "bspline_carla", "ckpt")
-    ckpts = {}
-    summary = os.path.join(ROOT, "outputs", "bspline_carla",
-                           "training_summary.json")
+    # Derive the run directory from --processed so one script serves every
+    # dataset, instead of hard-coding the 80 m run:
+    #   data/carla_processed        -> outputs/bspline_carla
+    #   data/carla_processed_160k8  -> outputs/bspline_carla_160k8
+    base = os.path.basename(os.path.normpath(args.processed))
+    suffix = base[len("carla_processed"):] \
+        if base.startswith("carla_processed") else ""
+    run_dir = os.path.join(ROOT, "outputs", "bspline_carla" + suffix)
+    ckpt_dir = os.path.join(run_dir, "ckpt")
+    summary = os.path.join(run_dir, "training_summary.json")
     epochs = {}
     if os.path.exists(summary):
         with open(summary, encoding="utf-8") as f:
@@ -115,16 +121,27 @@ def main():
         epochs = {"best_task": d.get("best_task_epoch"),
                   "best": d.get("best_epoch"),
                   "latest": d.get("epochs_done")}
-    for name in ("best_task", "best", "latest", "best_run1"):
+    ckpts = {}
+    for name in ("best_task", "latest", "best", "best_run1"):
         p = os.path.join(ckpt_dir, name + ".pt")
-        if os.path.exists(p):
-            ckpts[name] = "%s.pt (epoch %s)" % (name, epochs.get(name))
+        if not os.path.exists(p):
+            continue
+        # the checkpoint file itself is the source of truth; the training
+        # summary may describe a different (or unfinished) run
+        epoch = None
+        try:
+            import torch
+            epoch = torch.load(p, map_location="cpu",
+                               weights_only=False).get("epoch")
+        except Exception:
+            epoch = epochs.get(name)
+        ckpts[name] = "%s.pt (epoch %s)" % (name, epoch)
 
     catalog = {
         "provenance": {
-            "dataset": "data/carla_processed/%s" % args.split,
+            "dataset": "%s/%s" % (args.processed, args.split),
             "checkpoints": ckpts,
-            "sceneUnits": "[-1,1]^2 (80 m local crop, CARLA local frame)",
+            "sceneUnits": "[-1,1]^2 (160 m local crop, CARLA local frame)",
             "horizon": 128,
             "timesteps": 16,
             "diffusionState": "32 cubic B-spline controls -> 128-point curve",

@@ -46,9 +46,21 @@ export default defineConfig(async () => {
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+      // Atomic file editors keep a scratch directory next to the target while
+      // writing (".<name>.<pid>.<uuid>.tmpdir/<name>.tmp"). On Windows Vite's
+      // watcher throws EBUSY on that path and the whole dev server dies, so
+      // those scratch paths are ignored explicitly.
+      watch: {
+        ...(isCodexSeatbeltSandbox
+          ? { useFsEvents: false, usePolling: true }
+          : {}),
+        ignored: ['**/.*.tmpdir', '**/.*.tmpdir/**'],
+      },
+    },
     plugins: [
       vinext(),
       sites(),

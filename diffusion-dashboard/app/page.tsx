@@ -1,17 +1,19 @@
 'use client';
 
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { Activity, Ban, Box, ChevronLeft, ChevronRight, CircleDot, Database, Eraser, Flag, Gauge, Layers3, LoaderCircle, Maximize2, MousePointer2, Pause, Play, RotateCcw, Save, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Activity, Ban, Box, ChevronLeft, ChevronRight, CircleDot, Database, Eraser, Flag, Gauge, Layers3, LoaderCircle, Maximize2, MousePointer2, Pause, Play, RotateCcw, Save, Shuffle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import rawCatalog from '@/lib/dashboard-catalog-carla.json';
+import rawCatalog from '@/lib/dashboard-catalog-carla-160k8.json';
 
 type Vec = [number, number];
-type Sample = { key: string; maze: string; datasetId: number; condition: Vec[]; groundTruth: { P: Vec[]; control?: Vec[] }; quality?: { curve_rmse_m: number; collision: boolean } };
-type Catalog = { provenance: { dataset: string; checkpoints: Record<string, string>; horizon: number; timesteps: number }; maps: Record<string, { resolution: number; wallRuns: number[][] }>; samples: Sample[] };
+type SampleMap = { resolution: number; wallRuns: number[][] };
+type Sample = { key: string; split?: string; maze: string; datasetId: number; condition: Vec[]; groundTruth: { P: Vec[]; control?: Vec[] }; map: SampleMap; quality?: { curve_rmse_m: number; collision: boolean } };
+type SplitEntry = { name: string; count: number };
+type Catalog = { provenance: { dataset: string; checkpoints: Record<string, string>; horizon: number; timesteps: number }; maps?: Record<string, SampleMap>; samples?: Sample[] };
 type AlmRegion = { i: number; polygon: Vec[] };
 type CorridorCell = { i: number; source: string; anchor_s: number; center: Vec; face_count: number; valid: boolean; polygon: Vec[] };
 type BridgeGap = { gap: number; anchor_s: number; center: Vec; overlap_left: number; overlap_right: number; overlap_before: number };
@@ -31,12 +33,17 @@ type DisplayMode = 'state' | 'prediction' | 'compare';
 type CustomObstacle = { x: number; y: number; r: number };
 const data = rawCatalog as unknown as Catalog;
 const API = 'http://localhost:8765';
+// The dataset is browsed split-first (train/val/test), then sample-inside-split
+// (random or by index): the sample metadata is fetched from the backend
+// (/sample) instead of being baked into this bundle, so every one of the 5820
+// tasks is reachable, not just a pre-selected page of them.
+const SPLITS = ['train', 'val', 'test'] as const;
+const EMPTY_SAMPLE: Sample = { key: '—', split: 'test', maze: 'carla_0000', datasetId: 0, condition: [[0, 0], [0, 0]], groundTruth: { P: [] }, map: { resolution: 256, wallRuns: [] } };
 
 const models = [
-  { id: 'best_task', name: 'best_task · ep449', source: 'ckpt/best_task.pt · 任务指标最优' },
-  { id: 'best', name: 'best · ep420', source: 'ckpt/best.pt · val 最优' },
-  { id: 'latest', name: 'latest · ep469', source: 'ckpt/latest.pt · 训练末' },
-  { id: 'best_run1', name: 'run1 · ep184', source: 'ckpt/best_run1.pt · 第一段' },
+  { id: 'best_task', name: 'best_task · ep175', source: 'ckpt/best_task.pt · 任务指标最优' },
+  { id: 'latest', name: 'latest · ep111', source: 'ckpt/latest.pt · 训练末' },
+  { id: 'best', name: 'best · ep10', source: 'ckpt/best.pt · val 最优' },
 ];
 const mazeNames: Record<string, string> = { umaze: 'U-Maze', medium: 'Medium', large: 'Large' };
 const mazeLabel = (key: string): string => mazeNames[key] ?? key.replace('carla_', 'CARLA #');
@@ -61,10 +68,16 @@ const ellipseColor = (idx: number, total: number): { stroke: string; fill: strin
 };
 
 export default function Home() {
-  const [sampleKey, setSampleKey] = useState(data.samples[0].key);
+  const [split, setSplit] = useState<string>(SPLITS[2]);
+  const [splitCounts, setSplitCounts] = useState<Record<string, number>>({});
+  const [sampleIndex, setSampleIndex] = useState(0);
+  const [indexInput, setIndexInput] = useState('0');
+  const [loaded, setLoaded] = useState<Sample | null>(null);
+  const [sampleError, setSampleError] = useState('');
+  const [datasetRoot, setDatasetRoot] = useState(data.provenance.dataset.replace(/\/[^/]+$/, ''));
   const [modelId, setModelId] = useState(models[0].id);
   const [seed, setSeed] = useState(43);
-  const [condition, setCondition] = useState<[Vec, Vec]>([data.samples[0].condition[0], data.samples[0].condition[1]] as [Vec, Vec]);
+  const [condition, setCondition] = useState<[Vec, Vec]>(EMPTY_SAMPLE.condition as [Vec, Vec]);
   const [obstacles, setObstacles] = useState<CustomObstacle[]>([]);
   const [editMode, setEditMode] = useState<EditMode>('none');
   const [displayMode, setDisplayMode] = useState<DisplayMode>('prediction');
@@ -79,9 +92,9 @@ export default function Home() {
   const [speed, setSpeed] = useState(1);
   const [layers, setLayers] = useState<Record<string, boolean>>({ state: true, ellipses: true, waypoints: true, controls: true, gtControls: false, result: true, groundTruth: true, map: true, rawX0: true, regions: true, topology: true });
 
-  const sample = data.samples.find((item) => item.key === sampleKey)!;
+  const sample = loaded ?? EMPTY_SAMPLE;
   const model = models.find((item) => item.id === modelId)!;
-  const map = data.maps[sample.maze];
+  const map = sample.map;
   const maxStep = history ? history.state_labels.length - 1 : 16;
   const safeStep = Number.isFinite(reverseStep) ? Math.max(0, Math.min(maxStep, reverseStep)) : 0;
   const stateLabel = history?.state_labels[safeStep] ?? '—';
@@ -110,18 +123,53 @@ export default function Home() {
   useEffect(() => { if (!playing || !history) return; const timer = window.setInterval(() => setReverseStep((value) => value >= maxStep ? 0 : value + 1), 700 / speed); return () => window.clearInterval(timer); }, [playing, speed, history, maxStep]);
 
   const invalidate = () => { setHistory(null); setStatus('idle'); setStatusText('参数已变化，请重新生成'); setReverseStep(0); setPlaying(false); };
+  const sampleRequest = useRef(0);
+  const loadSample = async (nextSplit: string, index: number) => {
+    const token = ++sampleRequest.current;
+    setSampleIndex(Math.max(0, Math.trunc(index))); setIndexInput(String(Math.max(0, Math.trunc(index)))); setPlaying(false);
+    try {
+      const response = await fetch(`${API}/sample?split=${encodeURIComponent(nextSplit)}&index=${Math.max(0, Math.trunc(index))}`);
+      const payload = await response.json();
+      if (token !== sampleRequest.current) return;
+      if (!response.ok) throw new Error(payload?.error || '样本加载失败');
+      const next = payload as Sample;
+      setLoaded(next); setCondition([next.condition[0], next.condition[1]] as [Vec, Vec]);
+      setObstacles([]); setEditMode('none'); setSampleError('');
+      setHistory(null); setStatus('idle'); setStatusText(`${next.key} 已载入，生成后可查看扩散序列`); setReverseStep(0);
+    } catch (error) {
+      if (token === sampleRequest.current) setSampleError(error instanceof Error ? error.message : '样本加载失败');
+    }
+  };
+  const changeSplit = (next: string) => { setSplit(next); void loadSample(next, 0); };
+  const goToIndex = (raw?: string) => {
+    const total = splitCounts[split] ?? 0; if (total <= 0) return;
+    const value = Number(raw ?? indexInput);
+    void loadSample(split, Number.isFinite(value) ? Math.max(0, Math.min(total - 1, Math.trunc(value))) : 0);
+  };
+  const chooseRelative = (delta: number) => {
+    const total = splitCounts[split] ?? 0; if (total <= 0) return;
+    void loadSample(split, ((sampleIndex + delta) % total + total) % total);
+  };
+  const randomSample = () => {
+    const total = splitCounts[split] ?? 0; if (total <= 0) return;
+    void loadSample(split, Math.floor(Math.random() * total));
+  };
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API}/splits`).then((r) => r.ok ? r.json() : Promise.reject(new Error(String(r.status)))).then((info) => { if (!alive) return; const counts: Record<string, number> = {}; for (const entry of (info?.splits ?? []) as SplitEntry[]) counts[String(entry.name)] = Number(entry.count) || 0; setSplitCounts(counts); const ds = String(info?.provenance?.dataset ?? ''); if (ds) setDatasetRoot(ds.replace(/\/[^/]+$/, '')); }).catch(() => {});
+    void loadSample('test', 0);
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const generate = async () => {
     setStatus('running'); setStatusText('正在运行 16 步联合扩散…'); setPlaying(false);
     try {
-      const response = await fetch(`${API}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sample_key: sampleKey, model_id: modelId, seed, condition, obstacles: obstacles.map((item)=>[item.x,item.y,item.r]), alm_enabled: almEnabled }) });
+      const response = await fetch(`${API}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sample_key: sample.key, split, model_id: modelId, seed, condition, obstacles: obstacles.map((item)=>[item.x,item.y,item.r]), alm_enabled: almEnabled }) });
       const result = (await response.json()) as Generation; if (!response.ok) throw new Error(result.error || '生成失败');
       setHistory(result); setReverseStep(Math.max(0, (result.state_labels?.length ?? 1) - 1)); setStatus('ready'); setStatusText(result.cache_hit ? `缓存命中 · ${result.elapsed_ms} ms` : `GPU 生成并已缓存 · ${result.elapsed_ms} ms`);
     } catch (error) { setStatus('error'); setStatusText(error instanceof Error ? error.message : '无法连接生成服务'); }
   };
 
-  const sampleIndex = data.samples.findIndex((item) => item.key === sampleKey);
-  const selectSample = (nextSample: Sample) => { setSampleKey(nextSample.key); setCondition([nextSample.condition[0],nextSample.condition[1]] as [Vec,Vec]); setObstacles([]); invalidate(); };
-  const chooseRelative = (delta: number) => { const next = (sampleIndex + delta + data.samples.length) % data.samples.length; selectSample(data.samples[next]); };
   const handleCanvasClick = (event: ReactMouseEvent<SVGSVGElement>) => {
     if(editMode==='none'||status==='running')return;
     const rect=event.currentTarget.getBoundingClientRect();
@@ -141,8 +189,8 @@ export default function Home() {
     <header className="topbar"><div className="brand-mark"><Sparkles size={18}/></div><div><h1>Diffusion Lens</h1><p>{'TrajSafe-Diffuser · CARLA + 32-control B-spline 控制点扩散（每步重选骨架）'}</p></div><div className={`status-pill ${backendReady && !engineMismatch ?'online':'offline'}`} title={engineMismatch?'当前 8765 端口跑的是旧 Maze2D 推理服务：请关掉那个窗口，重新运行 diffusion-dashboard\\backend.py，然后刷新页面':''}><span/> {!backendReady?'SERVICE OFFLINE':engineMismatch?'WRONG BACKEND (legacy Maze2D) — 请重启 backend.py':'GPU SERVICE READY'}</div></header>
     <div className="workspace">
       <aside className="left-rail">
-        <section><div className="section-label"><Database size={14}/> 数据源</div><div className="source-card"><strong>carla_processed/test</strong><span>CARLA 80 m crop · 256×256 · H=128 · C={packSummary?.num_controls ?? '?'} controls</span></div></section>
-        <section><label className="field-label">数据集样本</label><Select value={sampleKey} onValueChange={(value)=>selectSample(data.samples.find((item)=>item.key===value)!)}><SelectTrigger className="control-select"><SelectValue/></SelectTrigger><SelectContent alignItemWithTrigger={false} sideOffset={4}>{data.samples.map((item)=><SelectItem key={item.key} value={item.key}>#{item.datasetId}{item.quality ? ` · ${item.quality.curve_rmse_m.toFixed(2)} m` : ''}</SelectItem>)}</SelectContent></Select><div className="sample-nav"><Button variant="outline" size="icon-sm" aria-label="上一个样本" onClick={()=>chooseRelative(-1)}><ChevronLeft/></Button><span>{sampleIndex+1} / {data.samples.length}</span><Button variant="outline" size="icon-sm" aria-label="下一个样本" onClick={()=>chooseRelative(1)}><ChevronRight/></Button></div></section>
+        <section><div className="section-label"><Database size={14}/> 数据源</div><div className="source-card"><strong>{datasetRoot}/{split}</strong><span>CARLA 160 m crop · 256×256 · H=128 · C={packSummary?.num_controls ?? '?'} controls</span><span>train {splitCounts.train ?? '—'} · val {splitCounts.val ?? '—'} · test {splitCounts.test ?? '—'}</span></div></section>
+        <section><label className="field-label">数据划分</label><Select value={split} onValueChange={(value)=>changeSplit(value as string)}><SelectTrigger className="control-select"><SelectValue/></SelectTrigger><SelectContent alignItemWithTrigger={false} sideOffset={4}>{SPLITS.map((name)=><SelectItem key={name} value={name}>{name} · {splitCounts[name] ?? '—'} 个样本</SelectItem>)}</SelectContent></Select><label className="field-label seed-label" htmlFor="sampleIndex">样本编号（回车跳转）</label><div className="sample-jump"><Input id="sampleIndex" className="seed-input" type="number" min={0} max={Math.max(0,(splitCounts[split] ?? 1) - 1)} value={indexInput} onChange={(event)=>setIndexInput(event.target.value)} onKeyDown={(event)=>{if(event.key==='Enter')goToIndex();}} onBlur={()=>goToIndex()}/><Button variant="outline" size="icon-sm" aria-label="随机抽取样本" title="随机抽取样本" onClick={randomSample}><Shuffle/></Button></div><div className="sample-nav"><Button variant="outline" size="icon-sm" aria-label="上一个样本" onClick={()=>chooseRelative(-1)}><ChevronLeft/></Button><span>{sampleIndex+1} / {splitCounts[split] ?? '—'}</span><Button variant="outline" size="icon-sm" aria-label="下一个样本" onClick={()=>chooseRelative(1)}><ChevronRight/></Button></div><div className="model-meta"><span>{sample.key}</span><span>{sampleError || `${split} 划分`}</span></div></section>
         <section><label className="field-label">模型 checkpoint</label><Select value={modelId} onValueChange={(value)=>{setModelId(value as string);invalidate();}}><SelectTrigger className="control-select model-select"><SelectValue/></SelectTrigger><SelectContent alignItemWithTrigger={false} sideOffset={4}>{models.map((item)=><SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select><div className="model-meta"><span>{model.source}</span><span>16 steps</span></div><label className="field-label seed-label">展示状态</label><Select value={displayMode} onValueChange={(value)=>setDisplayMode(value as DisplayMode)}><SelectTrigger className="control-select display-select"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="prediction">每步 x₀ prediction</SelectItem><SelectItem value="state">当前 noisy state Pₜ</SelectItem><SelectItem value="compare">x₀ prediction + noisy state</SelectItem></SelectContent></Select><div className="layer-row"><span className="legend-dot" style={{background:'#c7ff4a'}}/><label htmlFor="almEnabled">安全走廊 + B-spline ALM 引导（16 步中冻结走廊后逐步修正）</label><Switch id="almEnabled" checked={almEnabled} onCheckedChange={(checked)=>{setAlmEnabled(checked);invalidate();}}/></div><label className="field-label seed-label" htmlFor="seed">随机种子</label><Input id="seed" className="seed-input" type="number" min={0} max={2147483647} value={seed} onChange={(event)=>{setSeed(Math.max(0,Number(event.target.value)||0));invalidate();}}/><Button className="generate-button" disabled={status==='running'||!backendReady} onClick={generate}>{status==='running'?<LoaderCircle className="spin"/>:<Sparkles/>}{status==='running'?'生成中…':'生成扩散序列'}</Button><div className={`generation-status ${status}`}><Save size={12}/>{statusText}</div></section>
         <section className="layer-section"><div className="section-label"><Layers3 size={14}/> 显示元素</div>{layerConfig.map((item)=><div className="layer-row" key={item.key}><span className="legend-dot" style={{background:item.color}}/><label htmlFor={item.key}>{item.label}</label><Switch id={item.key} checked={layers[item.key]} onCheckedChange={(checked)=>setLayers((old)=>({...old,[item.key]:checked}))}/></div>)}</section>
       </aside>

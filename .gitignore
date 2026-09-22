@@ -33,6 +33,12 @@ outputs/
 .DS_Store
 Thumbs.db
 
+# dashboard runtime artifacts (logs + one-shot GPU payload cache)
+diffusion-dashboard/*.log
+diffusion-dashboard/cache-carla/
+diffusion-dashboard/.wrangler/
+diffusion-dashboard/.*.tmpdir/
+
 # archive
 _archive/
 

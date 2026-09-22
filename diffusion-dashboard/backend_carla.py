@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 import torch
@@ -49,42 +50,118 @@ CACHE_FORMAT = PAYLOAD_FORMAT
 # control count: it identifies the control-space backend, the actual C travels
 # in the payload (``pack_summary.num_controls``) and comes from the config.
 CONTROL_SPACE_ENGINE = "carla-controlspace-32"
-CATALOG_PATH = os.path.join(SITE_ROOT, "lib", "dashboard-catalog-carla.json")
+CATALOG_PATH = os.path.join(SITE_ROOT, "lib",
+                             "dashboard-catalog-carla-160k8.json")
+
+# The panel browses the WHOLE processed dataset instead of a pre-baked list:
+# the split is picked first (train/val/test), then the sample inside it, either
+# randomly or by typing its index.  ``/splits`` and ``/sample`` serve that
+# metadata on demand, so nothing has to be baked into the front-end bundle.
+SPLITS = ("train", "val", "test")
+RES = 256
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
     catalog = json.load(handle)
-sample_lookup = {sample["key"]: sample for sample in catalog["samples"]}
 occupancy_cache = {}
 
 
-def resolve_sample(sample_key: str) -> int:
-    """sample_key -> dataset index.
+def normalize_split(split) -> str:
+    name = str("test" if split is None else split).strip().lower()
+    if name not in SPLITS:
+        raise ValueError("未知数据划分 %r（可选：%s）"
+                         % (split, ", ".join(SPLITS)))
+    return name
 
-    Accepts the catalog keys ("test_0018") and, so that a stale front-end bundle
-    or a hand-typed key can never break the panel, any "<name>_<digits>" key
-    whose digits are a valid index of the processed split.
+
+def split_size(split: str) -> int:
+    return int(len(get_engine().split_data(split)["conditions"]))
+
+
+def parse_key(sample_key):
+    """Sample key -> (split or None, index or None).
+
+    "test_0018" -> ("test", 18);  "18" -> (None, 18);  "val" -> ("val", None).
     """
-    if sample_key in sample_lookup:
-        return int(sample_lookup[sample_key]["datasetId"])
-    digits = "".join(ch for ch in str(sample_key) if ch.isdigit())
+    text = str(sample_key).strip().lower()
+    if "_" in text:
+        head, _, tail = text.rpartition("_")
+        if head in SPLITS and tail.isdigit():
+            return head, int(tail)
+    if text in SPLITS:
+        return text, None
+    digits = "".join(ch for ch in text if ch.isdigit())
     if digits:
-        index = int(digits)
-        n = len(get_engine().split_data("test")["conditions"])
-        if 0 <= index < n:
-            return index
-    raise ValueError("未知样本 %r（可选：%s …）"
-                     % (sample_key, ", ".join(sorted(sample_lookup)[:4])))
+        return None, int(digits)
+    raise ValueError("无法识别的样本 %r" % (sample_key,))
 
 
-def sample_occupancy(index: int) -> np.ndarray:
-    if index not in occupancy_cache:
+def resolve_sample(sample_key, split=None):
+    """(sample_key, split) -> (split, index).
+
+    The split chosen in the panel wins; otherwise it comes from the key prefix
+    ("train_0100") and finally falls back to test, so a stale front-end bundle
+    or a hand-typed key can never break the panel.
+    """
+    key_split, index = parse_key(sample_key)
+    name = normalize_split(split) if split else (key_split or "test")
+    if index is None:
+        index = 0
+    n = split_size(name)
+    if not 0 <= index < n:
+        raise ValueError("%s 的样本编号 %d 超出范围（0 … %d）"
+                         % (name, index, n - 1))
+    return name, index
+
+
+def sample_occupancy(split: str, index: int) -> np.ndarray:
+    key = (split, int(index))
+    if key not in occupancy_cache:
         engine = get_engine()
-        occupancy_cache[index] = engine.sample_arrays("test", index)[0]
+        occupancy_cache[key] = engine.sample_arrays(split, int(index))[0]
         if len(occupancy_cache) > 64:
             occupancy_cache.pop(next(iter(occupancy_cache)))
-    return occupancy_cache[index].copy()
+    return occupancy_cache[key].copy()
+
+
+def wall_runs(occupancy: np.ndarray):
+    """Canonical occupancy [256,256] -> [[x, y_svg, width], ...] (SVG pixels)."""
+    occ = np.asarray(occupancy) > 0.5
+    runs = []
+    for row in range(occ.shape[0]):
+        y_svg = RES - 1 - row                  # scene y=-1 is the bottom row
+        line = occ[row]
+        x = 0
+        while x < line.shape[0]:
+            if not line[x]:
+                x += 1
+                continue
+            start = x
+            while x < line.shape[0] and line[x]:
+                x += 1
+            runs.append([int(start), int(y_svg), int(x - start)])
+    return runs
+
+
+def sample_metadata(split: str, index: int):
+    """Everything the panel needs for ONE sample (occupancy is not included:
+    it is drawn from the run-length map, and the sampler reads it directly)."""
+    eng = get_engine()
+    occupancy, condition, curve_gt = eng.sample_arrays(split, index)
+    gt = {"P": np.round(curve_gt, 5).tolist()}
+    control_gt = eng.split_control_gt(split, index)
+    if control_gt is not None:
+        gt["control"] = np.round(control_gt, 5).tolist()
+    return {
+        "key": "%s_%04d" % (split, int(index)),
+        "split": split,
+        "datasetId": int(index),
+        "maze": "carla_%04d" % int(index),
+        "condition": np.round(condition, 5).tolist(),
+        "groundTruth": gt,
+        "map": {"resolution": RES, "wallRuns": wall_runs(occupancy)},
+    }
 
 
 def apply_obstacles(occupancy: np.ndarray, obstacles):
@@ -123,11 +200,11 @@ def clear_generation_cache():
 
 @torch.no_grad()
 def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
-             obstacles=None, alm_enabled: bool | None = None):
-    index = resolve_sample(sample_key)
+             obstacles=None, alm_enabled: bool | None = None, split=None):
+    split, index = resolve_sample(sample_key, split)
     eng = get_engine()
-    base = sample_occupancy(index)
-    default_condition = eng.split_data("test")["conditions"][index]
+    base = sample_occupancy(split, index)
+    default_condition = eng.split_data(split)["conditions"][index]
     condition = np.asarray(
         custom_condition if custom_condition is not None else default_condition,
         dtype=np.float32)
@@ -135,10 +212,11 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
             or np.abs(condition).max() > 1:
         raise ValueError("起终点必须是 [-1,1]² 内的两个坐标")
     occupancy = apply_obstacles(base, obstacles)
-    payload = eng.generate(sample_key, "test", index, occupancy, condition,
+    payload = eng.generate(sample_key, split, index, occupancy, condition,
                            seed, model_id=model_id,
                            verify_regions=False,
                            alm_enabled=alm_enabled is not False)
+    payload["split"] = split
     payload["obstacles"] = obstacles or []
     payload["format"] = PAYLOAD_FORMAT
     if alm_enabled is False:
@@ -172,16 +250,37 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             self.send_json(200, {
                 "status": "ready", "device": str(device),
                 "engine": CONTROL_SPACE_ENGINE,
                 "format": PAYLOAD_FORMAT,
                 "features": ["control_history", "topology", "ellipse_history",
-                             "corridor", "alm_stats", "raw_vs_safe"],
+                             "corridor", "alm_stats", "raw_vs_safe",
+                             "splits"],
                 "checkpoints": sorted(CHECKPOINTS.keys()),
-                "samples": len(sample_lookup),
+                "splits": {name: split_size(name) for name in SPLITS},
                 "cached": len(os.listdir(CACHE_DIR))})
+        elif parsed.path == "/splits":
+            self.send_json(200, {
+                "engine": CONTROL_SPACE_ENGINE, "format": PAYLOAD_FORMAT,
+                "splits": [{"name": name, "count": split_size(name)}
+                           for name in SPLITS],
+                "provenance": catalog.get("provenance", {}),
+                "checkpoints": sorted(CHECKPOINTS.keys())})
+        elif parsed.path == "/sample":
+            try:
+                query = parse_qs(parsed.query)
+                split = normalize_split(query.get("split", ["test"])[0])
+                index = int(query.get("index", ["0"])[0])
+                n = split_size(split)
+                if not 0 <= index < n:
+                    raise ValueError("%s 的样本编号 %d 超出范围（0 … %d）"
+                                     % (split, index, n - 1))
+                self.send_json(200, sample_metadata(split, index))
+            except Exception as error:
+                self.send_json(400, {"error": str(error)})
         else:
             self.send_json(404, {"error": "not found"})
 
@@ -192,12 +291,14 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
             sample_key = request.get("sample_key")
+            split = request.get("split")
             model_id = request.get("model_id")
             seed = int(request.get("seed", 42))
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
             alm_enabled = request.get("alm_enabled")
-            resolve_sample(sample_key)
+            resolved_split, resolved_index = resolve_sample(sample_key, split)
+            sample_key = "%s_%04d" % (resolved_split, resolved_index)
             if model_id not in CHECKPOINTS:
                 raise ValueError("未知模型")
             if seed < 0 or seed > 2_147_483_647:
@@ -206,7 +307,8 @@ class Handler(BaseHTTPRequestHandler):
                 {"format": CACHE_FORMAT, "engine": CONTROL_SPACE_ENGINE,
                  "features": ["control_history", "topology", "corridor",
                               "alm_stats", "raw_vs_safe"],
-                 "sample": sample_key,
+                 "sample": sample_key, "split": resolved_split,
+                 "index": resolved_index,
                  "model": model_id, "seed": seed, "condition": custom_condition,
                  "obstacles": obstacles},
                 sort_keys=True, separators=(",", ":"))
@@ -224,7 +326,8 @@ class Handler(BaseHTTPRequestHandler):
                     clear_generation_cache()
                     result = generate(sample_key, model_id, seed,
                                       custom_condition, obstacles,
-                                      alm_enabled=alm_enabled)
+                                      alm_enabled=alm_enabled,
+                                      split=resolved_split)
                     with open(cache_path, "w", encoding="utf-8") as handle:
                         json.dump(result, handle, separators=(",", ":"))
             result["elapsed_ms"] = round(

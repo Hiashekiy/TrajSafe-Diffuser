@@ -42,14 +42,15 @@ from src.geometry.skeleton_paths import (CandidateConfig, generate_candidates,
                                          normalized_dtw)
 from src.models.trajsafe import TrajSafePlanner
 
+# Checkpoints of the carla_full_160_256 (k=8 eroded) run.  The dashboard is
+# a viewer for ONE dataset+model pair, so these paths are the switch:
+#   configs/config_160k8.yaml   -> data/carla_processed_160k8
+#   outputs/bspline_carla_160k8 -> this run's checkpoints
+CKPT_DIR = os.path.join(ROOT, "outputs", "bspline_carla_160k8", "ckpt")
 CHECKPOINTS = {
-    "best_task": os.path.join(ROOT, "outputs", "bspline_carla", "ckpt",
-                              "best_task.pt"),
-    "best": os.path.join(ROOT, "outputs", "bspline_carla", "ckpt", "best.pt"),
-    "latest": os.path.join(ROOT, "outputs", "bspline_carla", "ckpt",
-                           "latest.pt"),
-    "best_run1": os.path.join(ROOT, "outputs", "bspline_carla", "ckpt",
-                              "best_run1.pt"),
+    "best_task": os.path.join(CKPT_DIR, "best_task.pt"),
+    "best": os.path.join(CKPT_DIR, "best.pt"),
+    "latest": os.path.join(CKPT_DIR, "latest.pt"),
 }
 
 # ALM stat keys that are forwarded to the dashboard (floats only).
@@ -66,7 +67,7 @@ ALM_STAT_KEYS = (
 class Engine:
     def __init__(self, device, processed_root=None):
         self.device = device
-        cfg = load_config(os.path.join(ROOT, "configs", "config.yaml"))
+        cfg = load_config(os.path.join(ROOT, "configs", "config_160k8.yaml"))
         self.cfg = cfg
         self.processed_root = os.path.abspath(
             processed_root or cfg["data"].get("processed_root",
@@ -92,13 +93,23 @@ class Engine:
     def split_data(self, split):
         if split not in self._splits:
             d = os.path.join(self.processed_root, split)
+            control_gt = os.path.join(d, "control_gt.npy")
             self._splits[split] = {
                 "conditions": np.load(os.path.join(d, "conditions.npy")),
                 "curve_gt": np.load(os.path.join(d, "curve_gt.npy")),
                 "occupancy": np.load(os.path.join(d, "occupancy.npy"),
                                      mmap_mode="r"),
+                "control_gt": (np.load(control_gt, mmap_mode="r")
+                               if os.path.exists(control_gt) else None),
             }
         return self._splits[split]
+
+    def split_control_gt(self, split, index):
+        """The dataset's 32-control GT polygon for one sample (may be absent)."""
+        data = self.split_data(split)
+        if data["control_gt"] is None:
+            return None
+        return np.asarray(data["control_gt"][int(index)], dtype=np.float32)
 
     def sample_arrays(self, split, index):
         data = self.split_data(split)
