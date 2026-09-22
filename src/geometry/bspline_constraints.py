@@ -36,6 +36,7 @@ i.e. the curve is safe everywhere, not merely on a 128-point sample grid.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -58,6 +59,51 @@ __all__ = [
 ]
 
 _MIN_PIECE_WIDTH = 1e-9
+
+# Content-keyed cache of the sample-INDEPENDENT part of a constraint pack, i.e.
+# the exact Bezier extraction and the region assignment.  Keyed by the codec's
+# knot vector, the anchor progresses and the knot boundaries, so a different
+# codec / corridor anchors can never hit a stale entry.  See
+# :func:`_piece_structure`.
+_PIECE_CACHE: "OrderedDict[tuple, tuple | None]" = OrderedDict()
+_PIECE_CACHE_MAX = 8
+
+
+def _piece_structure(codec: BSplineCodec, anchors, knot_boundaries):
+    """``(extraction [P,4,C], region [P], intervals [P,2])`` or ``None``.
+
+    This is the SAMPLE-INDEPENDENT half of a constraint pack: it only depends on
+    the codec (knots) and on the corridor anchors, so every sample of a batch -
+    and every micro-batch of a training run - shares it.  Building it costs
+    ~15 ms per sample (two numpy basis matrices per piece, ~156 pieces), which
+    dominated the training rollout, hence the cache.
+    """
+    key = (np.asarray(codec._knots64, dtype=np.float64).tobytes(),
+           int(codec.num_controls), int(codec.degree),
+           np.asarray(anchors, dtype=np.float64).tobytes(),
+           np.asarray(knot_boundaries, dtype=np.float64).tobytes())
+    if key in _PIECE_CACHE:
+        _PIECE_CACHE.move_to_end(key)
+        return _PIECE_CACHE[key]
+
+    tau, _ = responsibility_intervals(anchors)
+    u = exact_subdivision(tau, knot_boundaries)
+    a, bb = u[:-1], u[1:]
+    keep = (bb - a) > _MIN_PIECE_WIDTH
+    a, bb = a[keep], bb[keep]
+    if len(a) == 0:
+        value = None
+    else:
+        region = piece_region_assignment(u, tau, len(anchors))[keep]
+        pieces = [bezier_extraction(codec, float(ai), float(bi))
+                  for ai, bi in zip(a, bb)]
+        value = (torch.stack(pieces, dim=0),            # [P,4,C] float64 CPU
+                 region,                                # [P]
+                 np.stack([a, bb], axis=-1))            # [P,2]
+    _PIECE_CACHE[key] = value
+    while len(_PIECE_CACHE) > _PIECE_CACHE_MAX:
+        _PIECE_CACHE.popitem(last=False)
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -236,21 +282,21 @@ def _sample_pieces(codec: BSplineCodec, A_reg, b_reg, mask_reg, anchors,
     ``A_reg [M,F,2]``, ``b_reg [M,F]``, ``mask_reg [M,F]`` describe ``M`` convex
     cells (the same layout :func:`region_table` produces), ``anchors [M]`` their
     progresses.  Returns ``None`` when no usable piece exists.
+
+    The extraction / region / interval part depends ONLY on the codec knots and
+    the anchors - never on the sample - so it comes from
+    :func:`_piece_structure`, which caches it.  That matters a lot in training:
+    the two-step rollout rebuilds the pack on every micro-batch and the numpy
+    Bezier extraction was its dominant cost (measured ~15 ms/sample).
     """
-    tau, _ = responsibility_intervals(anchors)
-    u = exact_subdivision(tau, knot_boundaries)
-    a, bb = u[:-1], u[1:]
-    keep = (bb - a) > _MIN_PIECE_WIDTH
-    a, bb = a[keep], bb[keep]
-    if len(a) == 0:
+    structure = _piece_structure(codec, anchors, knot_boundaries)
+    if structure is None:
         return None
-    region = piece_region_assignment(u, tau, len(A_reg))[keep]
-    pieces = [bezier_extraction(codec, float(ai), float(bi))
-              for ai, bi in zip(a, bb)]
+    extraction, region, intervals = structure
     return {
-        "extraction": torch.stack(pieces, dim=0),            # [P,4,C]
+        "extraction": extraction,                            # [P,4,C] (shared)
         "region": region,
-        "intervals": np.stack([a, bb], axis=-1),             # [P,2]
+        "intervals": intervals,                              # [P,2] (shared)
         "A": A_reg, "b": b_reg, "mask": mask_reg,
     }
 
@@ -262,7 +308,26 @@ def _assemble_pack(per_sample, num_controls, device, dtype):
     pmax = max((p["extraction"].shape[0] for p in per_sample if p), default=0)
     fmax = max((p["A"].shape[1] for p in per_sample if p), default=0)
 
-    extraction = torch.zeros(B, pmax, 4, C, dtype=dtype, device=device)
+    # Fast path: every sample shares the SAME extraction tensor (the normal
+    # case - one anchor set for the whole batch), so a single expand + device
+    # copy replaces B per-sample copies.  This runs on every training
+    # micro-batch.
+    shared = {}
+    for pack in per_sample:
+        if pack is not None:
+            shared[id(pack["extraction"])] = pack["extraction"]
+    if len(shared) == 1 and next(iter(shared.values())).shape[0] == pmax:
+        one = next(iter(shared.values()))
+        extraction = one.to(dtype=dtype, device=device)[None].expand(
+            B, -1, -1, -1).contiguous()
+    else:
+        extraction = torch.zeros(B, pmax, 4, C, dtype=dtype, device=device)
+        for i, pack in enumerate(per_sample):
+            if pack is None:
+                continue
+            p = pack["extraction"].shape[0]
+            extraction[i, :p] = pack["extraction"].to(dtype=dtype, device=device)
+
     piece_A = torch.zeros(B, pmax, fmax, 2, dtype=dtype, device=device)
     piece_b = torch.zeros(B, pmax, fmax, dtype=dtype, device=device)
     face_mask = torch.zeros(B, pmax, fmax, dtype=torch.bool, device=device)
@@ -276,7 +341,6 @@ def _assemble_pack(per_sample, num_controls, device, dtype):
             continue
         p = pack["extraction"].shape[0]
         faces = pack["A"].shape[1]
-        extraction[i, :p] = pack["extraction"].to(dtype=dtype, device=device)
         row = pack["region"]
         # ``A`` / ``b`` / ``mask`` are torch tensors on the corridor path
         # (region_table) and numpy arrays on the offline-cache path
@@ -291,8 +355,8 @@ def _assemble_pack(per_sample, num_controls, device, dtype):
         face_mask[i, :p, :faces] = m_reg
         piece_mask[i, :p] = True
         piece_region_id[i, :p] = torch.as_tensor(row, device=device).long()
-        intervals[i, :p] = torch.as_tensor(pack["intervals"], dtype=dtype,
-                                           device=device)
+        intervals[i, :p] = torch.as_tensor(np.asarray(pack["intervals"]),
+                                           dtype=dtype, device=device)
         num_pieces[i] = p
 
     return BSplineConstraintPack(
