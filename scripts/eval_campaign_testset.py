@@ -82,6 +82,39 @@ def series(trace, key):
     return out
 
 
+def offline_corridor_metrics(p: torch.Tensor, batch: dict):
+    """Model-INDEPENDENT check: the final curve against the OFFLINE GT corridor.
+
+    The sampler builds the corridor from each model's OWN predicted ellipses, so
+    ``final_max_constraint_violation`` is measured against a different corridor
+    per model (that is the deployed protocol, but not a common yardstick).  The
+    offline cache (``alm_cell_a/b/valid``, built from the GT route by
+    ``scripts/data/carla_full/04_build_alm_constraints.py``) is IDENTICAL for
+    every model, so this is the apples-to-apples number.
+
+    ``violation(p) = min_i max_f (A_if . p - b_if)`` - the same half-space
+    semantics as ``losses.alm_corridor_loss``; positive = outside the corridor.
+    Returns ``(mean_max_violation, mean_point_membership)`` over the samples
+    whose offline corridor closed.
+    """
+    cell_a = batch["alm_cell_a"].detach().float()
+    cell_b = batch["alm_cell_b"].detach().float()
+    cell_valid = batch["alm_cell_valid"].detach().bool()
+    alm_ok = batch["alm_valid"].detach().bool()
+    if not bool(alm_ok.any()):
+        return None, None
+    nrm = cell_a.norm(dim=-1).clamp_min(1e-9)                    # [B,C,F]
+    signed = (torch.einsum("bcfk,bhk->bhcf", cell_a, p)
+              - cell_b[:, None]) / nrm[:, None]                  # [B,H,C,F]
+    worst = signed.amax(dim=-1)                                  # [B,H,C]
+    worst = worst.masked_fill(~cell_valid[:, None, :], float("inf"))
+    violation = worst.amin(dim=-1)                               # [B,H]
+    violation = torch.nan_to_num(violation, nan=0.0, posinf=0.0, neginf=0.0)
+    per_max = violation.max(dim=1).values[alm_ok]
+    per_member = (violation <= 0).float().mean(dim=1)[alm_ok]
+    return float(per_max.mean()), float(per_member.mean())
+
+
 def evaluate(name: str, config: str, ckpt: str, batch, schedule, device,
              steps: int, seed: int, scene_to_meter: float) -> dict:
     cfg = load_config(config)
@@ -98,6 +131,7 @@ def evaluate(name: str, config: str, ckpt: str, batch, schedule, device,
     err = torch.linalg.norm(p - gt, dim=-1)
     fv = out["final_validation"]
     guided = out["guided"].detach().cpu()
+    _off_max, _off_member = offline_corridor_metrics(p, batch)
     res = {
         "name": name, "ckpt": ckpt, "config": config,
         "feedback_enabled": bool(out["feedback"]["enabled"]),
@@ -105,6 +139,9 @@ def evaluate(name: str, config: str, ckpt: str, batch, schedule, device,
         "guided_rate": float(guided.float().mean()),
         "alm_status": sorted(set(out["alm_status"])),
         "curve_rmse_m": float(err.pow(2).mean().sqrt()) * scene_to_meter,
+        # model-INDEPENDENT (offline GT corridor, identical for every model)
+        "offline_corridor_max_violation": _off_max,
+        "offline_corridor_membership_rate": _off_member,
         "curve_max_err_m": float(err.max()) * scene_to_meter,
         "final_collision_rate": mean([v.get("final_collision") for v in fv]),
         "final_free_rate": mean([v.get("final_free_rate") for v in fv]),
@@ -182,12 +219,16 @@ def main():
         res = evaluate(name, config, ckpt, batch, schedule, device,
                        args.steps, args.seed, scene_to_meter)
         results.append(res)
-        print("[eval] %-10s coll=%.4f viol=%s member=%s rmse=%.3fm "
-              "fb_valid=%.3f raw(1st->last)=%s->%s corr=%s->%s"
-              % (res["name"], res["final_collision_rate"] or float("nan"),
+        # NOTE: 0.0 is falsy, so never use ``x or default`` here
+        print("[eval] %-11s coll=%s viol=%s member=%s rmse=%.2fm "
+              "| OFFv=%s OFFm=%s | fb_valid=%.3f raw=%s->%s corr=%s->%s"
+              % (res["name"], _fmt(res["final_collision_rate"]),
                  _fmt(res["final_max_constraint_violation"]),
                  _fmt(res["final_corridor_membership_rate"]),
-                 res["curve_rmse_m"], res["feedback_valid_rate"],
+                 res["curve_rmse_m"],
+                 _fmt(res["offline_corridor_max_violation"]),
+                 _fmt(res["offline_corridor_membership_rate"]),
+                 res["feedback_valid_rate"],
                  _fmt(res["first_guided_raw_violation"]),
                  _fmt(res["last_guided_raw_violation"]),
                  _fmt(res["first_guided_alm_correction"]),
@@ -207,15 +248,20 @@ def main():
     lines = ["# 160k8p campaign: 同口径 DDIM + ALM 采样评估", "",
              "* split `%s`, %d samples, %d reverse steps, seed %d"
              % (args.split, len(ds), args.steps, args.seed), "",
-             "| model | coll | max viol | member | rmse_m | fb_valid | "
-             "raw viol 1st→last | ALM corr 1st→last | fb history |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "| model | coll | sampler viol | sampler member | rmse_m | "
+             "OFFLINE viol | OFFLINE member | fb_valid | raw viol 1st→last | "
+             "ALM corr 1st→last | fb history |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in results:
-        lines.append("| %s | %s | %s | %s | %.2f | %.3f | %s→%s | %s→%s | %s |"
+        lines.append("| %s | %s | %s | %s | %.2f | %s | %s | %.3f | %s→%s | "
+                     "%s→%s | %s |"
                      % (r["name"], _fmt(r["final_collision_rate"]),
                         _fmt(r["final_max_constraint_violation"]),
                         _fmt(r["final_corridor_membership_rate"]),
-                        r["curve_rmse_m"], r["feedback_valid_rate"],
+                        r["curve_rmse_m"],
+                        _fmt(r["offline_corridor_max_violation"]),
+                        _fmt(r["offline_corridor_membership_rate"]),
+                        r["feedback_valid_rate"],
                         _fmt(r["first_guided_raw_violation"]),
                         _fmt(r["last_guided_raw_violation"]),
                         _fmt(r["first_guided_alm_correction"]),
