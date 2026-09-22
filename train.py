@@ -8,6 +8,20 @@
       + lam_shape  L_shape
       + lam_iou    L_iou
       + lam_safe   L_safe
+      + lam_alm    L_alm      (decoded curve vs the offline ALM corridor)
+      + lam_fbsafe L_fbsafe   (CONTINUOUS Bezier corridor violation of the
+                               SECOND (feedback-conditioned) raw prediction)
+      + lam_curve  L_curve    (2nd/3rd differences of the DECODED curve)
+
+Historical safety feedback (``model.feedback.enabled`` + ``train.feedback``)
+adds a real two-step rollout per batch, exactly mirroring inference::
+
+    q_t --network--> Q0_raw(t) --ALM--> Q0_safe(t) --DDIM--> q_s
+        --feedback (Q0_safe, Delta, valid)--> network --> Q0_raw(s) --> LOSS
+
+The first stage runs under ``no_grad`` and the loss is computed on the SECOND
+network's OWN raw output: the network can never learn to let the ALM clean up
+after it.  There is deliberately NO distillation term ``Q_next ~ Q_safe_prev``.
 
 The diffusion state is the C-control polygon Q_t (``control_gt``, C from the
 config).  The network runs on the control tokens themselves; NO decoded
@@ -43,29 +57,34 @@ from src.utils.seed import set_seed
 from src.utils.checkpoint import (ARCH_CONTROL_SPACE, ARCH_LEGACY_CURVE,
                                   detect_architecture, load_checkpoint,
                                   save_checkpoint)
+from src.diffusion.bspline_alm import bspline_alm_correct
 from src.diffusion.schedule import NoiseSchedule
+from src.geometry.bspline_constraints import build_constraint_pack_from_regions
 from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import make_loader, make_collate
 from src.geometry.ellipse_raster import ellipse_soft_mask
 from src.geometry.ellipse_shape import shape4_to_abtheta
 from src.losses.losses import (alm_corridor_loss, boundary_control_loss,
                                control_smoothness_loss, control_x0_loss,
-                               ellipse_iou_loss, ellipse_safety_loss,
-                               ellipse_shape_loss, topology_ce)
+                               curve_smoothness_loss, ellipse_iou_loss,
+                               ellipse_safety_loss, ellipse_shape_loss,
+                               feedback_safety_loss, topology_ce)
 from src.models.trajsafe.boundary import boundary_targets
 
 LOSS_KEYS = ["Lctrl", "Lcoarse", "Lsmooth", "Lboundary", "Ltopo", "Lshape",
-             "Liou", "Lsafe", "Lalm"]
+             "Liou", "Lsafe", "Lalm", "Lfbsafe", "Lcurve"]
 LOSS_WEIGHT_KEYS = {
     "Lctrl": "lambda_control", "Lcoarse": "lambda_coarse",
     "Lsmooth": "lambda_smooth", "Lboundary": "lambda_boundary",
     "Ltopo": "lambda_topology", "Lshape": "lambda_shape",
     "Liou": "lambda_iou", "Lsafe": "lambda_safe", "Lalm": "lambda_alm",
+    "Lfbsafe": "lambda_feedback_safe", "Lcurve": "lambda_curve_smooth",
 }
 DEFAULT_LOSS_WEIGHTS = {
     "lambda_control": 0.2, "lambda_coarse": 0.5, "lambda_smooth": 0.08,
     "lambda_boundary": 0.2, "lambda_topology": 0.25, "lambda_shape": 0.08,
     "lambda_iou": 0.25, "lambda_safe": 0.15, "lambda_alm": 0.3,
+    "lambda_feedback_safe": 0.3, "lambda_curve_smooth": 0.1,
 }
 # Metres per scene unit.  40.0 for the 80 m carla_v1 crop, 80.0 for the 160 m
 # carla_full_160_256 windows.  This is DATA, so it is read from
@@ -163,7 +182,115 @@ def metrics(batch, out, occ, device):
     return res
 
 
-def batch_losses(batch, model, schedule, lcfg, device):
+def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
+                     fb_cfg, alm_cfg):
+    """One REAL ALM + DDIM step, then the feedback-conditioned second forward.
+
+        Q0_raw(t) = out1["control"]
+        Q0_safe(t), lam, stats = ALM(Q0_raw(t), offline corridor pack)
+        q_s = DDIM(q_t, Q0_safe(t), t -> t-1)
+        feedback = (Q0_safe(t), Q0_safe(t) - Q0_raw(t), valid)
+        out2 = network(q_s, feedback)
+
+    Everything before the second forward pass is ``no_grad``: the gradients of
+    the feedback losses reach ONLY the second network prediction, never the ALM,
+    the DDIM step or the first prediction (the design note's section 12).
+
+    The feedback flag is a REAL verification result, not a constant: a sample
+    whose ALM output still violates the exact Bezier pack carries no feedback
+    (``valid = 0``), exactly like the sampler's section 4.4 rule.  When the raw
+    prediction was already feasible the network is told ``delta = 0`` ("you were
+    already safe, no correction was needed").
+
+    Returns ``(out2, pack, diag)``.
+    """
+    cond = batch["cond"].to(device)
+    occ = batch["occupancy"].to(device)
+    cand_xy = batch["candidate_xy"].to(device)
+    cm = batch["candidate_mask"].to(device)
+    geo = batch["candidate_geometry"].to(device)
+    gl = batch["candidate_geometry_lengths"].to(device)
+    best = batch["topology_best"].to(device)
+    cell_a = batch["alm_cell_a"].to(device)
+    cell_b = batch["alm_cell_b"].to(device)
+    cell_valid = batch["alm_cell_valid"].to(device).bool()
+    alm_valid = batch["alm_valid"].to(device).bool()
+    B = q_t.shape[0]
+
+    # the offline corridor cache IS a region table, so the training pack is the
+    # very same object (exact Bezier extraction + linear inequalities) the
+    # inference ALM projects onto
+    anchors = torch.linspace(0.0, 1.0, cell_valid.shape[1], device=device)
+    pack = build_constraint_pack_from_regions(
+        model.bspline, cell_a, cell_b, cell_valid, anchors=anchors,
+        device=device, dtype=torch.float32,
+        margin=float(alm_cfg.get("constraint_margin", 0.0)),
+        sample_valid=alm_valid)
+
+    # a correction is only trusted as history when the ALM output passes the
+    # exact pack; ``feedback.accept_tol`` (or ``alm.feedback_accept_tol``)
+    # relaxes the strict ``constraint_tol`` when the residual is a few cm
+    tol = float(fb_cfg.get("accept_tol",
+                           alm_cfg.get("feedback_accept_tol",
+                                       alm_cfg.get("constraint_tol", 1e-3))))
+    inner = int(fb_cfg.get("alm_inner_steps", alm_cfg.get("inner_steps", 3)))
+    q0_raw1 = out1["control"].detach()
+
+    with torch.no_grad():
+        q0_safe1, _, alm_stats = bspline_alm_correct(
+            q0_raw1, pack, model.bspline, None, alm_cfg,
+            inner_steps=max(1, inner))
+        before = alm_stats["max_violation_before"]
+        after = alm_stats["max_violation_after"]
+        correction = alm_stats["mean_curve_correction_scene"]
+        has_pack = pack.num_pieces > 0
+        reliable = has_pack & (after <= tol)
+        already_ok = reliable & (before <= tol)
+        keep = already_ok[:, None, None]
+        fb_control = torch.where(keep, q0_raw1, q0_safe1)
+        fb_delta = torch.where(keep, torch.zeros_like(q0_safe1),
+                               q0_safe1 - q0_raw1)
+        fb_valid = reliable
+
+        # the sampler spends its first reverse forwards WITHOUT feedback, so the
+        # network must keep both behaviours alive
+        if bool(fb_cfg.get("simulate_warmup", False)):
+            fb_valid = torch.zeros_like(fb_valid)
+        drop = float(fb_cfg.get("drop_prob", 0.0) or 0.0)
+        if model.training and drop > 0.0:
+            fb_valid = fb_valid & (torch.rand(B, device=device) >= drop)
+
+        # ---- the real DDIM update the sampler would perform ----------------
+        s_idx = (t - 1).clamp_min(0)
+        sa_t = schedule.sqrt_alphas_cumprod[t].to(device).float()
+        s1_t = schedule.sqrt_one_minus_alphas_cumprod[t].to(device).float()
+        sa_s = schedule.sqrt_alphas_cumprod[s_idx].to(device).float()
+        s1_s = schedule.sqrt_one_minus_alphas_cumprod[s_idx].to(device).float()
+        eps = ((q_t - _broadcast(q_t, sa_t) * q0_safe1)
+               / _broadcast(q_t, s1_t).clamp_min(1e-12))
+        q_s = (_broadcast(q_t, sa_s) * q0_safe1
+               + _broadcast(q_t, s1_s) * eps)
+        q_s = model.hard_control_endpoints(q_s, cond)
+
+    ab_s = schedule.sqrt_alphas_cumprod[s_idx].to(device)
+    out2 = model.forward_all(
+        q_s, occ, cond, s_idx, ab_s, cand_xy, cm, geo, gl, select_index=best,
+        feedback_control=fb_control.detach(), feedback_delta=fb_delta.detach(),
+        feedback_valid=fb_valid)
+    diag = {
+        "feedback_valid": fb_valid,
+        "raw_violation": before,
+        "safe_violation": after,
+        "correction": correction,
+        "delta_norm": (fb_delta.detach().norm(dim=-1).amax(dim=1)
+                       * fb_valid.to(fb_delta.dtype)),
+        "has_pack": has_pack,
+    }
+    return out2, pack, diag
+
+
+def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
+                 fb_cfg=None):
     q0 = batch["control_gt"].to(device)
     cond = batch["cond"].to(device)
     occ = batch["occupancy"].to(device)
@@ -234,22 +361,74 @@ def batch_losses(batch, model, schedule, lcfg, device):
         batch["alm_cell_valid"].to(device).bool(),
         batch["alm_valid"].to(device).bool())
 
-    raw = {"Lctrl": l_ctrl, "Lcoarse": l_coarse,
-           "Lsmooth": l_smooth, "Lboundary": l_boundary, "Ltopo": l_topo,
-           "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe, "Lalm": l_alm}
+    raw1 = {"Lctrl": l_ctrl, "Lcoarse": l_coarse,
+            "Lsmooth": l_smooth, "Lboundary": l_boundary, "Ltopo": l_topo,
+            "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe, "Lalm": l_alm,
+            "Lfbsafe": q0.sum() * 0.0, "Lcurve": q0.sum() * 0.0}
     weights = {k: float(lcfg.get(key, DEFAULT_LOSS_WEIGHTS[key]))
                for k, key in LOSS_WEIGHT_KEYS.items()}
-    total = sum(weights[k] * raw[k] for k in LOSS_KEYS)
+    total1 = sum(weights[k] * raw1[k] for k in LOSS_KEYS)
+
     stats = {
         "safe_mean": float(safe_mean.detach()),
         "safe_cvar": float(safe_cvar.detach()),
         "a_mean": float(ell["a"].mean().detach()),
         "b_mean": float(ell["b"].mean().detach()),
     }
+
+    # ---- step 2: the historical-safety-feedback rollout -------------------
+    # The SECOND network's OWN raw output is supervised (safety + smoothness +
+    # expert shape).  No distillation term ties it to the ALM output, so the
+    # network cannot learn the shortcut "copy what the ALM did".
+    fb_cfg = dict(fb_cfg or {})
+    alm_cfg = dict(alm_cfg or {})
+    rollout = (bool(getattr(model, "feedback_enabled", False))
+               and bool(fb_cfg.get("rollout", True)))
+    raw = dict(raw1)
+    total2 = None
+    if rollout:
+        out2, pack, diag = feedback_rollout(model, schedule, batch, out, q_t, t,
+                                            device, fb_cfg, alm_cfg)
+        w2 = float(fb_cfg.get("step2_weight", 1.0))
+        raw2 = {
+            "Lctrl": w2 * control_x0_loss(out2["q_raw_final"], q0),
+            "Lcoarse": w2 * control_x0_loss(out2["q_coarse_raw"], q0),
+            "Lboundary": w2 * (
+                boundary_control_loss(out2["q_raw_final"], q0, cond, ws, wg)
+                + float(lcfg.get("boundary_coarse_weight", 0.5))
+                * boundary_control_loss(out2["q_coarse_raw"], q0, cond, ws, wg)),
+            # the polygon the NEXT reverse step would hand to the ALM
+            "Lfbsafe": feedback_safety_loss(
+                out2["control"], pack,
+                margin=float(lcfg.get("feedback_margin", 0.0)),
+                sample_mask=diag["has_pack"]),
+            "Lcurve": curve_smoothness_loss(
+                out2["control"], q0, model.bspline.basis,
+                acc_weight=float(lcfg.get("feedback_curve_acc_weight", 0.25)),
+                jerk_weight=float(lcfg.get("feedback_curve_jerk_weight", 1.0))),
+        }
+        for key, value in raw2.items():
+            raw[key] = raw1[key] + value
+        # only the step-2 terms exist in raw2 (the rest are step-1 only)
+        total2 = sum(weights[k] * raw2[k] for k in raw2)
+        stats.update({
+            "fb_valid_rate": float(diag["feedback_valid"].float().mean()),
+            "fb_raw_violation": float(diag["raw_violation"].mean()),
+            "fb_safe_violation": float(diag["safe_violation"].mean()),
+            "fb_correction": float(diag["correction"].mean()),
+            "fb_delta_norm": float(diag["delta_norm"].mean()),
+        })
+
+    total = total1 if total2 is None else total1 + total2
+    # The two parts touch DISJOINT graphs (the rollout is detached), so the
+    # trainer back-propagates them separately: identical gradients, roughly half
+    # the peak activation memory of one backward over the sum.
+    stats["loss_parts"] = [total1] if total2 is None else [total1, total2]
     return raw, weights, total, out, stats
 
 
-def validate(model, schedule, loader, lcfg, device, max_batches):
+def validate(model, schedule, loader, lcfg, device, max_batches,
+             alm_cfg=None, fb_cfg=None):
     model.eval()
     acc, met, n = {}, {}, 0
     with torch.no_grad():
@@ -257,7 +436,8 @@ def validate(model, schedule, loader, lcfg, device, max_batches):
             if i >= max_batches:
                 break
             raw, weights, total, out, stats = batch_losses(
-                batch, model, schedule, lcfg, device)
+                batch, model, schedule, lcfg, device, alm_cfg=alm_cfg,
+                fb_cfg=fb_cfg)
             for k in LOSS_KEYS:
                 acc[k] = acc.get(k, 0.0) + float(raw[k].detach())
             acc["total"] = acc.get("total", 0.0) + float(total)
@@ -386,6 +566,8 @@ def main():
     env, data_cfg = cfg["env"], cfg["data"]
     model_cfg, diff_cfg = cfg["model"], cfg["diffusion"]
     loss_cfg, train_cfg = cfg["loss"], cfg["train"]
+    alm_cfg = dict(cfg.get("alm") or {})
+    fb_cfg = dict(train_cfg.get("feedback") or {})
     print("[train] scene_to_meter=%.1f m/unit (reporting only)"
           % set_scene_to_meter(cfg), flush=True)
 
@@ -442,13 +624,21 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print("[model] params=%.2fM controls=%d safety_queries=%d mode=%s "
           "traj_blocks=%d skeleton_blocks=%d final_blocks=%d curve=%d "
-          "boundary_profile=%s"
+          "boundary_profile=%s feedback=%s"
           % (n_params / 1e6, model.num_controls, model.num_safety_queries,
              "control_space" if model.control_space else "legacy_curve",
              model.traj_blocks, model.skeleton_blocks, model.final_blocks,
              model.curve_points,
-             [float(v) for v in model.boundary_decoder.profile.tolist()]),
+             [float(v) for v in model.boundary_decoder.profile.tolist()],
+             ("on(hidden=%d, rollout=%s, drop=%.2f)"
+              % (model.feedback_hidden, bool(fb_cfg.get("rollout", True)),
+                 float(fb_cfg.get("drop_prob", 0.0) or 0.0)))
+             if getattr(model, "feedback_enabled", False) else "off"),
           flush=True)
+    if getattr(model, "feedback_enabled", False) and alm_cfg and not alm_cfg.get("enabled", False):
+        print("[warn] model.feedback.enabled is on but alm.enabled is off: the "
+              "training rollout still uses the OFFLINE corridor pack, while "
+              "inference would never activate one", flush=True)
 
     epochs = args.epochs if args.epochs is not None else int(train_cfg["epochs"])
     log_interval = (args.log_interval if args.log_interval is not None
@@ -531,6 +721,13 @@ def main():
             "loss_weights": {k: float(loss_cfg.get(m, DEFAULT_LOSS_WEIGHTS[m]))
                              for k, m in LOSS_WEIGHT_KEYS.items()},
             "alm_enabled": bool((cfg.get("alm") or {}).get("enabled", False)),
+            "feedback": {
+                "enabled": bool(getattr(model, "feedback_enabled", False)),
+                "hidden": int(getattr(model, "feedback_hidden", 0)),
+                "rollout": bool(fb_cfg.get("rollout", True)),
+                "drop_prob": float(fb_cfg.get("drop_prob", 0.0) or 0.0),
+                "step2_weight": float(fb_cfg.get("step2_weight", 1.0)),
+            },
         }
         if extra:
             payload.update(extra)
@@ -541,6 +738,7 @@ def main():
     for epoch in range(start_epoch, epochs):
         model.train()
         acc, n_steps, wacc, gnorms = {}, 0, {}, []
+        macc = {}
         accum = max(1, int(args.accum))
         optim.zero_grad(set_to_none=True)
         for step, batch in enumerate(train_loader):
@@ -553,14 +751,18 @@ def main():
             while True:
                 try:
                     raw, weights, total, out, stats = batch_losses(
-                        batch, model, schedule, loss_cfg, device)
+                        batch, model, schedule, loss_cfg, device,
+                        alm_cfg=alm_cfg, fb_cfg=fb_cfg)
                     if not bool(torch.isfinite(total)):
                         raise RuntimeError(
                             "non-finite total loss at epoch %d step %d"
                             % (epoch, step))
                     # gradient accumulation keeps the effective batch size while
-                    # lowering the peak activation memory
-                    (total / accum).backward()
+                    # lowering the peak activation memory.  The rollout's two
+                    # parts live on disjoint graphs, so they are back-propagated
+                    # separately (same gradients, lower peak memory).
+                    for part in stats.get("loss_parts") or [total]:
+                        (part / accum).backward()
                     break
                 except RuntimeError as exc:
                     msg = str(exc)
@@ -593,6 +795,9 @@ def main():
             for k in LOSS_KEYS:
                 acc[k] = acc.get(k, 0.0) + float(raw[k].detach())
                 wacc[k] = wacc.get(k, 0.0) + weights[k] * float(raw[k].detach())
+            for k, v in stats.items():
+                if isinstance(v, (int, float)):
+                    macc[k] = macc.get(k, 0.0) + float(v)
             n_steps += 1
             if preview_batch is None:
                 preview_batch = {k: (v.detach().cpu().clone()
@@ -616,16 +821,23 @@ def main():
             print("[epoch %d] no training step (empty loader)" % epoch, flush=True)
             break
         avg_raw = {k: v / max(n_steps, 1) for k, v in acc.items()}
+        avg_extra = {k: v / max(n_steps, 1) for k, v in macc.items()}
         line = ("[epoch %d/%d] gnorm=%.3f " % (
             epoch, epochs, sum(gnorms) / max(len(gnorms), 1))
             + " ".join("%s=%.4f" % (k, avg_raw[k]) for k in LOSS_KEYS))
+        if avg_extra:
+            line += " | fb " + " ".join(
+                "%s=%.4f" % (k, avg_extra[k]) for k in sorted(avg_extra))
         entry = {"epoch": epoch, "train": {k: float(avg_raw[k])
                                            for k in LOSS_KEYS},
                  "seconds": time.time() - t0}
+        if avg_extra:
+            entry["train"].update({k: float(v) for k, v in avg_extra.items()})
         if val_loader is not None and ((epoch + 1) % eval_every == 0
                                        or epoch == epochs - 1):
             v = validate(model, schedule, val_loader, loss_cfg, device,
-                         int(train_cfg.get("val_batches", 12)))
+                         int(train_cfg.get("val_batches", 12)),
+                         alm_cfg=alm_cfg, fb_cfg=fb_cfg)
             entry["val"] = {k: float(x) for k, x in v.items()}
             line += " | val " + " ".join(
                 "%s=%.4f" % (k, v[k]) for k in LOSS_KEYS if k in v)
@@ -664,7 +876,8 @@ def main():
     if not os.path.exists(best_path) and val_loader is not None:
         # guarantee a best.pt even if validation never triggered
         v = validate(model, schedule, val_loader, loss_cfg, device,
-                     int(train_cfg.get("val_batches", 12)))
+                     int(train_cfg.get("val_batches", 12)),
+                     alm_cfg=alm_cfg, fb_cfg=fb_cfg)
         best_val = v["total"]
         best_epoch = start_epoch + len(history) - 1
         save_checkpoint(best_path, model, optim, best_epoch, cfg)

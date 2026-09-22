@@ -28,6 +28,7 @@
 Q_t [B,C,2]                       扩散状态，端点硬条件（clamped knot）
   -> H_ctrl = ControlEncoder      planner.traj_encoder
   -> H_ctrl = ControlBackbone     planner.traj_backbone，N_T 个 AdaLN block
+  -> H_ctrl = FeedbackFusion      [可选] 融合上一轮 ALM 的 (Q0_safe, Δ, valid)（见 §10）
   -> Q~_coarse = head_p           [B,C,2]，直接出控制点（无 LS 拟合、不解码）
   -> Q_coarse = BoundaryDecoder   固定、零参数 -> B_128 @ Q_coarse（仅绘图/回退）
   -> H_S = SkeletonEncoder        [B,M,L,D]; MatchBlock(H_ctrl, H_S) -> R [B,M,C,D]
@@ -182,3 +183,25 @@ checkpoint 与训练损失。
 * 细节（新前向链路、固定 Boundary Decoder、8 项损失、配置项、改 `C` 的完整步骤）见
   [`docs/CONTROL_SPACE_REFACTOR.md`](docs/CONTROL_SPACE_REFACTOR.md)；与设计报告冲突时
   以该文为准。
+
+---
+
+## 10. 历史安全反馈：把上一轮 ALM 的结果喂回 Diffusion
+
+`model.feedback.enabled: true`（见 `configs/config_160k8p.yaml`）时，每个控制点额外携带
+上一轮 ALM 的信息 `[x_safe, y_safe, dx, dy, valid]`（`Q0_safe_prev` / `Δ = Q0_safe − Q0_raw`
+/ 验证标志），经 **门控残差** `h_ctrl ← h_ctrl + sigmoid(...) * valid * h_fb` 注入控制点
+特征流，因此影响下游全部模块。`valid = 0`（warmup / 无可靠走廊）时是**精确恒等**，
+旧 checkpoint 在开启该开关后仍然逐位一致。
+
+训练不再是单步：每个 batch 跑一次真实的 `网络 → ALM → DDIM → feedback → 网络` 两步
+rollout，梯度只回到**第二次网络自己的原始预测**，监督来自
+`L_feedback_safe`（与推理 ALM 同一套连续 Bézier 约束包，`config_160k8p.yaml` 的
+`lambda_feedback_safe`）与 `L_curve_smooth`（解码曲线的二阶/三阶差分，
+`lambda_curve_smooth`），刻意**不**加 `||Q_next − Q_safe_prev||` 蒸馏项。
+训练日志里的 `fb_valid_rate / fb_raw_violation / fb_correction` 用于确认反馈分支真的
+被训练到了。
+
+* 实现细节、配置项、消融方式、逐 step 诊断字段：见
+  [`docs/HISTORICAL_SAFETY_FEEDBACK.md`](docs/HISTORICAL_SAFETY_FEEDBACK.md)。
+* 测试：`python -m pytest tests/test_feedback.py tests/test_alm_state_machine.py -q`。

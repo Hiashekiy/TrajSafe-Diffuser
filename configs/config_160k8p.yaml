@@ -113,6 +113,22 @@ model:
   boundary_decoder:
     span: 4
     profile: [1.0, 0.75, 0.5, 0.25]
+  # --- Historical Safety Feedback (上一轮 ALM 的安全修正作为下一步的条件) ----
+  # 每个控制点的输入是 5 维 [x_safe, y_safe, dx, dy, valid]：
+  #   feedback_control = Q0_safe_prev（上一轮原始预测本来就安全时为 Q0_raw_prev）
+  #   feedback_delta   = Q0_safe_prev - Q0_raw_prev
+  #   feedback_valid   = 1 当且仅当上一轮 ALM 输出通过了冻结的连续约束包
+  # FeedbackEncoder(5 -> hidden -> d_model) 输出 h_fb，经门控残差
+  #   h_ctrl <- h_ctrl + sigmoid(Linear([h_ctrl; h_fb])) * valid * h_fb
+  # 注入到 h_ctrl，因此影响下游全部模块（coarse / MatchBlock / TopologyHead /
+  # PathFeatureHead / 安全 cross-attention / FusionMLP / FinalDenoiser）。
+  # zero_init 让新增模块在微调起点严格等价于旧网络；valid = 0 时是精确恒等，
+  # 所以 warmup 阶段与旧模型逐位相同，旧 checkpoint 也可以直接推理。
+  feedback:
+    enabled: true
+    hidden: 64
+    zero_init: true
+    dropout: 0.0
 
 # --- fixed B-spline codec (src/geometry/bspline.py) ---------------------
 # num_controls MUST agree with model.num_controls (the loader refuses to start
@@ -176,6 +192,17 @@ loss:
   # scripts/data/carla_full/04_build_alm_constraints.py; samples whose
   # corridor never closed are masked out (~57 % of train, 74 % of val).
   lambda_alm: 0.3
+  # --- 历史安全反馈损失（只作用于两步 rollout 的第二次“未经 ALM 修正”的输出）--
+  # L_fbsafe: 第二次原始预测 Q0_raw(s) 对整个连续 Bezier 约束包的违反量
+  #           （与推理阶段 bspline_alm_correct 用的是同一个 BSplineConstraintPack）
+  # L_curve : 把 Q0_raw(s) 解码成曲线后惩罚二阶/三阶差分（真正的曲线平滑度，
+  #           防止网络直接复制“安全但歪”的 ALM 输出）
+  # 不加任何 ||Q_next - Q_safe_prev|| 蒸馏项：那会给网络一条“抄 ALM”的捷径。
+  lambda_feedback_safe: 0.3
+  lambda_curve_smooth: 0.1
+  feedback_margin: 0.0
+  feedback_curve_acc_weight: 0.25
+  feedback_curve_jerk_weight: 1.0
   ellipse_safe_res: 64
   ellipse_mask_tau: 10.0
   ellipse_safe_chunk: 32
@@ -193,6 +220,24 @@ train:
   val_batches: 12
   max_hours: 9.0
   ckpt_dir: "outputs/bspline_carla_160k8p/ckpt"   # NEVER the 80 m run dir
+  # --- 两步真实 rollout（训练侧）-----------------------------------------
+  # 每个 batch 多跑一次真实链路：
+  #   q_t -> 网络 -> Q0_raw(t) -> 真实 ALM -> Q0_safe(t) -> 真实 DDIM -> q_s
+  #       -> feedback -> 网络 -> Q0_raw(s) -> 只对第二次原始输出算损失
+  # 第一段 rollout 在 no_grad 下执行，梯度只回到第二次网络预测。
+  # 走廊来自离线 alm_cell_*.npy（与推理同一套 BSplineConstraintPack），
+  # 因此不需要在训练循环里重建 SafetyCorridor。
+  #   rollout:        false 时完全退化为旧的一步训练
+  #   drop_prob:      按比例把 feedback_valid 置 0，模拟 warmup / 无走廊样本，
+  #                   保证网络不会只在“有反馈”这一种分布下工作
+  #   step2_weight:   第二步 L_ctrl / L_coarse / L_boundary 的权重
+  #   simulate_warmup: true 时整批强制 feedback_valid = 0（消融用）
+  #   alm_inner_steps: 训练期 ALM 迭代步数（默认取 alm.inner_steps）
+  feedback:
+    rollout: true
+    drop_prob: 0.25
+    step2_weight: 0.5
+    simulate_warmup: false
 
 eval:
   num_candidates_ablation: [1, 2, 4]
@@ -282,6 +327,14 @@ alm:
   correction_smooth_sigma: 0.0     # 0 = triangular kernel
 
   constraint_tol: 1.0e-3
+
+  # feedback_valid 的判定阈值：只有最终违反量 <= 该值的 ALM 输出才会成为
+  # 下一轮的历史反馈（feedback_valid = 1）。默认等于 constraint_tol。
+  # 实测（见下方 max_curve_step_scene 的记录）：best_task 模型上 ALM 收敛后的
+  # 残余违反量 max 约 0.004 scene，若沿用 1e-3 会把"实际已经安全"的结果判为失败，
+  # 反馈几乎永不激活；1 scene = 80 m，1e-2 scene = 0.8 m。
+  # 请结合训练日志里的 fb_valid_rate 调整（0 表示反馈分支完全没被训练到）。
+  feedback_accept_tol: 1.0e-2
 
   # Scene-normalised units: the CARLA crop is 80 m over [-1,1], so
   # 0.01 scene == 0.4 m.  This is the trust region of ONE inner ALM step,

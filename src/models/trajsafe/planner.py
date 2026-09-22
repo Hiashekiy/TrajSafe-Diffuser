@@ -16,6 +16,8 @@ Forward chain (``model.control_space: true``)::
     Q_t   = hard_control_endpoints(Q_t, cond)          # exact curve endpoints
     H_ctrl = ControlEncoder(Q_t)                       # [B,C,D]
     H_ctrl = ControlBackbone(H_ctrl, C_G, h_t)         # [B,C,D]
+    H_fb   = FeedbackEncoder([Q0_safe_prev, Delta_prev, valid])   # optional
+    H_ctrl = FeedbackFusion(H_ctrl, H_fb, valid)       # gated residual
     Q~_coarse = Head_Q(H_ctrl)                         # [B,C,2]
     Q_coarse  = BoundaryDecoder(Q~_coarse)             # exact endpoints
 
@@ -62,6 +64,7 @@ from .blocks import MatchBlock, TrajBlock
 from .boundary import BoundaryDecoder
 from .ellipse import EllipseGeometry
 from .encoders import SkeletonEncoder, TrajectoryEncoder
+from .feedback import FeedbackEncoder, FeedbackFusion
 from .fusion import FinalDenoiser, FusionMLP, SafetyControlFusion
 from .geometry import CurveDecoder
 from .heads import EllipseShapeHead, PathFeatureHead, TopologyHead
@@ -166,6 +169,23 @@ class TrajSafePlanner(nn.Module):
         # ONE control head, shared by the coarse and the final decode
         self.head_p = nn.Linear(self.d_model, 2)
 
+        # ---- historical safety feedback (optional, model.feedback) ---------
+        # 上一轮 ALM 的 Q0_safe 与修正量 Delta = Q0_safe - Q0_raw 作为这一轮
+        # 的额外条件，经 FeedbackEncoder -> 门控残差注入 h_ctrl。  zero_init
+        # 让新模块在微调开始时严格等价于旧网络；valid = 0 时是精确恒等。
+        fb_cfg = dict(model_cfg.get("feedback") or {})
+        self.feedback_enabled = bool(fb_cfg.get("enabled", False))
+        self.feedback_hidden = int(fb_cfg.get("hidden", 64))
+        self.feedback_encoder = None
+        self.feedback_fusion = None
+        if self.feedback_enabled:
+            self.feedback_encoder = FeedbackEncoder(
+                self.d_model, hidden=self.feedback_hidden,
+                zero_init=bool(fb_cfg.get("zero_init", True)),
+                dropout=float(fb_cfg.get("dropout", 0.0)))
+            self.feedback_fusion = FeedbackFusion(
+                self.d_model, gate_bias=float(fb_cfg.get("gate_bias", 0.0)))
+
         # ---- skeleton branch -------------------------------------------
         self.skeleton_encoder = SkeletonEncoder(
             self.d_model, self.num_heads, self.spatial_pe, self.index_pe,
@@ -259,6 +279,48 @@ class TrajSafePlanner(nn.Module):
         return torch.linspace(0.0, 1.0, max(count, 2),
                               device=device, dtype=dtype)
 
+    # -------------------------------------------------------------- feedback
+    def feedback_features(self, h_ctrl: torch.Tensor,
+                          feedback_control: torch.Tensor | None = None,
+                          feedback_delta: torch.Tensor | None = None,
+                          feedback_valid: torch.Tensor | None = None):
+        """Build ``(h_fb [B,C,D] | None, valid [B])`` from the previous step.
+
+        ``feedback_control`` / ``feedback_delta`` are ``[B,C,2]`` and
+        ``feedback_valid`` is ``[B]`` (``[B,1]`` / ``[B,C,1]`` are accepted).
+        Any missing argument means "no reliable history": the valid flag is 0
+        and the fusion becomes the identity (plain diffusion behaviour), which
+        is what the sampler's warm-up phase needs.  Invalid rows are zeroed
+        BEFORE the encoder, so stale tensors can never leak into the network.
+        """
+        if not self.feedback_enabled or self.feedback_encoder is None:
+            return None, None
+        B, C, D = h_ctrl.shape
+        dev, dt = h_ctrl.device, h_ctrl.dtype
+
+        def _coords(x, name):
+            if x is None:
+                return torch.zeros(B, C, 2, device=dev, dtype=dt)
+            x = x.to(device=dev, dtype=dt)
+            if x.shape != (B, C, 2):
+                raise ValueError("%s must be [%d,%d,2], got %s"
+                                 % (name, B, C, tuple(x.shape)))
+            return x
+
+        control = _coords(feedback_control, "feedback_control")
+        delta = _coords(feedback_delta, "feedback_delta")
+        if feedback_valid is None:
+            valid = torch.zeros(B, device=dev, dtype=dt)
+        else:
+            v = feedback_valid.to(device=dev).reshape(B, -1)
+            valid = (v.amax(dim=1) if v.shape[1] > 0
+                     else torch.zeros(B, device=dev)).to(dt)
+        keep = valid[:, None, None]
+        control = control * keep
+        delta = delta * keep
+        features = torch.cat([control, delta, keep.expand(B, C, 1)], dim=-1)
+        return self.feedback_encoder(features), valid
+
     @staticmethod
     def _resample_curve(p: torch.Tensor, count: int) -> torch.Tensor:
         """p [B,H,2] -> [B,count,2] (linear; degenerate fallback only)."""
@@ -287,21 +349,35 @@ class TrajSafePlanner(nn.Module):
                     cond: torch.Tensor, t: torch.Tensor, ab: torch.Tensor,
                     candidate_xy: torch.Tensor, candidate_mask: torch.Tensor,
                     geometry: torch.Tensor, geometry_lengths: torch.Tensor,
-                    select_index: torch.Tensor | None = None):
+                    select_index: torch.Tensor | None = None,
+                    feedback_control: torch.Tensor | None = None,
+                    feedback_delta: torch.Tensor | None = None,
+                    feedback_valid: torch.Tensor | None = None):
         """One full forward pass of the diffusion model (mode aware).
 
         ``q_t`` is the C-control diffusion state.  ``select_index`` is the
         training-time m* (argmin nDTW); when it is ``None`` inference routing
         ``argmax(pi)`` is used.  Invalid rows are routed to slot 0, masked out
         of every loss, and their output degenerates to the coarse polygon.
+
+        ``feedback_control`` [B,C,2] / ``feedback_delta`` [B,C,2] /
+        ``feedback_valid`` [B] are the PREVIOUS reverse step's ALM result
+        (``Q0_safe_prev`` / ``Q0_safe_prev - Q0_raw_prev`` / verification flag).
+        All three default to ``None``, which means "no history": the feedback
+        branch is gated off and the network runs exactly as the plain diffusion
+        model (warm-up, evaluation of an old checkpoint, ablation A).
         """
         if self.control_space:
             return self.forward_controls(
                 q_t, occ, cond, t, ab, candidate_xy, candidate_mask,
-                geometry, geometry_lengths, select_index=select_index)
+                geometry, geometry_lengths, select_index=select_index,
+                feedback_control=feedback_control,
+                feedback_delta=feedback_delta, feedback_valid=feedback_valid)
         return self.forward_curve_tokens(
             q_t, occ, cond, t, ab, candidate_xy, candidate_mask,
-            geometry, geometry_lengths, select_index=select_index)
+            geometry, geometry_lengths, select_index=select_index,
+            feedback_control=feedback_control, feedback_delta=feedback_delta,
+            feedback_valid=feedback_valid)
 
     # --------------------------------------------------- control-token chain
     def forward_controls(self, q_t: torch.Tensor, occ: torch.Tensor,
@@ -310,7 +386,10 @@ class TrajSafePlanner(nn.Module):
                          candidate_mask: torch.Tensor,
                          geometry: torch.Tensor,
                          geometry_lengths: torch.Tensor,
-                         select_index: torch.Tensor | None = None):
+                         select_index: torch.Tensor | None = None,
+                         feedback_control: torch.Tensor | None = None,
+                         feedback_delta: torch.Tensor | None = None,
+                         feedback_valid: torch.Tensor | None = None):
         """Control-space chain: C control tokens, Q safety geometry queries.
 
         The TRAINING chain is controls-only: nothing in the loss reads a decoded
@@ -342,6 +421,17 @@ class TrajSafePlanner(nn.Module):
 
         # ---- control backbone -------------------------------------------
         h_ctrl = self.encode_trajectory(q_t, c_g, h_t)          # [B,C,D]
+
+        # ---- historical safety feedback (previous ALM result) -------------
+        # h_ctrl is REPLACED by the gated fusion, so the feedback conditions the
+        # whole downstream chain (coarse polygon, Skeleton matching, topology,
+        # path feature, safety cross attention, fusion MLP, final denoiser) -
+        # this is a full fine-tune, not an inference-time bolt-on.
+        h_fb, fb_valid = self.feedback_features(
+            h_ctrl, feedback_control, feedback_delta, feedback_valid)
+        if h_fb is not None:
+            h_ctrl = self.feedback_fusion(h_ctrl, h_fb, fb_valid)
+
         q_coarse_raw = self.head_p(h_ctrl)                      # [B,C,2]
         q_coarse = self.boundary_decoder(q_coarse_raw, cond)    # exact ends
         coarse = self.bspline.decode_controls(q_coarse)         # [B,H,2]
@@ -396,6 +486,8 @@ class TrajSafePlanner(nn.Module):
             "final": final,
             "H_traj": h_ctrl,
             "H_ctrl": h_ctrl,
+            "H_fb": h_fb,
+            "feedback_valid": fb_valid,
             "H_S": h_s,
             "R": r,
             "topo": topo,
@@ -433,12 +525,17 @@ class TrajSafePlanner(nn.Module):
                              candidate_mask: torch.Tensor,
                              geometry: torch.Tensor,
                              geometry_lengths: torch.Tensor,
-                             select_index: torch.Tensor | None = None):
+                             select_index: torch.Tensor | None = None,
+                             feedback_control: torch.Tensor | None = None,
+                             feedback_delta: torch.Tensor | None = None,
+                             feedback_valid: torch.Tensor | None = None):
         """Pre-refactor chain: the network runs on the decoded 128-point curve.
 
         Kept ONLY so a checkpoint trained before the control-space refactor can
         still be replayed (demo / regression).  Training uses
         :meth:`forward_controls`; see ``checkpoint.detect_architecture``.
+        The historical-feedback arguments are accepted for interface parity and
+        ignored: this chain has no control-token feature stream to condition.
         """
         B, C, _ = q_t.shape
         if C != self.num_controls:
@@ -497,6 +594,8 @@ class TrajSafePlanner(nn.Module):
             "final": final,
             "H_traj": h_traj,
             "H_ctrl": None,
+            "H_fb": None,
+            "feedback_valid": None,
             "H_S": h_s,
             "R": r,
             "topo": topo,
@@ -566,6 +665,10 @@ class TrajSafePlanner(nn.Module):
         assert out["control"].shape == (B, C, 2), out["control"].shape
         assert out["q_coarse"].shape == (B, C, 2), out["q_coarse"].shape
         assert out["q_raw_final"].shape == (B, C, 2)
+        if self.feedback_enabled:
+            assert out["H_fb"].shape == (B, C, D), out["H_fb"].shape
+            assert out["feedback_valid"].shape == (B,)
+            assert bool(torch.isfinite(out["H_fb"]).all())
         assert out["raw_curve"].shape == (B, H, 2)
         assert out["H_safety"].shape == (B, Q, D), out["H_safety"].shape
         assert out["A_safety"].shape == (B, C, D), out["A_safety"].shape

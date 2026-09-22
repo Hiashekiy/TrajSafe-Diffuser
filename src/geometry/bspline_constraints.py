@@ -53,6 +53,7 @@ __all__ = [
     "piece_region_assignment",
     "region_table",
     "build_constraint_pack",
+    "build_constraint_pack_from_regions",
     "bezier_eval",
 ]
 
@@ -228,49 +229,36 @@ def region_table(corridor: SafetyCorridor, device=None, dtype=torch.float32,
             torch.as_tensor(mask, device=device))
 
 
-def build_constraint_pack(codec: BSplineCodec,
-                          corridors: list,
-                          knot_boundaries=None,
-                          device=None,
-                          dtype=torch.float32,
-                          margin: float = 0.0) -> BSplineConstraintPack:
-    """Build the padded pack for a batch of frozen corridors.
+def _sample_pieces(codec: BSplineCodec, A_reg, b_reg, mask_reg, anchors,
+                   knot_boundaries):
+    """Exact Bezier extraction + region assignment of ONE region table.
 
-    Entries that are ``None`` or ``corridor.valid == False`` become fully masked
-    rows (no constraint, ALM is a no-op), so an activation failure degrades to
-    raw diffusion instead of raising.
+    ``A_reg [M,F,2]``, ``b_reg [M,F]``, ``mask_reg [M,F]`` describe ``M`` convex
+    cells (the same layout :func:`region_table` produces), ``anchors [M]`` their
+    progresses.  Returns ``None`` when no usable piece exists.
     """
-    if knot_boundaries is None:
-        knot_boundaries = codec.knot_span_boundaries()
-    knot_boundaries = np.asarray(knot_boundaries, dtype=np.float64).reshape(-1)
-    B = len(corridors)
-    C = codec.num_controls
+    tau, _ = responsibility_intervals(anchors)
+    u = exact_subdivision(tau, knot_boundaries)
+    a, bb = u[:-1], u[1:]
+    keep = (bb - a) > _MIN_PIECE_WIDTH
+    a, bb = a[keep], bb[keep]
+    if len(a) == 0:
+        return None
+    region = piece_region_assignment(u, tau, len(A_reg))[keep]
+    pieces = [bezier_extraction(codec, float(ai), float(bi))
+              for ai, bi in zip(a, bb)]
+    return {
+        "extraction": torch.stack(pieces, dim=0),            # [P,4,C]
+        "region": region,
+        "intervals": np.stack([a, bb], axis=-1),             # [P,2]
+        "A": A_reg, "b": b_reg, "mask": mask_reg,
+    }
 
-    per_sample = []
-    for corridor in corridors:
-        if corridor is None or not getattr(corridor, "valid", False) \
-                or corridor.num_cells < 2:
-            per_sample.append(None)
-            continue
-        A_reg, b_reg, mask_reg = region_table(corridor, margin=margin)
-        tau, _ = responsibility_intervals(corridor.anchors())
-        u = exact_subdivision(tau, knot_boundaries)
-        a, bb = u[:-1], u[1:]
-        keep = (bb - a) > _MIN_PIECE_WIDTH
-        a, bb = a[keep], bb[keep]
-        if len(a) == 0:
-            per_sample.append(None)
-            continue
-        region = piece_region_assignment(u, tau, corridor.num_cells)[keep]
-        pieces = [bezier_extraction(codec, float(ai), float(bi))
-                  for ai, bi in zip(a, bb)]
-        per_sample.append({
-            "extraction": torch.stack(pieces, dim=0),        # [P,4,C]
-            "region": region,
-            "intervals": np.stack([a, bb], axis=-1),         # [P,2]
-            "A": A_reg, "b": b_reg, "mask": mask_reg,
-        })
 
+def _assemble_pack(per_sample, num_controls, device, dtype):
+    """Pad a list of per-sample piece dicts (``None`` = fully masked row)."""
+    B = len(per_sample)
+    C = int(num_controls)
     pmax = max((p["extraction"].shape[0] for p in per_sample if p), default=0)
     fmax = max((p["A"].shape[1] for p in per_sample if p), default=0)
 
@@ -290,11 +278,17 @@ def build_constraint_pack(codec: BSplineCodec,
         faces = pack["A"].shape[1]
         extraction[i, :p] = pack["extraction"].to(dtype=dtype, device=device)
         row = pack["region"]
-        piece_A[i, :p, :faces] = pack["A"].to(dtype=dtype,
-                                             device=device)[row]
-        piece_b[i, :p, :faces] = pack["b"].to(dtype=dtype,
-                                             device=device)[row]
-        face_mask[i, :p, :faces] = pack["mask"].to(device=device)[row]
+        # ``A`` / ``b`` / ``mask`` are torch tensors on the corridor path
+        # (region_table) and numpy arrays on the offline-cache path
+        # (build_constraint_pack_from_regions), so they are normalised here.
+        A_reg = torch.as_tensor(np.asarray(pack["A"]), dtype=dtype,
+                                device=device)[row]
+        b_reg = torch.as_tensor(np.asarray(pack["b"]), dtype=dtype,
+                                device=device)[row]
+        m_reg = torch.as_tensor(np.asarray(pack["mask"]), device=device)[row]
+        piece_A[i, :p, :faces] = A_reg
+        piece_b[i, :p, :faces] = b_reg
+        face_mask[i, :p, :faces] = m_reg
         piece_mask[i, :p] = True
         piece_region_id[i, :p] = torch.as_tensor(row, device=device).long()
         intervals[i, :p] = torch.as_tensor(pack["intervals"], dtype=dtype,
@@ -306,3 +300,105 @@ def build_constraint_pack(codec: BSplineCodec,
         face_mask=face_mask, piece_mask=piece_mask,
         piece_region_id=piece_region_id, intervals=intervals,
         num_pieces=num_pieces)
+
+
+def build_constraint_pack(codec: BSplineCodec,
+                          corridors: list,
+                          knot_boundaries=None,
+                          device=None,
+                          dtype=torch.float32,
+                          margin: float = 0.0) -> BSplineConstraintPack:
+    """Build the padded pack for a batch of frozen corridors.
+
+    Entries that are ``None`` or ``corridor.valid == False`` become fully masked
+    rows (no constraint, ALM is a no-op), so an activation failure degrades to
+    raw diffusion instead of raising.
+    """
+    if knot_boundaries is None:
+        knot_boundaries = codec.knot_span_boundaries()
+    knot_boundaries = np.asarray(knot_boundaries, dtype=np.float64).reshape(-1)
+
+    per_sample = []
+    for corridor in corridors:
+        if corridor is None or not getattr(corridor, "valid", False) \
+                or corridor.num_cells < 2:
+            per_sample.append(None)
+            continue
+        A_reg, b_reg, mask_reg = region_table(corridor, margin=margin)
+        anchors = corridor.anchors()
+        per_sample.append(_sample_pieces(codec, A_reg, b_reg, mask_reg,
+                                         anchors, knot_boundaries))
+
+    return _assemble_pack(per_sample, codec.num_controls, device, dtype)
+
+
+def build_constraint_pack_from_regions(
+        codec: BSplineCodec,
+        cell_A: torch.Tensor,
+        cell_b: torch.Tensor,
+        cell_mask: torch.Tensor,
+        anchors=None,
+        knot_boundaries=None,
+        device=None,
+        dtype=torch.float32,
+        margin: float = 0.0,
+        sample_valid: torch.Tensor | None = None) -> BSplineConstraintPack:
+    """The SAME pack as :func:`build_constraint_pack`, from an explicit table.
+
+    Training cannot afford to build a :class:`SafetyCorridor` per sample
+    (~240 ms), so ``scripts/data/carla_full/04_build_alm_constraints.py`` stores
+    the corridor of every sample as a padded half-space table::
+
+        cell_A [B,R,F,2]  cell_b [B,R,F]  cell_mask [B,R] bool
+
+    ``cell_mask`` flags the CELLS (regions), not the faces: the script pads
+    unused faces with ``A = 0`` / ``b = +inf`` inside a valid cell, so the face
+    mask is derived here as ``cell_mask & isfinite(b) & |A| > 0``.  ``anchors
+    [R]`` are the cell progresses (the offline cache uses
+    ``linspace(0, 1, R)``, the same anchors the inference sampler passes to the
+    corridor builder), and ``sample_valid [B]`` masks the samples whose corridor
+    never closed.
+
+    The returned pack is the CONTINUOUS constraint set of the inference ALM:
+    ``A_j E_{l,r} Q <= b_j`` for every piece and its four exact Bezier controls,
+    so a loss written on it is the training-time twin of
+    :func:`src.diffusion.bspline_alm.bspline_alm_correct`.
+    """
+    if knot_boundaries is None:
+        knot_boundaries = codec.knot_span_boundaries()
+    knot_boundaries = np.asarray(knot_boundaries, dtype=np.float64).reshape(-1)
+
+    A_all = torch.as_tensor(cell_A).detach().cpu()
+    b_all = torch.as_tensor(cell_b).detach().cpu().to(torch.float64)
+    m_all = torch.as_tensor(cell_mask).detach().cpu().to(torch.bool)
+    B, R = int(m_all.shape[0]), int(m_all.shape[1])
+    if anchors is None:
+        anchors = np.linspace(0.0, 1.0, R)
+    if torch.is_tensor(anchors):
+        anchors = anchors.detach().cpu().numpy()
+    anchors = np.asarray(anchors, dtype=np.float64).reshape(-1)
+
+    per_sample = []
+    for b in range(B):
+        if sample_valid is not None and not bool(sample_valid[b]):
+            per_sample.append(None)
+            continue
+        cell_ok = m_all[b].numpy()
+        if not cell_ok.any():
+            per_sample.append(None)
+            continue
+        A_reg = A_all[b].numpy().astype(np.float64)
+        b_reg = b_all[b].numpy()
+        # padded faces carry A = 0 / b = +inf: they are never allowed to bind,
+        # so the per-cell flag is expanded into a per-face mask here
+        face_ok = (cell_ok[:, None] & np.isfinite(b_reg)
+                   & (np.abs(A_reg).sum(axis=-1) > 0.0))
+        if not face_ok.any():
+            per_sample.append(None)
+            continue
+        if float(margin) != 0.0:
+            b_reg = b_reg - float(margin)
+        per_sample.append(_sample_pieces(codec, A_reg, b_reg, face_ok, anchors,
+                                         knot_boundaries))
+
+    return _assemble_pack(per_sample, codec.num_controls, device, dtype)

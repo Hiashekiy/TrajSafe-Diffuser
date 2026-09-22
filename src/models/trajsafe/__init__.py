@@ -5,6 +5,7 @@ from .blocks import CrossAttention, MatchBlock, TrajBlock, TrajSelfAttention
 from .boundary import BoundaryDecoder
 from .ellipse import EllipseGeometry
 from .encoders import CoordMLP, SkeletonEncoder, TrajectoryEncoder
+from .feedback import FeedbackEncoder, FeedbackFusion
 from .fusion import FinalDenoiser, FusionMLP, SafetyControlFusion
 from .geometry import CurveDecoder, dense_arclength, gather_dense_path_points
 from .heads import EllipseShapeHead, PathFeatureHead, TopologyHead
@@ -27,6 +28,8 @@ __all__ = [
     "EllipseShapeHead",
     "FusionMLP",
     "FinalDenoiser",
+    "FeedbackEncoder",
+    "FeedbackFusion",
     "TrajBlock",
     "TrajSelfAttention",
     "CrossAttention",

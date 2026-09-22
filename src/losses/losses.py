@@ -47,11 +47,19 @@ __all__ = [
     "ellipse_iou_loss",
     "ellipse_safety_loss",
     "alm_corridor_loss",
+    "pack_max_violation",
+    "feedback_safety_loss",
+    "curve_smoothness_loss",
 ]
 
 
-def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Mean over the valid ENTRIES; the mask broadcasts over trailing dims."""
+def _masked_mean(values: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+    """Mean over the valid ENTRIES; the mask broadcasts over trailing dims.
+
+    ``mask = None`` means "every entry is valid".
+    """
+    if mask is None:
+        return values.mean()
     mask = mask.to(values.dtype)
     while mask.dim() < values.dim():
         mask = mask.unsqueeze(-1)
@@ -265,3 +273,94 @@ def alm_corridor_loss(curve: torch.Tensor, cell_a: torch.Tensor,
     violation = torch.nan_to_num(violation, nan=0.0, posinf=0.0, neginf=0.0)
     per = F.relu(violation - float(margin)).mean(dim=1)           # [B]
     return _masked_mean(per, sample_mask)
+
+
+# ---------------------------------------------------------------------------
+# historical safety feedback (two-step rollout)
+# ---------------------------------------------------------------------------
+
+
+def pack_max_violation(controls: torch.Tensor, pack,
+                       margin: float = 0.0) -> torch.Tensor:
+    """Per-sample max CONTINUOUS constraint violation of a control polygon.
+
+    Same object the inference ALM projects onto: the exact cubic Bezier controls
+    of every piece are ``beta = E Q``, and the piece is inside its corridor cell
+    iff ``A beta <= b`` for all four Bezier controls and all faces.  Because the
+    four controls lie in the (convex) cell, the WHOLE piece does - this is the
+    continuous certificate, not a 128-point sampling heuristic.
+
+    Returns ``[B]`` = ``max(0, max_(piece,bezier,face) A beta - b)`` in SCENE
+    units (the rows of ``A`` are unit normals), ``0`` where no piece is active.
+    Differentiable w.r.t. ``controls``.
+    """
+    if controls.dim() != 3 or controls.shape[-1] != 2:
+        raise ValueError("controls must be [B,C,2], got %s"
+                         % (tuple(controls.shape),))
+    if int(pack.extraction.shape[-1]) != int(controls.shape[1]):
+        raise ValueError("pack expects %d controls, got %d"
+                         % (int(pack.extraction.shape[-1]),
+                            int(controls.shape[1])))
+    if int(pack.extraction.shape[0]) != int(controls.shape[0]):
+        raise ValueError("pack has %d samples, controls have %d"
+                         % (int(pack.extraction.shape[0]),
+                            int(controls.shape[0])))
+    beta = torch.einsum("bprk,bkd->bprd", pack.extraction, controls)
+    g = (torch.einsum("bpfd,bprd->bprf", pack.piece_A, beta)
+         - pack.piece_b[:, :, None, :])
+    mask = pack.piece_mask[:, :, None, None] & pack.face_mask[:, :, None, :]
+    positive = torch.relu(g - float(margin)) * mask
+    return positive.flatten(1).amax(dim=1)
+
+
+def feedback_safety_loss(controls: torch.Tensor, pack,
+                         margin: float = 0.0,
+                         sample_mask: torch.Tensor | None = None,
+                         reduction: str = "mean") -> torch.Tensor:
+    """``L_feedback_safe``: continuous corridor violation of the RAW next step.
+
+    It is applied to the SECOND network prediction of the two-step rollout -
+    ``Q0_raw(s)``, i.e. the polygon the next reverse step would hand to the ALM -
+    so the denoiser itself learns to stay inside the corridor instead of relying
+    on the ALM to clean up after it.  A curve already inside the corridor (and
+    therefore a fixed point of the ALM) contributes exactly 0.
+    """
+    per = pack_max_violation(controls, pack, margin=margin)
+    if reduction == "none":
+        return per
+    return _masked_mean(per, sample_mask)
+
+
+def curve_smoothness_loss(q_pred: torch.Tensor, q_gt: torch.Tensor,
+                          basis: torch.Tensor, acc_weight: float = 0.25,
+                          jerk_weight: float = 1.0,
+                          eps: float = 1e-3) -> torch.Tensor:
+    """``L_curve_smooth``: 2nd/3rd differences of the DECODED curve.
+
+    ``L_smooth`` penalises the control polygon, which is NOT the same thing as
+    the curve the ALM and the controller see.  Here the prediction is decoded
+    first (``P = B Q``, ``basis [H,C]``) and the curvature / jerk are measured on
+    the real B-spline curve::
+
+        P = B q_pred,   Delta^2 P_i,   Delta^3 P_i
+
+    scaled by the detached mean GT curve step length.  This is what stops the
+    network from simply copying a safe-but-lumpy ALM output: copied kinks are
+    penalised exactly like self-generated ones.
+    """
+    p = torch.einsum("hk,bkd->bhd", basis.to(q_pred.dtype), q_pred)
+    p_gt = torch.einsum("hk,bkd->bhd", basis.to(q_gt.dtype), q_gt)
+    velocity = p[:, 1:] - p[:, :-1]
+    acceleration = velocity[:, 1:] - velocity[:, :-1]
+    jerk = acceleration[:, 1:] - acceleration[:, :-1]
+
+    gt_velocity = p_gt[:, 1:] - p_gt[:, :-1]
+    step_scale = gt_velocity.norm(dim=-1).mean(dim=1, keepdim=True)
+    step_scale = step_scale.detach().clamp_min(1e-6)[:, :, None]
+    acceleration = acceleration / step_scale
+    jerk = jerk / step_scale
+
+    acc_norm = (acceleration.square().sum(dim=-1) + eps ** 2).sqrt().sub(eps)
+    jerk_norm = (jerk.square().sum(dim=-1) + eps ** 2).sqrt().sub(eps)
+    return (float(acc_weight) * torch.log1p(acc_norm).mean()
+            + float(jerk_weight) * torch.log1p(jerk_norm).mean())

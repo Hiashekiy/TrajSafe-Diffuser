@@ -61,7 +61,7 @@ class StubPlanner(nn.Module):
     """
 
     def __init__(self, codec, horizon=HORIZON, bump=0.0, ellipse_log_a=None,
-                 ellipse_log_b=None):
+                 ellipse_log_b=None, feedback=False, feedback_log=None):
         super().__init__()
         self.bspline = codec
         self.horizon = int(horizon)
@@ -71,13 +71,28 @@ class StubPlanner(nn.Module):
                               else float(ellipse_log_a))
         self.ellipse_log_b = (math.log(0.05) if ellipse_log_b is None
                               else float(ellipse_log_b))
+        # historical safety feedback: the stub records what the sampler passes
+        # instead of consuming it (the contract under test is the CACHE)
+        self.feedback_enabled = bool(feedback)
+        self.feedback_log = [] if feedback_log is None else feedback_log
         self.register_buffer("fixed_progress", torch.linspace(0.0, 1.0, horizon))
 
     def hard_control_endpoints(self, q, cond):
         return BSplineCodec.hard_control_endpoints(q, cond)
 
     def forward_all(self, q, occ, cond, t, ab, candidate_xy, candidate_mask,
-                    geometry, geometry_lengths, select_index=None):
+                    geometry, geometry_lengths, select_index=None,
+                    feedback_control=None, feedback_delta=None,
+                    feedback_valid=None):
+        if self.feedback_enabled:
+            self.feedback_log.append({
+                "control": (None if feedback_control is None
+                            else feedback_control.detach().clone()),
+                "delta": (None if feedback_delta is None
+                          else feedback_delta.detach().clone()),
+                "valid": (None if feedback_valid is None
+                          else feedback_valid.detach().clone()),
+            })
         B = q.shape[0]
         dev = q.device
         H = self.horizon
@@ -166,9 +181,10 @@ def _batch(kinds=("zigzag", "straight"), bump=0.0):
 
 
 def _run(kinds=("zigzag", "straight"), alm=None, corridor=None, steps=None,
-         seed=0, bump=0.0, T=16):
+         seed=0, bump=0.0, T=16, feedback=False, feedback_log=None):
     codec = _codec()
-    model = StubPlanner(codec, bump=bump)
+    model = StubPlanner(codec, bump=bump, feedback=feedback,
+                        feedback_log=feedback_log)
     schedule = NoiseSchedule(T, beta_schedule="squaredcos_cap_v2")
     batch = _batch(kinds, bump)
     cfg = dict(ALM_CFG)
@@ -308,7 +324,10 @@ def test_trace_carries_everything_the_dashboard_needs():
     step = out["trace"][-1]
     for key in ("t", "s", "q", "q0_raw", "q0_safe", "p_raw", "p_safe",
                 "alm_active", "alm_stats", "frozen_topology_idx", "guided",
-                "selected_idx", "pi", "ellipse_center", "ellipse_shape4"):
+                "selected_idx", "pi", "ellipse_center", "ellipse_shape4",
+                "feedback_valid", "feedback_control", "feedback_delta",
+                "raw_violation", "alm_correction", "curve_smoothness_raw",
+                "curve_smoothness_safe"):
         assert key in step, key
     assert step["alm_stats"] is not None
     for key in ("max_violation_before", "max_violation_after",
@@ -317,3 +336,44 @@ def test_trace_carries_everything_the_dashboard_needs():
                 "constraint_feasible_rate"):
         assert key in step["alm_stats"], key
     assert out["progress_alignment"][0]["progress_alignment_rmse"] is not None
+
+
+# ------------------------------------------------- historical safety feedback
+def test_feedback_branch_is_absent_when_the_model_has_none():
+    log = []
+    out = _run(feedback=False, feedback_log=log)
+    assert log == []                       # nothing is ever passed
+    assert out["feedback"]["enabled"] is False
+    assert not bool(out["feedback"]["valid"].any())
+
+
+def test_feedback_is_zero_in_warmup_and_carries_the_previous_step():
+    log = []
+    out = _run(bump=0.1, feedback=True, feedback_log=log,
+               alm={"max_curve_step_scene": 0.10, "inner_steps": 20,
+                    "activation_inner_steps": 24, "constraint_tol": 5e-3})
+    warmup = ALM_CFG["warmup_reverse_steps"]
+    # the activation retries add extra forwards ON TOP of the reverse steps
+    assert len(log) >= len(out["trace"])
+    for entry in log[:warmup]:
+        assert entry["valid"] is not None
+        assert not bool(entry["valid"].any())
+        assert float(entry["control"].abs().max()) == 0.0
+        assert float(entry["delta"].abs().max()) == 0.0
+    # the LAST reverse forward consumed exactly what the sampler published at the
+    # end of the second-to-last reverse step
+    for entry in log[warmup:]:
+        assert entry["valid"] is not None
+    last, prev = log[-1], out["trace"][-2]
+    assert torch.equal(last["valid"].cpu(), prev["feedback_valid"])
+    assert torch.allclose(last["control"].cpu(), prev["feedback_control"])
+    assert torch.allclose(last["delta"].cpu(), prev["feedback_delta"])
+    # the first guided step is verified, and publishes Q0_safe / Delta for the
+    # NEXT forward pass
+    step = out["trace"][warmup]
+    assert bool(step["feedback_valid"][0])
+    assert torch.allclose(step["feedback_control"], step["q0_safe"])
+    assert torch.allclose(step["feedback_delta"],
+                          step["q0_safe"] - step["q0_raw"])
+    assert out["feedback"]["history"]["accepted"] >= 1
+    assert bool(out["feedback"]["valid"][0])

@@ -34,6 +34,19 @@ Three-stage state machine (report sections 1-3, 9, 10, 31, 32, 35, 36):
 There is NO extra final projection at ``t = 0``: the last guided step already
 returns ``Q0_safe``.  The trailing ``0 -> -1`` transition sets ``q = q0_used``.
 
+Historical safety feedback (only when the model was built with
+``model.feedback.enabled``): every guided step hands the NEXT forward pass the
+previous step's ALM result,::
+
+    feedback_control = Q0_safe_prev          (Q0_raw_prev if it was already safe)
+    feedback_delta   = Q0_safe_prev - Q0_raw_prev
+    feedback_valid   = the previous ALM output passed the frozen constraint pack
+
+A step whose ALM still violates the pack is NOT accepted as history: the last
+verified feedback is kept instead (section 4.4 of the design note).  During
+warm-up ``feedback_valid = 0`` and the gated fusion is an exact identity, so the
+feedback branch can never perturb the plain diffusion behaviour.
+
 The count that drives the warm-up is the number of executed reverse network
 forwards, never an absolute timestep value (DDIM sub-sampling safe).
 """
@@ -52,7 +65,7 @@ from ..geometry.safety_corridor import (SCENE_TO_METER, build_safety_corridor,
 from .bspline_alm import bspline_alm_correct
 
 __all__ = ["sample", "pick_times", "ActivationResult", "try_activate_corridor",
-           "dense_validation", "ablation_configs"]
+           "dense_validation", "ablation_configs", "feedback_step"]
 
 ABLATIONS = {
     "A": "raw",
@@ -156,6 +169,7 @@ def try_activate_corridor(
     pending: torch.Tensor,
     tried: torch.Tensor,
     anchors: torch.Tensor,
+    feedback: dict | None = None,
 ) -> ActivationResult:
     """Try to close a safety corridor for every sample flagged in ``pending``.
 
@@ -193,7 +207,8 @@ def try_activate_corridor(
             idx_k = order[:, min(k, order.shape[1] - 1)]
             out_k = model.forward_all(
                 q, occ, cond, t, ab, candidate_xy, candidate_mask, geometry,
-                geometry_lengths, select_index=idx_k)
+                geometry_lengths, select_index=idx_k,
+                **(feedback or {}))
         stats["candidate_trials"].append(int(k))
         for b in range(B):
             if not bool(active[b]):
@@ -249,6 +264,53 @@ def _dense_decode(codec, q: torch.Tensor, num_points: int) -> torch.Tensor:
     params = torch.linspace(0.0, 1.0, int(num_points), device=q.device)
     basis = codec.basis_at(params).to(dtype=q.dtype, device=q.device)
     return torch.einsum("pk,bkd->bpd", basis, q)
+
+
+def feedback_step(control: torch.Tensor, delta: torch.Tensor,
+                  valid: torch.Tensor, guided: torch.Tensor,
+                  has_pack: torch.Tensor, before: torch.Tensor,
+                  after: torch.Tensor, raw_step: torch.Tensor,
+                  safe_step: torch.Tensor, tol: float):
+    """Refresh the cross-reverse-step safety feedback (design note section 4).
+
+        raw already inside the corridor  -> (Q0_raw, 0,        1)
+        ALM fixed a violation            -> (Q0_safe, Delta,   1)
+        ALM still violates / not guided  -> keep the previous, verified feedback
+
+    Only a result that PASSES the frozen, exact constraint pack may become
+    history: a failing ALM never overwrites the last trusted feedback.  Returns
+    ``(control, delta, valid, stats)``.
+    """
+    reliable = guided & has_pack & (after <= float(tol))
+    already_ok = reliable & (before <= float(tol))
+    keep = already_ok[:, None, None]
+    ctrl_new = torch.where(keep, raw_step, safe_step)
+    delta_new = torch.where(keep, torch.zeros_like(safe_step),
+                            safe_step - raw_step)
+    keep_valid = reliable[:, None, None]
+    stats = {
+        "accepted": int(reliable.sum()),
+        "already_safe": int(already_ok.sum()),
+        "rejected": int((guided & has_pack & ~reliable).sum()),
+    }
+    return (torch.where(keep_valid, ctrl_new, control),
+            torch.where(keep_valid, delta_new, delta),
+            valid | reliable, stats)
+
+
+def _curve_roughness(model, controls: torch.Tensor) -> torch.Tensor:
+    """Mean ``||P_{i+1} - 2 P_i + P_{i-1}||`` of the decoded curve (scene units).
+
+    The per-reverse-step smoothness series of report section 18: it is measured
+    on the REAL curve, not on the control polygon, so it is directly comparable
+    between the raw prediction and the ALM output.
+    """
+    with torch.no_grad():
+        p = model.bspline.decode_controls(controls.detach())
+        if p.shape[1] < 3:
+            return torch.zeros(p.shape[0])
+        d2 = p[:, 2:] - 2.0 * p[:, 1:-1] + p[:, :-2]
+        return d2.norm(dim=-1).mean(dim=1).detach().cpu()
 
 
 def _free_mask(occ_row: torch.Tensor, points: torch.Tensor) -> torch.Tensor:
@@ -421,6 +483,26 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     }
     exhausted = torch.zeros(B, dtype=torch.bool, device=dev)
 
+    # ---- historical safety feedback (previous reverse step's ALM result) ----
+    # Only maintained/consumed when the model was built with
+    # ``model.feedback.enabled``; otherwise the sampler is byte-for-byte the old
+    # one.  ``feedback_valid = 0`` means "no reliable history" and makes the
+    # fusion an exact identity, which is what the warm-up phase relies on.
+    fb_on = bool(getattr(model, "feedback_enabled", False))
+    fb_control = torch.zeros(B, C, 2, device=dev, dtype=q.dtype)
+    fb_delta = torch.zeros(B, C, 2, device=dev, dtype=q.dtype)
+    fb_valid = torch.zeros(B, dtype=torch.bool, device=dev)
+    fb_tol = float(alm_cfg.get("feedback_accept_tol",
+                               alm_cfg.get("constraint_tol", 1e-3)))
+    fb_history = {"accepted": 0, "already_safe": 0, "rejected": 0,
+                  "invalid_steps": 0}
+
+    def _fb_kwargs():
+        if not fb_on:
+            return {}
+        return {"feedback_control": fb_control, "feedback_delta": fb_delta,
+                "feedback_valid": fb_valid}
+
     trace = []
     last = None
     reverse_forward_count = 0
@@ -431,9 +513,10 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
 
         all_guided = bool(guided.all()) and bool(guided.any())
         sel = frozen_idx if all_guided else None
+        fb_in_valid = fb_valid.clone()
         out = model.forward_all(q, occ, cond, tb, ab, candidate_xy,
                                 candidate_mask, geometry, geometry_lengths,
-                                select_index=sel)
+                                select_index=sel, **_fb_kwargs())
         last = out
         q0_used = out["control"]
         idx_used = out["selected_idx"].clone()
@@ -449,7 +532,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 result = try_activate_corridor(
                     model, q, occ, cond, tb, ab, candidate_xy, candidate_mask,
                     geometry, geometry_lengths, out, corridor_cfg, builder_cfg,
-                    pending, tried, anchors)
+                    pending, tried, anchors, feedback=_fb_kwargs())
                 newly = result.activated
                 for b in range(B):
                     if bool(pending[b]):
@@ -507,6 +590,23 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 inner_steps=max(activation_inner, inner_steps),
                 max_steps=budget)
 
+        # ---- refresh the historical safety feedback ------------------------
+        # Only a step whose ALM output PASSES the (frozen, exact) constraint
+        # pack becomes history.  When the raw prediction was already feasible the
+        # network is told "stay where you are" (delta = 0), otherwise it is told
+        # where the ALM moved it and by how much.  A failing ALM NEVER overwrites
+        # the last verified feedback.
+        if fb_on and step_alm_stats is not None and pack is not None:
+            before = step_alm_stats["max_violation_before"]
+            after = step_alm_stats["max_violation_after"]
+            fb_control, fb_delta, fb_valid, fb_stats = feedback_step(
+                fb_control, fb_delta, fb_valid, guided, pack.num_pieces > 0,
+                before, after, step_q0_raw, q0_used, fb_tol)
+            fb_history["accepted"] += fb_stats["accepted"]
+            fb_history["already_safe"] += fb_stats["already_safe"]
+            fb_history["rejected"] += fb_stats["rejected"]
+            fb_history["invalid_steps"] += int((~fb_valid).sum())
+
         if int(s_t) < 0:
             q = q0_used
         else:
@@ -543,6 +643,20 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "guided": guided.detach().cpu().clone(),
                 "frozen_topology_idx": frozen_idx.detach().cpu().clone(),
                 "alm_active": bool(step_alm_stats is not None),
+                "feedback_enabled": fb_on,
+                "feedback_valid_in": fb_in_valid.detach().cpu().clone(),
+                "feedback_valid": fb_valid.detach().cpu().clone(),
+                "feedback_control": fb_control.detach().cpu().clone(),
+                "feedback_delta": fb_delta.detach().cpu().clone(),
+                "raw_violation": (step_alm_stats["max_violation_before"]
+                                  .detach().cpu().clone()
+                                  if step_alm_stats is not None else None),
+                "alm_correction": (step_alm_stats["max_curve_correction_scene"]
+                                   .detach().cpu().clone()
+                                   if step_alm_stats is not None else None),
+                "curve_smoothness_raw": _curve_roughness(
+                    model, step_q0_raw),
+                "curve_smoothness_safe": _curve_roughness(model, q0_used),
                 "alm_stats": ({k: v.detach().cpu().clone()
                                for k, v in step_alm_stats.items()}
                               if step_alm_stats is not None else None),
@@ -566,6 +680,13 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     result["activation_step"] = activation_step
     result["alm_status"] = alm_status
     result["activation_info"] = activation_info
+    result["feedback"] = {
+        "enabled": fb_on,
+        "valid": fb_valid.detach().cpu().clone(),
+        "control": fb_control.detach().cpu().clone(),
+        "delta": fb_delta.detach().cpu().clone(),
+        "history": dict(fb_history),
+    }
     result["corridors"] = [c.to_dict() if c is not None else None
                            for c in corridors]
     result["pack_summary"] = pack.summary() if pack is not None else None
