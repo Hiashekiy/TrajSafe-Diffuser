@@ -68,7 +68,8 @@ from src.losses.losses import (alm_corridor_loss, boundary_control_loss,
                                control_smoothness_loss, control_x0_loss,
                                curve_smoothness_loss, ellipse_iou_loss,
                                ellipse_safety_loss, ellipse_shape_loss,
-                               feedback_safety_loss, topology_ce)
+                               feedback_safety_loss, pack_violation,
+                               topology_ce)
 from src.models.trajsafe.boundary import boundary_targets
 
 LOSS_KEYS = ["Lctrl", "Lcoarse", "Lsmooth", "Lboundary", "Ltopo", "Lshape",
@@ -182,6 +183,62 @@ def metrics(batch, out, occ, device):
     return res
 
 
+def rollout_timesteps(B: int, num_timesteps: int, two_step: bool,
+                      device="cpu") -> torch.Tensor:
+    """The step-1 reverse times of a batch.
+
+    With the two-step rollout the FIRST forward must be at ``t >= 1``: the second
+    stage needs a real next reverse step, and ``t = 0`` would give ``s = t = 0``,
+    i.e. the degenerate "0 -> 0" update whose ``q_s`` is exactly ``q_t`` (a
+    duplicated forward with nothing to learn).  Without the rollout every
+    timestep is available, exactly as before.
+    """
+    low = 1 if two_step else 0
+    return torch.randint(int(low), int(num_timesteps), (int(B),), device=device)
+
+
+def rollout_pair(t: torch.Tensor, num_timesteps: int):
+    """The ``(t, s)`` reverse-step pair the second stage rolls out.
+
+    V1 always takes the IMMEDIATELY next reverse step (``s = t - 1``), which is
+    what the 16-step sampler does with ``steps=None``.  If training ever needs
+    DDIM sub-sampling, the pair must be drawn from the SAME schedule the sampler
+    uses (``src.diffusion.sampler.pick_times``) instead of hard-coding ``t - 1``;
+    this helper is the single place to change.
+    """
+    t = t.long()
+    return t, (t - 1).clamp(0, max(int(num_timesteps) - 1, 0))
+
+
+def corridor_fit(points: torch.Tensor, cell_a: torch.Tensor, cell_b: torch.Tensor,
+                 cell_valid: torch.Tensor, stride: int = 8) -> float:
+    """Fraction of a Skeleton polyline that lies INSIDE the offline corridor.
+
+    Point ``p`` is inside cell ``i`` iff ``A_i p <= b_i`` for every face, so
+
+        violation(p) = min_{valid i} max_f (A_if . p - b_if)
+
+    is positive exactly outside the corridor (the same half-space semantics as
+    ``alm_corridor_loss``).  This is a DIAGNOSTIC for the training/inference gap
+    of review item 3: the offline corridor was built on the GT route ``m*``, so
+    when the second rollout step is routed by the network's own ``argmax(pi)``
+    (``train.feedback.topology: "pi"``) this number tells whether that Skeleton
+    is still inside the corridor the ALM will project onto.  A value well below
+    1 means the corridor does not belong to the chosen Skeleton.
+    """
+    pts = points[::max(1, int(stride))]
+    if pts.numel() == 0 or cell_a.shape[0] == 0:
+        return 0.0
+    nrm = cell_a.norm(dim=-1).clamp_min(1e-9)
+    signed = (torch.einsum("cfk,pk->pcf", cell_a.to(pts.dtype), pts)
+              - cell_b.to(pts.dtype)[None]) / nrm[None]
+    worst = signed.amax(dim=-1)                       # [P,C] best face per cell
+    worst = worst.masked_fill(~cell_valid[None].to(worst.device), float("inf"))
+    violation = worst.amin(dim=1)                     # [P] nearest cell
+    violation = torch.nan_to_num(violation, nan=0.0, posinf=0.0, neginf=0.0)
+    return float((violation <= 0).to(torch.float32).mean())
+
+
 def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
                      fb_cfg, alm_cfg):
     """One REAL ALM + DDIM step, then the feedback-conditioned second forward.
@@ -201,6 +258,18 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
     (``valid = 0``), exactly like the sampler's section 4.4 rule.  When the raw
     prediction was already feasible the network is told ``delta = 0`` ("you were
     already safe, no correction was needed").
+
+    ``fb_cfg["topology"]`` selects the Skeleton of the SECOND forward:
+
+        ``"expert"`` (default)  the cached m* = argmin nDTW(curve_gt, S_m), i.e.
+                                the Skeleton the OFFLINE corridor was built on -
+                                always compatible with the constraint pack;
+        ``"pi"``                the FIRST forward's own ``argmax(pi)``, i.e. the
+                                routing inference would use.  This is closer to
+                                the deployed loop but the offline corridor may
+                                NOT belong to the chosen Skeleton, so it is an
+                                opt-in experiment (watch ``fb_topo_match`` and
+                                ``fb_valid_rate``), not the default.
 
     Returns ``(out2, pack, diag)``.
     """
@@ -229,12 +298,40 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
 
     # a correction is only trusted as history when the ALM output passes the
     # exact pack; ``feedback.accept_tol`` (or ``alm.feedback_accept_tol``)
-    # relaxes the strict ``constraint_tol`` when the residual is a few cm
+    # relaxes the strict ``constraint_tol`` to "approximately feasible"
     tol = float(fb_cfg.get("accept_tol",
                            alm_cfg.get("feedback_accept_tol",
                                        alm_cfg.get("constraint_tol", 1e-3))))
     inner = int(fb_cfg.get("alm_inner_steps", alm_cfg.get("inner_steps", 3)))
     q0_raw1 = out1["control"].detach()
+
+    # the Skeleton of the SECOND forward (see the docstring)
+    topo_mode = str(fb_cfg.get("topology", "expert") or "expert").lower()
+    if topo_mode in ("pi", "argmax", "pred", "predicted"):
+        select2 = out1["topo"]["pi"].argmax(dim=-1).detach()
+    elif topo_mode in ("expert", "best", "gt"):
+        select2 = best
+    else:
+        raise ValueError("train.feedback.topology must be 'expert' or 'pi', "
+                         "got %r" % (fb_cfg.get("topology"),))
+    topo_match = (float((select2 == best).to(torch.float32).mean())
+                  if B else 1.0)
+    # how well the chosen Skeleton sits inside the offline corridor (only worth
+    # paying for when the routing is NOT the corridor's own expert route)
+    check_fit = bool(fb_cfg.get("check_corridor_fit", topo_mode != "expert"))
+    topo_fit = None
+    if check_fit:
+        fits = []
+        for b in range(B):
+            if not bool(alm_valid[b]):
+                continue
+            n = int(gl[b, int(select2[b])].item())
+            if n < 2:
+                continue
+            fits.append(corridor_fit(
+                geo[b, int(select2[b]), :n].detach(), cell_a[b].detach(),
+                cell_b[b].detach(), cell_valid[b].detach()))
+        topo_fit = (sum(fits) / len(fits)) if fits else 0.0
 
     with torch.no_grad():
         q0_safe1, _, alm_stats = bspline_alm_correct(
@@ -261,7 +358,7 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
             fb_valid = fb_valid & (torch.rand(B, device=device) >= drop)
 
         # ---- the real DDIM update the sampler would perform ----------------
-        s_idx = (t - 1).clamp_min(0)
+        s_idx = rollout_pair(t, schedule.num_timesteps)[1]
         sa_t = schedule.sqrt_alphas_cumprod[t].to(device).float()
         s1_t = schedule.sqrt_one_minus_alphas_cumprod[t].to(device).float()
         sa_s = schedule.sqrt_alphas_cumprod[s_idx].to(device).float()
@@ -274,23 +371,33 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
 
     ab_s = schedule.sqrt_alphas_cumprod[s_idx].to(device)
     out2 = model.forward_all(
-        q_s, occ, cond, s_idx, ab_s, cand_xy, cm, geo, gl, select_index=best,
+        q_s, occ, cond, s_idx, ab_s, cand_xy, cm, geo, gl, select_index=select2,
         feedback_control=fb_control.detach(), feedback_delta=fb_delta.detach(),
         feedback_valid=fb_valid)
     diag = {
         "feedback_valid": fb_valid,
         "raw_violation": before,
+        "mean_violation": pack_violation(q0_raw1, pack, reduction="mean"),
         "safe_violation": after,
         "correction": correction,
         "delta_norm": (fb_delta.detach().norm(dim=-1).amax(dim=1)
                        * fb_valid.to(fb_delta.dtype)),
         "has_pack": has_pack,
+        "topo_mode": topo_mode,
+        "topo_match": topo_match,
+        "topo_corridor_fit": topo_fit,
+        "step_pair": (int(t.min()), int(s_idx.min())),
     }
     return out2, pack, diag
 
 
 def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
                  fb_cfg=None):
+    fb_cfg = dict(fb_cfg or {})
+    alm_cfg = dict(alm_cfg or {})
+    # the two-step rollout exists only when the model was built with feedback
+    rollout = (bool(getattr(model, "feedback_enabled", False))
+               and bool(fb_cfg.get("rollout", True)))
     q0 = batch["control_gt"].to(device)
     cond = batch["cond"].to(device)
     occ = batch["occupancy"].to(device)
@@ -304,7 +411,8 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
     shape_valid = batch["shape_valid"].to(device).bool()
     B = q0.shape[0]
 
-    t = torch.randint(0, schedule.num_timesteps, (B,), device=device)
+    # with the rollout t >= 1 so the second stage always has a real next step
+    t = rollout_timesteps(B, schedule.num_timesteps, rollout, device=device)
     q_t, _ = add_noise(q0, t, schedule)
     q_t = model.hard_control_endpoints(q_t, cond)
     ab = schedule.sqrt_alphas_cumprod[t].to(device)
@@ -380,10 +488,6 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
     # The SECOND network's OWN raw output is supervised (safety + smoothness +
     # expert shape).  No distillation term ties it to the ALM output, so the
     # network cannot learn the shortcut "copy what the ALM did".
-    fb_cfg = dict(fb_cfg or {})
-    alm_cfg = dict(alm_cfg or {})
-    rollout = (bool(getattr(model, "feedback_enabled", False))
-               and bool(fb_cfg.get("rollout", True)))
     raw = dict(raw1)
     total2 = None
     if rollout:
@@ -411,13 +515,24 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
             raw[key] = raw1[key] + value
         # only the step-2 terms exist in raw2 (the rest are step-1 only)
         total2 = sum(weights[k] * raw2[k] for k in raw2)
+        # ``fb_mean_violation`` is the "how much of the trajectory grazes the
+        # corridor" companion of ``fb_raw_violation`` (the deepest point); it is
+        # a DIAGNOSTIC only - the training term stays the max violation.
+        mean_violation = diag["mean_violation"].detach()
+        mask = diag["has_pack"]
         stats.update({
             "fb_valid_rate": float(diag["feedback_valid"].float().mean()),
             "fb_raw_violation": float(diag["raw_violation"].mean()),
+            "fb_mean_violation": (float(mean_violation[mask].mean())
+                                  if bool(mask.any()) else 0.0),
             "fb_safe_violation": float(diag["safe_violation"].mean()),
             "fb_correction": float(diag["correction"].mean()),
             "fb_delta_norm": float(diag["delta_norm"].mean()),
+            "fb_topo_match": float(diag["topo_match"]),
+            "fb_t_min": float(diag["step_pair"][0]),
         })
+        if diag["topo_corridor_fit"] is not None:
+            stats["fb_topo_corridor_fit"] = float(diag["topo_corridor_fit"])
 
     total = total1 if total2 is None else total1 + total2
     # The two parts touch DISJOINT graphs (the rollout is detached), so the

@@ -195,12 +195,18 @@ checkpoint 与训练损失。
 旧 checkpoint 在开启该开关后仍然逐位一致。
 
 训练不再是单步：每个 batch 跑一次真实的 `网络 → ALM → DDIM → feedback → 网络` 两步
-rollout，梯度只回到**第二次网络自己的原始预测**，监督来自
-`L_feedback_safe`（与推理 ALM 同一套连续 Bézier 约束包，`config_160k8p.yaml` 的
-`lambda_feedback_safe`）与 `L_curve_smooth`（解码曲线的二阶/三阶差分，
-`lambda_curve_smooth`），刻意**不**加 `||Q_next − Q_safe_prev||` 蒸馏项。
-训练日志里的 `fb_valid_rate / fb_raw_violation / fb_correction` 用于确认反馈分支真的
-被训练到了。
+rollout（第一步只从 `t ∈ [1, T)` 采样，避免退化的 `0→0` 更新），梯度只回到**第二次
+网络自己的原始预测**，监督来自 `L_feedback_safe`（与推理 ALM 同一套连续 Bézier
+约束包，`config_160k8p.yaml` 的 `lambda_feedback_safe`）与 `L_curve_smooth`
+（解码曲线的二阶/三阶差分，`lambda_curve_smooth`），刻意**不**加
+`||Q_next − Q_safe_prev||` 蒸馏项。第二步用哪个骨架由 `train.feedback.topology`
+决定（`expert` = 离线走廊所属的 `m*`，默认；`pi` = 网络自己的 `argmax(pi)`，
+待验证的实验项）。训练日志里的 `fb_valid_rate / fb_raw_violation /
+fb_mean_violation / fb_correction / fb_topo_match` 用于确认反馈分支真的被训练到了。
+
+推理期的拓扑冻结是**逐样本**的：混合 batch 里已激活的样本永远用它自己冻结的骨架
+（`select_index` 的负值 = 该行用 `argmax(pi)`），不会因为同 batch 其他样本还在
+激活就被重新路由。
 
 * 实现细节、配置项、消融方式、逐 step 诊断字段：见
   [`docs/HISTORICAL_SAFETY_FEEDBACK.md`](docs/HISTORICAL_SAFETY_FEEDBACK.md)。

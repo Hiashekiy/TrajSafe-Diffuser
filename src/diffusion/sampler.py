@@ -511,8 +511,13 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         tb = torch.full((B,), int(t), device=dev, dtype=torch.long)
         ab = sqrt_ab[int(t)].expand(B).contiguous()
 
-        all_guided = bool(guided.all()) and bool(guided.any())
-        sel = frozen_idx if all_guided else None
+        # PER-SAMPLE topology routing.  A row that already owns a frozen
+        # corridor must keep ITS Skeleton even while other rows of the batch are
+        # still activating: routing the whole batch by argmax(pi) (the previous
+        # ``all_guided`` shortcut) let a frozen row be re-routed to another
+        # Skeleton while the ALM kept projecting it into the corridor of the
+        # frozen one.  ``-1`` = "argmax(pi) for this row" (planner convention).
+        sel = torch.where(guided, frozen_idx, torch.full_like(frozen_idx, -1))
         fb_in_valid = fb_valid.clone()
         out = model.forward_all(q, occ, cond, tb, ab, candidate_xy,
                                 candidate_mask, geometry, geometry_lengths,
@@ -673,8 +678,12 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         result["ellipse_b"] = last["ellipse"]["b"]
         result["ellipse_theta"] = last["ellipse"]["theta"]
         result["ellipse_shape4"] = last["ellipse"]["shape4"]
-    if bool(guided.any()):
-        result["selected_idx"] = frozen_idx
+    # per-sample report: guided rows report their FROZEN index, the others the
+    # index they were last routed to (never the frozen default of an unguided
+    # row, which is a meaningless 0)
+    sel_final = (torch.where(guided, frozen_idx, last["selected_idx"])
+                 if last is not None else frozen_idx)
+    result["selected_idx"] = sel_final
     result["frozen_topology_idx"] = frozen_idx
     result["guided"] = guided
     result["activation_step"] = activation_step
@@ -711,9 +720,9 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     # ``P_i = C(i/(H-1))`` of the FINAL curve vs ``c_i = Gamma_m(i/(H-1))``
     final_curve = model.bspline.decode_controls(q)
     alignment = []
-    sel_final = (frozen_idx if bool(guided.any())
-                 else (last["selected_idx"] if last is not None
-                       else torch.zeros(B, dtype=torch.long, device=dev)))
+    sel_final = (torch.where(guided, frozen_idx, last["selected_idx"])
+                 if last is not None
+                 else torch.zeros(B, dtype=torch.long, device=dev))
     for b in range(B):
         sel_b = int(sel_final[b])
         n = max(1, int(geometry_lengths[b, sel_b].item()))

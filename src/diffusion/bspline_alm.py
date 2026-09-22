@@ -108,7 +108,17 @@ def constraint_state(q: torch.Tensor, pack,
 
 
 def _violation_stats(g: torch.Tensor, mask: torch.Tensor):
-    """Per-sample ``(max_violation, mean_positive_violation, feasible_rate)``."""
+    """Per-sample ``(max_violation, mean_positive_violation, feasible_rate)``.
+
+    A pack with no piece / no face (every sample of the batch failed activation)
+    is a fully degenerate constraint set: ``g`` is ``[B,0,4,F]`` (or ``[B,P,4,0]``)
+    and ``max`` on the empty axis would raise.  Such a batch is reported as
+    "nothing violated, vacuously feasible"; ALM then returns ``q_ref`` untouched
+    (the zero-size dual cannot move anything).
+    """
+    if g.shape[1] == 0 or g.shape[3] == 0:
+        zero = g.new_zeros(g.shape[0])
+        return zero, zero.clone(), torch.ones_like(zero)
     valid = mask.expand_as(g)
     count = valid.sum(dim=(1, 2, 3)).clamp_min(1)
     positive = torch.relu(g) * valid
@@ -271,6 +281,9 @@ def bspline_alm_correct(
         count = valid.sum(dim=(1, 2, 3)).clamp_min(1)
         corr = (q - q_ref)
         curve_corr = torch.einsum("hk,bkd->bhd", basis, corr).norm(dim=-1)
+        lam_flat = lam.flatten(1)
+        lam_max = (lam_flat.max(dim=1).values if lam_flat.shape[1] > 0
+                   else lam.new_zeros(B))
         stats = {
             "max_violation_before": v_max_before,
             "max_violation_after": v_max_after,
@@ -284,7 +297,7 @@ def bspline_alm_correct(
             "mean_curve_correction_m": curve_corr.mean(dim=-1) * scene_to_meter,
             "max_curve_correction_m": curve_corr.max(dim=-1).values * scene_to_meter,
             "lambda_mean": lam.sum(dim=(1, 2, 3)) / count,
-            "lambda_max": lam.flatten(1).max(dim=1).values,
+            "lambda_max": lam_max,
             "inner_steps_used": used.to(dtype),
         }
     return q, lam, stats

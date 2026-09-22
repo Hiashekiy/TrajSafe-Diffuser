@@ -28,7 +28,7 @@ from src.geometry.bspline import BSplineCodec
 from src.geometry.bspline_constraints import (build_constraint_pack_from_regions,
                                               build_constraint_pack)
 from src.losses.losses import (curve_smoothness_loss, feedback_safety_loss,
-                               pack_max_violation)
+                               pack_max_violation, pack_violation)
 from src.models.trajsafe.feedback import FeedbackEncoder, FeedbackFusion
 
 
@@ -53,12 +53,14 @@ def test_feedback_encoder_zero_init_is_exactly_zero():
     assert not torch.allclose(enc2(torch.randn(2, 5, 5)), torch.zeros(2, 5, 8))
 
 
-def _forward(model, b, **kwargs):
+def _forward(model, b, select_index=None, **kwargs):
+    """``select_index`` defaults to the cached expert m* (as in training)."""
+    if select_index is None:
+        select_index = b["topology_best"]
     return model.forward_all(
         b["pos"], b["occ"], b["cond"], b["t"], b["ab"],
         b["candidate_xy"], b["candidate_mask"], b["candidate_geometry"],
-        b["candidate_geometry_lengths"], select_index=b["topology_best"],
-        **kwargs)
+        b["candidate_geometry_lengths"], select_index=select_index, **kwargs)
 
 
 def test_zero_init_model_is_bit_identical_with_and_without_feedback():
@@ -405,3 +407,257 @@ def test_training_two_step_rollout_runs_backprops_and_fills_the_second_step():
         fb_cfg={"rollout": True, "simulate_warmup": True})
     assert stats3["fb_valid_rate"] == 0.0
     assert torch.isfinite(raw3["Lfbsafe"]).all()
+
+
+def test_rollout_timesteps_never_use_the_last_step_for_the_two_step_rollout():
+    from train import rollout_pair, rollout_timesteps
+
+    t = rollout_timesteps(512, 16, True, device="cpu")
+    assert int(t.min()) >= 1 and int(t.max()) <= 15
+    every = rollout_timesteps(512, 16, False, device="cpu")
+    assert int(every.min()) >= 0 and int(every.max()) <= 15
+    tt, ss = rollout_pair(torch.tensor([0, 1, 15]), 16)
+    assert tt.tolist() == [0, 1, 15]
+    assert ss.tolist() == [0, 0, 14]              # the real next reverse step
+
+
+# ------------------------------------------------------------ empty pack
+def _empty_pack(codec, B=1):
+    """A pack whose corridors ALL failed: no piece, no face at all."""
+    A, b, mask, anchors = _tube_regions(half=0.10)
+    A = A[None].expand(B, *A.shape).contiguous()
+    b = b[None].expand(B, *b.shape).contiguous()
+    mask = mask[None].expand(B, mask.shape[0]).contiguous()
+    return build_constraint_pack_from_regions(
+        codec, A, b, mask, anchors=anchors,
+        sample_valid=torch.zeros(B, dtype=torch.bool))
+
+
+def test_empty_pack_is_a_differentiable_zero_and_never_raises():
+    codec = BSplineCodec(degree=3, num_controls=8, curve_points=32,
+                         knots_path="auto", endpoint_constrained=False)
+    pack = _empty_pack(codec, B=1)                 # batch_size = 1
+    assert int(pack.num_pieces[0]) == 0
+    q = _straight_controls(codec, offset=(0.0, 0.5)).requires_grad_(True)
+    assert float(pack_max_violation(q, pack).detach()) == 0.0
+    assert float(pack_violation(q, pack, reduction="mean").detach()) == 0.0
+    loss = feedback_safety_loss(q, pack)
+    assert float(loss.detach()) == 0.0
+    loss.backward()                                # graph-connected zero
+    assert torch.equal(q.grad, torch.zeros_like(q.grad))
+    # the same for a batch whose corridors all failed
+    pack2 = _empty_pack(codec, B=3)
+    q2 = _straight_controls(codec).expand(3, -1, -1).contiguous()
+    assert pack_max_violation(q2, pack2).shape == (3,)
+    assert float(pack_max_violation(q2, pack2).abs().max()) == 0.0
+
+
+def test_select_index_minus_one_mixes_argmax_with_explicit_indices():
+    """``-1`` = "argmax(pi) for THIS row" (the sampler's mixed-batch routing)."""
+    b = tiny_batch(B=2, H=8, M=3, L=8)
+    model = tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
+                       rel_bias_len=8, d_model=32)
+    model.eval()
+    args = (b["pos"], b["occ"], b["cond"], b["t"], b["ab"], b["candidate_xy"],
+            b["candidate_mask"], b["candidate_geometry"],
+            b["candidate_geometry_lengths"])
+    with torch.no_grad():
+        auto = model.forward_all(*args, select_index=None)    # argmax for all
+        mixed = model.forward_all(*args, select_index=torch.tensor([-1, 0]))
+        forced = model.forward_all(*args, select_index=torch.tensor([0, 0]))
+    assert torch.equal(mixed["selected_idx"][0], auto["selected_idx"][0])
+    assert int(mixed["selected_idx"][1]) == 0
+    # the RESOLVED index really drives the forward pass
+    assert torch.equal(mixed["control"][0], auto["control"][0])
+    assert torch.equal(mixed["control"][1], forced["control"][1])
+
+
+def test_alm_on_an_empty_pack_is_a_noop_with_finite_stats():
+    from src.diffusion.bspline_alm import bspline_alm_correct
+
+    codec = BSplineCodec(degree=3, num_controls=8, curve_points=32,
+                         knots_path="auto", endpoint_constrained=False)
+    pack = _empty_pack(codec, B=2)
+    q = _straight_controls(codec, offset=(0.0, 0.4))
+    q = q.expand(2, -1, -1).contiguous()
+    out, lam, stats = bspline_alm_correct(q, pack, codec, None,
+                                          {"step_size": 0.05}, inner_steps=3)
+    assert torch.equal(out, q)                     # nothing to project onto
+    assert torch.isfinite(lam).all()
+    for key in ("max_violation_before", "max_violation_after",
+                "mean_positive_violation_after", "lambda_max"):
+        assert torch.isfinite(stats[key]).all(), key
+    assert float(stats["max_violation_after"].abs().max()) == 0.0
+
+
+def test_training_rollout_survives_a_batch_without_any_corridor():
+    """batch_size = 1, ``alm_valid = False``: the whole training step must run."""
+    from train import LOSS_KEYS, batch_losses
+
+    from src.diffusion.schedule import NoiseSchedule
+
+    b = tiny_batch(B=1, H=8, M=3, L=8)
+    model = tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
+                       rel_bias_len=8, d_model=32,
+                       feedback={"enabled": True, "hidden": 16,
+                                 "zero_init": False})
+    model.train()
+    A, bb, mask = _scene_cells(b)
+    batch = _rollout_batch(b, model, A, bb, mask,
+                           torch.zeros(1, dtype=torch.bool))   # corridor failed
+    schedule = NoiseSchedule(8)
+    raw, _, total, _, stats = batch_losses(
+        batch, model, schedule, {"ellipse_safe_res": 16}, "cpu",
+        alm_cfg={"inner_steps": 2, "max_curve_step_scene": 0.05},
+        fb_cfg={"rollout": True, "drop_prob": 0.0})
+    assert set(LOSS_KEYS) <= set(raw)
+    assert stats["fb_valid_rate"] == 0.0
+    assert stats["fb_mean_violation"] == 0.0
+    assert float(raw["Lfbsafe"].detach()) == 0.0
+    assert float(raw["Lcurve"].detach()) >= 0.0
+    assert torch.isfinite(total).all()
+    for part in stats["loss_parts"]:
+        (part / 2).backward()                      # empty pack must not explode
+
+
+def test_corridor_fit_reports_whether_a_skeleton_is_inside_the_corridor():
+    from train import corridor_fit
+
+    codec = BSplineCodec(degree=3, num_controls=8, curve_points=32,
+                         knots_path="auto", endpoint_constrained=False)
+    A, b, mask, _ = _tube_regions(half=0.10)
+    inside = _straight_controls(codec)[0]
+    outside = _straight_controls(codec, offset=(0.0, 0.4))[0]
+    assert corridor_fit(inside, A, b, mask) == 1.0
+    assert corridor_fit(outside, A, b, mask) == 0.0
+    # a half-inside polyline (one end shifted) lands strictly in between
+    mixed = inside.clone()
+    mixed[len(mixed) // 2:] += torch.tensor([0.0, 0.4])
+    half = corridor_fit(mixed, A, b, mask, stride=1)
+    assert 0.0 < half < 1.0
+    # no corridor at all is reported as 0, never as a crash
+    empty = _empty_pack(codec, B=1)
+    assert corridor_fit(inside, empty.piece_A[0], empty.piece_b[0],
+                        empty.face_mask[0].any(dim=-1)) == 0.0
+
+
+def test_second_step_topology_mode_is_configurable_and_logged():
+    from train import batch_losses
+
+    from src.diffusion.schedule import NoiseSchedule
+
+    b = tiny_batch(B=2, H=8, M=3, L=8)
+    model = tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
+                       rel_bias_len=8, d_model=32,
+                       feedback={"enabled": True, "hidden": 16,
+                                 "zero_init": False})
+    model.train()
+    A, bb, mask = _scene_cells(b)
+    batch = _rollout_batch(b, model, A, bb, mask,
+                           torch.ones(2, dtype=torch.bool))
+    schedule = NoiseSchedule(8)
+    lcfg = {"ellipse_safe_res": 16}
+    alm_cfg = {"inner_steps": 2, "max_curve_step_scene": 0.05}
+    _, _, _, _, expert = batch_losses(
+        batch, model, schedule, lcfg, "cpu", alm_cfg=alm_cfg,
+        fb_cfg={"rollout": True, "drop_prob": 0.0, "topology": "expert"})
+    assert expert["fb_topo_match"] == 1.0          # expert routing IS m*
+    assert "fb_topo_corridor_fit" not in expert    # not paid for on the expert path
+    _, _, _, _, pred = batch_losses(
+        batch, model, schedule, lcfg, "cpu", alm_cfg=alm_cfg,
+        fb_cfg={"rollout": True, "drop_prob": 0.0, "topology": "pi"})
+    assert 0.0 <= pred["fb_topo_match"] <= 1.0     # how often pi picks m*
+    # the compatibility probe of review item 3 runs in the pi mode
+    assert 0.0 <= pred["fb_topo_corridor_fit"] <= 1.0
+    try:
+        batch_losses(batch, model, schedule, lcfg, "cpu", alm_cfg=alm_cfg,
+                     fb_cfg={"rollout": True, "topology": "nonsense"})
+    except ValueError as exc:
+        assert "topology" in str(exc)
+    else:                                                   # pragma: no cover
+        raise AssertionError("an unknown topology mode must be refused")
+
+
+# ------------------------------------------------- full reverse loop (real)
+def test_full_reverse_loop_with_the_real_planner_feeds_feedback_back(monkeypatch):
+    """Real planner + real ALM/pack + real feedback cache over 4 reverse steps.
+
+    ``build_safety_corridor`` is replaced by a trivially satisfied box so the
+    test does not depend on a random tiny model's ellipses closing a real
+    corridor.  Every constraint holds, which pins the "already safe -> delta = 0"
+    branch, and the loop must still run the real ALM/DDIM/pack machinery.
+    """
+    import src.diffusion.sampler as sampler_mod
+    from src.diffusion.sampler import sample as ddim_sample
+    from src.diffusion.schedule import NoiseSchedule
+
+    class _Cell:
+        def __init__(self, A, b):
+            self.A, self.b = A, b
+
+        @property
+        def face_count(self):
+            return len(self.A)
+
+    class _Corridor:
+        valid = True
+        failure_reason = None
+        overlap_ratio = [0.9, 0.9, 0.9]
+        bridge_cell_count = 0
+
+        def __init__(self, cells=4, bound=1e6):
+            A = np.array([[0.0, 1.0], [0.0, -1.0], [1.0, 0.0], [-1.0, 0.0]])
+            b = np.array([bound, bound, bound, bound])
+            self.cells = [_Cell(A, b) for _ in range(cells)]
+
+        @property
+        def num_cells(self):
+            return len(self.cells)
+
+        def anchors(self):
+            return np.linspace(0.0, 1.0, len(self.cells))
+
+        def to_dict(self):
+            return {"valid": True, "num_cells": self.num_cells}
+
+    monkeypatch.setattr(sampler_mod, "build_safety_corridor",
+                        lambda *a, **k: _Corridor())
+    b = tiny_batch(B=2, H=8, M=3, L=8)
+    model = tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
+                       rel_bias_len=8, d_model=32,
+                       feedback={"enabled": True, "hidden": 16,
+                                 "zero_init": False})
+    schedule = NoiseSchedule(8)
+    out = ddim_sample(
+        model, schedule, b["cond"], b["occ"], b["candidate_xy"],
+        b["candidate_mask"], b["candidate_geometry"],
+        b["candidate_geometry_lengths"], device="cpu", steps=4, seed=0,
+        return_trace=True,
+        alm_config={"enabled": True, "mode": "guided_bspline",
+                    "warmup_reverse_steps": 1, "max_activation_delay_steps": 1,
+                    "activation_inner_steps": 2, "inner_steps": 2,
+                    "max_curve_step_scene": 0.02},
+        corridor_config={"topology_trials": 1})
+    trace = out["trace"]
+    assert out["feedback"]["enabled"] is True
+    assert bool(out["guided"].all())
+    assert out["alm_status"] == ["guided", "guided"]
+    assert len(trace) == 4
+    guided = [s for s in trace if s["alm_active"]]
+    assert len(guided) == 3
+    # the box is trivially satisfied -> "already safe" for every guided row
+    assert out["feedback"]["history"]["already_safe"] == 2 * len(guided)
+    assert out["feedback"]["history"]["rejected"] == 0
+    assert bool(out["feedback"]["valid"].all())
+    assert all(float(s["feedback_delta"].abs().max()) == 0.0 for s in trace[1:])
+    # warm-up sees no history, the last reverse step does
+    assert not bool(trace[0]["feedback_valid_in"].any())
+    assert bool(trace[-1]["feedback_valid_in"].all())
+    # each guided step reports the raw violation / ALM correction / smoothness
+    for step in guided:
+        assert step["raw_violation"] is not None
+        assert step["alm_correction"] is not None
+        assert float(step["alm_correction"].abs().max()) == 0.0
+        assert step["curve_smoothness_raw"].shape == (2,)
+    assert out["p"].shape == (2, 8, 2)
+    assert bool(torch.isfinite(out["p"]).all())

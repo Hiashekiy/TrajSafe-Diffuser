@@ -333,12 +333,28 @@ class TrajSafePlanner(nn.Module):
     def _route_topology(self, r: torch.Tensor, topo: dict,
                         candidate_mask: torch.Tensor,
                         select_index: torch.Tensor | None):
+        """Per-sample topology routing.
+
+        ``select_index = None``  -> argmax(pi) for every sample.
+        ``select_index [B]``     -> that index per sample; a NEGATIVE entry means
+                                    "use argmax(pi) for THIS sample".
+
+        The mixed form exists because the sampler freezes the topology PER
+        SAMPLE: in a batch where some rows already own a frozen corridor and
+        others are still activating, the frozen rows must keep their Skeleton
+        while the rest follow the Topology Head.  Routing the whole batch by
+        argmax(pi) would silently invalidate a frozen corridor (the network
+        would build the trajectory on Skeleton B while the ALM projects it into
+        the corridor of Skeleton A).
+        """
         B = r.shape[0]
         dev = r.device
+        idx_pi = topo["pi"].argmax(dim=-1)
         if select_index is None:
-            idx = topo["pi"].argmax(dim=-1)
+            idx = idx_pi
         else:
-            idx = select_index.to(dev).long()
+            sel = select_index.to(dev).long().reshape(B)
+            idx = torch.where(sel < 0, idx_pi, sel)
         has_cand = candidate_mask.any(dim=-1)
         idx = torch.where(has_cand, idx, torch.zeros_like(idx))
         ar = torch.arange(B, device=dev)
@@ -357,8 +373,12 @@ class TrajSafePlanner(nn.Module):
 
         ``q_t`` is the C-control diffusion state.  ``select_index`` is the
         training-time m* (argmin nDTW); when it is ``None`` inference routing
-        ``argmax(pi)`` is used.  Invalid rows are routed to slot 0, masked out
-        of every loss, and their output degenerates to the coarse polygon.
+        ``argmax(pi)`` is used.  A ``[B]`` tensor may also MIX the two: negative
+        entries mean "argmax(pi) for this sample" (see :meth:`_route_topology`),
+        which is what the sampler needs once some rows of the batch own a frozen
+        corridor and others do not yet.  Invalid rows are routed to slot 0,
+        masked out of every loss, and their output degenerates to the coarse
+        polygon.
 
         ``feedback_control`` [B,C,2] / ``feedback_delta`` [B,C,2] /
         ``feedback_valid`` [B] are the PREVIOUS reverse step's ALM result

@@ -61,7 +61,8 @@ class StubPlanner(nn.Module):
     """
 
     def __init__(self, codec, horizon=HORIZON, bump=0.0, ellipse_log_a=None,
-                 ellipse_log_b=None, feedback=False, feedback_log=None):
+                 ellipse_log_b=None, feedback=False, feedback_log=None,
+                 select_log=None):
         super().__init__()
         self.bspline = codec
         self.horizon = int(horizon)
@@ -75,6 +76,9 @@ class StubPlanner(nn.Module):
         # instead of consuming it (the contract under test is the CACHE)
         self.feedback_enabled = bool(feedback)
         self.feedback_log = [] if feedback_log is None else feedback_log
+        # every ``select_index`` the sampler hands over (None included), so the
+        # per-sample routing can be asserted directly
+        self.select_log = [] if select_log is None else select_log
         self.register_buffer("fixed_progress", torch.linspace(0.0, 1.0, horizon))
 
     def hard_control_endpoints(self, q, cond):
@@ -93,6 +97,8 @@ class StubPlanner(nn.Module):
                 "valid": (None if feedback_valid is None
                           else feedback_valid.detach().clone()),
             })
+        self.select_log.append(None if select_index is None
+                               else select_index.detach().clone())
         B = q.shape[0]
         dev = q.device
         H = self.horizon
@@ -108,8 +114,13 @@ class StubPlanner(nn.Module):
         logits = torch.where(candidate_mask, weight[None].expand(B, M),
                              torch.full((B, M), float("-inf"), device=dev))
         pi = torch.softmax(logits, dim=-1)
-        idx = (pi.argmax(dim=-1) if select_index is None
-               else select_index.to(dev).long())
+        # mirrors TrajSafePlanner._route_topology: a NEGATIVE entry means
+        # "argmax(pi) for this sample" (the sampler's mixed-batch routing)
+        if select_index is None:
+            idx = pi.argmax(dim=-1)
+        else:
+            sel = select_index.to(dev).long()
+            idx = torch.where(sel < 0, pi.argmax(dim=-1), sel)
         ar = torch.arange(B, device=dev)
         s = self.fixed_progress[None].expand(B, H)
         gamma = geometry[ar, idx]
@@ -180,11 +191,55 @@ def _batch(kinds=("zigzag", "straight"), bump=0.0):
     }
 
 
+def _batch2(kinds_per_sample=(("zigzag", "straight"), ("zigzag", "zigzag")),
+            bump=0.0):
+    """B = 2 batch: sample 0 can close a corridor, sample 1 never can.
+
+    ``("zigzag", "zigzag")`` is the proven activation-failure configuration
+    (see ``test_activation_failure_degrades_to_raw_diffusion_without_crashing``),
+    so the two rows end up in DIFFERENT states: row 0 GUIDED, row 1 EXHAUSTED.
+    """
+    B = len(kinds_per_sample)
+    M = len(kinds_per_sample[0])
+    geometry = np.stack([np.stack([_geometry(k) for k in kinds], axis=0)
+                         for kinds in kinds_per_sample], axis=0)
+    cond = torch.tensor([[[-0.5, 0.0], [0.5, 0.0]]]).expand(B, 2, 2).contiguous()
+    return {
+        "cond": cond,
+        "occ": _occupancy().expand(B, 1, RES, RES).contiguous(),
+        "candidate_xy": torch.as_tensor(geometry[:, :, :: max(1, GEO // 128)],
+                                        dtype=torch.float32),
+        "candidate_mask": torch.ones(B, M, dtype=torch.bool),
+        "geometry": torch.as_tensor(geometry, dtype=torch.float32),
+        "geometry_lengths": torch.full((B, M), GEO, dtype=torch.long),
+        "bump": bump,
+    }
+
+
+def _run2(batch=None, alm=None, corridor=None, steps=None, seed=0, T=16,
+          feedback=False, feedback_log=None, select_log=None):
+    codec = _codec()
+    model = StubPlanner(codec, feedback=feedback, feedback_log=feedback_log,
+                        select_log=select_log)
+    schedule = NoiseSchedule(T, beta_schedule="squaredcos_cap_v2")
+    batch = _batch2() if batch is None else batch
+    cfg = dict(ALM_CFG)
+    cfg.update(alm or {})
+    cor = dict(CORRIDOR_CFG)
+    cor.update(corridor or {})
+    return sample(
+        model, schedule, batch["cond"], batch["occ"], batch["candidate_xy"],
+        batch["candidate_mask"], batch["geometry"], batch["geometry_lengths"],
+        device="cpu", steps=steps, seed=seed, return_trace=True,
+        alm_config=cfg, corridor_config=cor)
+
+
 def _run(kinds=("zigzag", "straight"), alm=None, corridor=None, steps=None,
-         seed=0, bump=0.0, T=16, feedback=False, feedback_log=None):
+         seed=0, bump=0.0, T=16, feedback=False, feedback_log=None,
+         select_log=None):
     codec = _codec()
     model = StubPlanner(codec, bump=bump, feedback=feedback,
-                        feedback_log=feedback_log)
+                        feedback_log=feedback_log, select_log=select_log)
     schedule = NoiseSchedule(T, beta_schedule="squaredcos_cap_v2")
     batch = _batch(kinds, bump)
     cfg = dict(ALM_CFG)
@@ -377,3 +432,35 @@ def test_feedback_is_zero_in_warmup_and_carries_the_previous_step():
                           step["q0_safe"] - step["q0_raw"])
     assert out["feedback"]["history"]["accepted"] >= 1
     assert bool(out["feedback"]["valid"][0])
+
+
+# ------------------------------------------- per-sample topology freezing
+def test_mixed_batch_keeps_the_frozen_skeleton_per_sample():
+    """Row 0 owns a corridor, row 1 never activates: row 0 must stay frozen.
+
+    Before the per-sample routing fix the sampler only froze the topology when
+    the WHOLE batch was guided (``all_guided``), so a mixed batch re-routed the
+    frozen row through ``argmax(pi)`` while the ALM kept projecting it into the
+    corridor built for its frozen Skeleton.
+    """
+    selects = []
+    out = _run2(select_log=selects)
+    assert bool(out["guided"][0]) and not bool(out["guided"][1])
+    frozen0 = int(out["frozen_topology_idx"][0])
+    # every reverse forward now carries a PER-SAMPLE tensor: the guided row gets
+    # its frozen index, the other one the -1 sentinel ("argmax(pi)")
+    assert all(entry is not None for entry in selects)
+    last = selects[-1]
+    assert tuple(last.shape) == (2,)
+    assert int(last[0]) == frozen0
+    assert int(last[1]) == -1
+    # and the guided row keeps its Skeleton all the way to the end
+    assert int(out["frozen_topology_idx"][0]) == frozen0
+    assert int(out["selected_idx"][0]) == frozen0
+    guided_steps = [s for s in out["trace"] if bool(s["guided"][0])]
+    assert guided_steps
+    for step in guided_steps:
+        assert int(step["selected_idx"][0]) == frozen0
+    # the never-guided row is reported with its own routing, not the frozen 0
+    assert int(out["selected_idx"][1]) >= 0
+    assert out["alm_status"][1] == "activation_failed"

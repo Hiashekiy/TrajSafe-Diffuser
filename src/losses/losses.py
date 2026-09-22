@@ -8,6 +8,13 @@
       + lambda_shape  * L_shape
       + lambda_iou    * L_iou
       + lambda_safe   * L_safe
+      + lambda_fbsafe * L_fbsafe    (continuous Bezier corridor violation of the
+                                     SECOND rollout step's raw prediction)
+      + lambda_curve  * L_curve     (2nd/3rd differences of the DECODED curve)
+
+``L_fbsafe`` / ``L_curve`` are the two terms of the historical-safety-feedback
+two-step rollout (see ``docs/HISTORICAL_SAFETY_FEEDBACK.md``); they are computed
+on ``Q0_raw(s)``, the second network's OWN output after a real ALM + DDIM step.
 
 There is NO ``L_traj``: the decoded 128-point curve never enters the loss, and
 nothing is ever decoded inside the training chain.  ``L_smooth`` is computed on
@@ -47,6 +54,7 @@ __all__ = [
     "ellipse_iou_loss",
     "ellipse_safety_loss",
     "alm_corridor_loss",
+    "pack_violation",
     "pack_max_violation",
     "feedback_safety_loss",
     "curve_smoothness_loss",
@@ -280,9 +288,9 @@ def alm_corridor_loss(curve: torch.Tensor, cell_a: torch.Tensor,
 # ---------------------------------------------------------------------------
 
 
-def pack_max_violation(controls: torch.Tensor, pack,
-                       margin: float = 0.0) -> torch.Tensor:
-    """Per-sample max CONTINUOUS constraint violation of a control polygon.
+def pack_violation(controls: torch.Tensor, pack,
+                   margin: float = 0.0, reduction: str = "max") -> torch.Tensor:
+    """Per-sample constraint violation of a control polygon against the pack.
 
     Same object the inference ALM projects onto: the exact cubic Bezier controls
     of every piece are ``beta = E Q``, and the piece is inside its corridor cell
@@ -290,9 +298,17 @@ def pack_max_violation(controls: torch.Tensor, pack,
     four controls lie in the (convex) cell, the WHOLE piece does - this is the
     continuous certificate, not a 128-point sampling heuristic.
 
-    Returns ``[B]`` = ``max(0, max_(piece,bezier,face) A beta - b)`` in SCENE
-    units (the rows of ``A`` are unit normals), ``0`` where no piece is active.
-    Differentiable w.r.t. ``controls``.
+    ``reduction``:
+        ``"max"``  -> ``[B]`` deepest violation in SCENE units (the quantity the
+                      ALM drives to 0; rows of ``A`` are unit normals)
+        ``"mean"`` -> ``[B]`` mean POSITIVE violation over the active
+                      constraints, i.e. "how much of the corridor is being
+                      grazed" rather than "how deep is the worst point"
+
+    A batch whose corridors ALL failed (no piece / no face at all, i.e. a
+    ``[B,0,...]`` pack) is a degenerate constraint set: it contributes EXACTLY
+    zero for every sample, returned as a graph-connected zero so the caller can
+    still back-propagate through it.  Differentiable w.r.t. ``controls``.
     """
     if controls.dim() != 3 or controls.shape[-1] != 2:
         raise ValueError("controls must be [B,C,2], got %s"
@@ -305,12 +321,31 @@ def pack_max_violation(controls: torch.Tensor, pack,
         raise ValueError("pack has %d samples, controls have %d"
                          % (int(pack.extraction.shape[0]),
                             int(controls.shape[0])))
+    B = int(controls.shape[0])
+    zero = controls.reshape(B, -1).sum(dim=1) * 0.0
+    if int(pack.extraction.shape[1]) == 0 or int(pack.piece_A.shape[2]) == 0:
+        return zero
     beta = torch.einsum("bprk,bkd->bprd", pack.extraction, controls)
     g = (torch.einsum("bpfd,bprd->bprf", pack.piece_A, beta)
          - pack.piece_b[:, :, None, :])
     mask = pack.piece_mask[:, :, None, None] & pack.face_mask[:, :, None, :]
     positive = torch.relu(g - float(margin)) * mask
-    return positive.flatten(1).amax(dim=1)
+    flat = positive.flatten(1)
+    if reduction == "mean":
+        denom = mask.expand_as(positive).flatten(1).sum(dim=1).clamp_min(1.0)
+        return flat.sum(dim=1) / denom
+    if reduction != "max":
+        raise ValueError("reduction must be 'max' or 'mean', got %r"
+                         % (reduction,))
+    if flat.shape[1] == 0:                       # no active constraint at all
+        return zero
+    return flat.amax(dim=1)
+
+
+def pack_max_violation(controls: torch.Tensor, pack,
+                       margin: float = 0.0) -> torch.Tensor:
+    """``pack_violation(..., reduction="max")`` (deepest violation, ``[B]``)."""
+    return pack_violation(controls, pack, margin=margin, reduction="max")
 
 
 def feedback_safety_loss(controls: torch.Tensor, pack,
@@ -325,7 +360,7 @@ def feedback_safety_loss(controls: torch.Tensor, pack,
     on the ALM to clean up after it.  A curve already inside the corridor (and
     therefore a fixed point of the ALM) contributes exactly 0.
     """
-    per = pack_max_violation(controls, pack, margin=margin)
+    per = pack_violation(controls, pack, margin=margin, reduction="max")
     if reduction == "none":
         return per
     return _masked_mean(per, sample_mask)

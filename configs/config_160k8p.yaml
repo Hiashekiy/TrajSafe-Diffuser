@@ -233,11 +233,20 @@ train:
   #   step2_weight:   第二步 L_ctrl / L_coarse / L_boundary 的权重
   #   simulate_warmup: true 时整批强制 feedback_valid = 0（消融用）
   #   alm_inner_steps: 训练期 ALM 迭代步数（默认取 alm.inner_steps）
+  #   topology:       第二步网络用哪个骨架
+  #                     "expert"（默认）= 缓存里的 m*（离线走廊正是在它上面建的，
+  #                       一定与约束包相容，但比推理"乐观"）；
+  #                     "pi" = 第一次前向自己的 argmax(pi)（更接近推理路由，但
+  #                       离线走廊未必属于被选中的骨架，属于待验证的实验项；
+  #                       请对照日志里的 fb_topo_match / fb_valid_rate 判断）。
+  #   另外：启用 rollout 后第一步的时间步从 [1, T) 采样（t=0 时不存在"下一次
+  #   去噪"，s=t=0 会退化成 q_s == q_t 的重复前向）。
   feedback:
     rollout: true
     drop_prob: 0.25
     step2_weight: 0.5
     simulate_warmup: false
+    topology: "expert"
 
 eval:
   num_candidates_ablation: [1, 2, 4]
@@ -333,6 +342,9 @@ alm:
   # 实测（见下方 max_curve_step_scene 的记录）：best_task 模型上 ALM 收敛后的
   # 残余违反量 max 约 0.004 scene，若沿用 1e-3 会把"实际已经安全"的结果判为失败，
   # 反馈几乎永不激活；1 scene = 80 m，1e-2 scene = 0.8 m。
+  # 语义提醒：这是"可接受的近似可行反馈"，不是严格安全保证——放宽它意味着把
+  # 带少量残余违反的 Q0_safe 也当作历史条件喂给下一步。严格判定请设回
+  # constraint_tol 并接受反馈激活率下降。
   # 请结合训练日志里的 fb_valid_rate 调整（0 表示反馈分支完全没被训练到）。
   feedback_accept_tol: 1.0e-2
 
