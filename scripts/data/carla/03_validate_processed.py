@@ -39,7 +39,17 @@ from src.geometry.bspline import BSplineCodec
 
 SPLITS = ["train", "val", "test"]
 CELL = 2.0 / 256.0
+# Metres per scene unit; DATA, read from data.scene_to_meter in main().
 METERS = 40.0
+
+
+def set_meters(cfg, default: float = 40.0) -> float:
+    global METERS
+    try:
+        METERS = float((cfg.get("data") or {}).get("scene_to_meter", default))
+    except (TypeError, ValueError):
+        METERS = float(default)
+    return METERS
 
 
 def expected_files(cfg) -> dict:
@@ -265,6 +275,7 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    print("[validate] scene_to_meter=%.1f m/unit" % set_meters(cfg), flush=True)
     processed = os.path.abspath(args.processed or cfg["data"].get(
         "processed_root", "data/carla_processed"))
     knots_path = (cfg.get("bspline") or {}).get("knots")
