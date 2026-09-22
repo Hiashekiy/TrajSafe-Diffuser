@@ -48,26 +48,42 @@ from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import make_loader, make_collate
 from src.geometry.ellipse_raster import ellipse_soft_mask
 from src.geometry.ellipse_shape import shape4_to_abtheta
-from src.losses.losses import (boundary_control_loss, control_smoothness_loss,
-                               control_x0_loss, ellipse_iou_loss,
-                               ellipse_safety_loss, ellipse_shape_loss,
-                               topology_ce)
+from src.losses.losses import (alm_corridor_loss, boundary_control_loss,
+                               control_smoothness_loss, control_x0_loss,
+                               ellipse_iou_loss, ellipse_safety_loss,
+                               ellipse_shape_loss, topology_ce)
 from src.models.trajsafe.boundary import boundary_targets
 
 LOSS_KEYS = ["Lctrl", "Lcoarse", "Lsmooth", "Lboundary", "Ltopo", "Lshape",
-             "Liou", "Lsafe"]
+             "Liou", "Lsafe", "Lalm"]
 LOSS_WEIGHT_KEYS = {
     "Lctrl": "lambda_control", "Lcoarse": "lambda_coarse",
     "Lsmooth": "lambda_smooth", "Lboundary": "lambda_boundary",
     "Ltopo": "lambda_topology", "Lshape": "lambda_shape",
-    "Liou": "lambda_iou", "Lsafe": "lambda_safe",
+    "Liou": "lambda_iou", "Lsafe": "lambda_safe", "Lalm": "lambda_alm",
 }
 DEFAULT_LOSS_WEIGHTS = {
     "lambda_control": 0.2, "lambda_coarse": 0.5, "lambda_smooth": 0.08,
     "lambda_boundary": 0.2, "lambda_topology": 0.25, "lambda_shape": 0.08,
-    "lambda_iou": 0.25, "lambda_safe": 0.15,
+    "lambda_iou": 0.25, "lambda_safe": 0.15, "lambda_alm": 0.3,
 }
+# Metres per scene unit.  40.0 for the 80 m carla_v1 crop, 80.0 for the 160 m
+# carla_full_160_256 windows.  This is DATA, so it is read from
+# data.scene_to_meter in main(); the literal below only covers configs written
+# before that key existed.  Everything else in the repository works in SCENE
+# units, so this constant affects REPORTING only.
 SCENE_TO_METER = 40.0
+
+
+def set_scene_to_meter(cfg, default: float = 40.0) -> float:
+    """Read data.scene_to_meter (metres per scene unit) into the global."""
+    global SCENE_TO_METER
+    try:
+        SCENE_TO_METER = float((cfg.get("data") or {}).get(
+            "scene_to_meter", default))
+    except (TypeError, ValueError):
+        SCENE_TO_METER = float(default)
+    return SCENE_TO_METER
 
 
 def _broadcast(x0, v):
@@ -207,9 +223,20 @@ def batch_losses(batch, model, schedule, lcfg, device):
         cvar_weight=float(lcfg.get("safe_cvar_weight", 1.0)),
         sample_mask=has_cand)
 
+    # --- ALM corridor: the TRAINING-TIME counterpart of the inference ALM ---
+    # out["final"] is the decoded 128-point curve (B_128 @ Q_final), so the
+    # gradient reaches the control polygon.  The corridor is the same object
+    # bspline_alm_correct() projects onto, precomputed offline; alm_valid gates
+    # out the samples whose corridor never closed.
+    l_alm = alm_corridor_loss(
+        out["final"], batch["alm_cell_a"].to(device),
+        batch["alm_cell_b"].to(device),
+        batch["alm_cell_valid"].to(device).bool(),
+        batch["alm_valid"].to(device).bool())
+
     raw = {"Lctrl": l_ctrl, "Lcoarse": l_coarse,
            "Lsmooth": l_smooth, "Lboundary": l_boundary, "Ltopo": l_topo,
-           "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe}
+           "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe, "Lalm": l_alm}
     weights = {k: float(lcfg.get(key, DEFAULT_LOSS_WEIGHTS[key]))
                for k, key in LOSS_WEIGHT_KEYS.items()}
     total = sum(weights[k] * raw[k] for k in LOSS_KEYS)
@@ -359,6 +386,8 @@ def main():
     env, data_cfg = cfg["env"], cfg["data"]
     model_cfg, diff_cfg = cfg["model"], cfg["diffusion"]
     loss_cfg, train_cfg = cfg["loss"], cfg["train"]
+    print("[train] scene_to_meter=%.1f m/unit (reporting only)"
+          % set_scene_to_meter(cfg), flush=True)
 
     set_seed(int(env.get("seed", 42)))
     # cuDNN's engine search can fail ("FIND was unable to find an engine") when
@@ -611,9 +640,10 @@ def main():
                 line += " (best)"
             # The val CE of the topology head overfits early while the task
             # metrics keep improving, so a second checkpoint tracks the task
-            # objective (curve RMSE in meters + 40 m * collision rate).
+            # objective (curve RMSE in meters + one scene unit * collision
+            # rate, so the balance stays scale-consistent across datasets).
             task = (float(v.get("curve_rmse_m", float("inf")))
-                    + 40.0 * float(v.get("collision_rate", 0.0)))
+                    + SCENE_TO_METER * float(v.get("collision_rate", 0.0)))
             if task < best_task:
                 best_task = task
                 best_task_epoch = epoch

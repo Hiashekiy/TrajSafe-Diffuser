@@ -46,6 +46,39 @@ from ..geometry.safety_corridor import SCENE_TO_METER
 __all__ = ["bspline_alm_correct", "constraint_state"]
 
 
+def _smooth_along_controls(x: torch.Tensor, half_width: int,
+                           sigma: float = 0.0) -> torch.Tensor:
+    """Convolve a [B,C,2] displacement along the CONTROL axis C.
+
+    A violated constraint only needs ~4 control points to move, and the
+    proximal solve is essentially the identity, so without this those 4
+    points are displaced IN PLACE and the curve kinks exactly there.  A
+    low-pass along the control axis turns the per-iteration step into a
+    smooth bell, so the neighbouring controls are dragged along with a
+    decaying weight and the curve bends instead of folding.
+
+    The endpoints are re-imposed by the caller after the update, so the
+    filter is free to leak into them.
+    """
+    hw = int(half_width)
+    if hw <= 0:
+        return x
+    n = 2 * hw + 1
+    t = torch.arange(n, dtype=torch.float32, device=x.device) - hw
+    if float(sigma or 0.0) > 0.0:
+        k = torch.exp(-0.5 * (t / float(sigma)) ** 2)
+    else:
+        k = (hw + 1.0) - t.abs()                      # triangular
+    k = (k / k.sum()).to(dtype=x.dtype)
+    B, C, D = x.shape
+    y = x.permute(0, 2, 1).reshape(B * D, 1, C)
+    # one shared 1-channel kernel over a flattened batch (NOT depthwise:
+    # the input has a single channel, so groups must stay 1)
+    w = k[None, None, :].contiguous()
+    out = torch.nn.functional.conv1d(y, w, padding=hw)
+    return out.reshape(B, D, C).permute(0, 2, 1)
+
+
 def _second_difference_matrix(num_points: int, dtype, device) -> torch.Tensor:
     """``[H-2, H]`` second-difference operator."""
     if num_points < 3:
@@ -121,6 +154,15 @@ def bspline_alm_correct(
     d_step = float(cfg.get("max_curve_step_scene", 0.01))
     scene_to_meter = float(cfg.get("scene_to_meter", SCENE_TO_METER))
     inner_steps = max(0, int(inner_steps))
+
+    # Neighbour coupling ("drag the neighbours along"): a violated constraint
+    # only needs ~4 control points to move, and with system = I + eta*hess
+    # (eta = 0.05, smooth_weight = 0.1) the solve is essentially the identity,
+    # so those 4 points get displaced IN PLACE and the curve kinks at them.
+    # Smoothing the per-iteration step along the CONTROL axis makes the
+    # displacement a smooth bell, so the neighbours follow with decay.
+    smooth_kernel_half = int(cfg.get("correction_smooth_kernel", 0) or 0)
+    smooth_sigma = float(cfg.get("correction_smooth_sigma", 0.0) or 0.0)
 
     dtype = q_ref.dtype
     device = q_ref.device
@@ -203,6 +245,9 @@ def bspline_alm_correct(
                                 torch.ones_like(d_max))
             step = step * scale[:, None, None]
         step = step * active.to(dtype)[:, None, None]
+        if smooth_kernel_half > 0:
+            step = _smooth_along_controls(step, smooth_kernel_half,
+                                         smooth_sigma)
         q = q + step
         q[:, 0] = q_ref[:, 0]
         q[:, -1] = q_ref[:, -1]

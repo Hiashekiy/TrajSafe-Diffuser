@@ -146,6 +146,14 @@ def progress_alignment_stats(raw_curve, skeleton_centers):
     Compares ``P_i = C(i/(H-1))`` with ``c_i = Gamma(i/(H-1))``.  Recorded ONLY; the
     mapping itself is never adapted from these numbers.
     """
+    # sampler.py calls this with (None, None) when the selected candidate has
+    # fewer than 2 dense points (e.g. nothing was selected and slot 0 is
+    # invalid).  np.asarray(None) is a 0-d nan array, whose reshape(-1, 2)
+    # raises "cannot reshape array of size 1 into shape (2)", so short-circuit.
+    if raw_curve is None or skeleton_centers is None:
+        return {"progress_alignment_rmse": None, "progress_alignment_max": None,
+                "progress_alignment_rmse_m": None,
+                "progress_alignment_max_m": None}
     p = np.asarray(raw_curve, dtype=np.float64).reshape(-1, 2)
     c = np.asarray(skeleton_centers, dtype=np.float64).reshape(-1, 2)
     if len(p) == 0 or len(p) != len(c):

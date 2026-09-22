@@ -203,7 +203,8 @@ class BSplineConstraintPack:
         }
 
 
-def region_table(corridor: SafetyCorridor, device=None, dtype=torch.float32):
+def region_table(corridor: SafetyCorridor, device=None, dtype=torch.float32,
+                 margin: float = 0.0):
     """``(A [M,Fmax,2], b [M,Fmax], mask [M,Fmax])`` for a corridor."""
     cells = corridor.cells
     fmax = max((len(c.A) for c in cells), default=0)
@@ -215,7 +216,12 @@ def region_table(corridor: SafetyCorridor, device=None, dtype=torch.float32):
         f = len(cell.A)
         if f:
             A[i, :f] = cell.A
-            b[i, :f] = cell.b
+            # the normals are unit vectors, so subtracting a scalar from b
+            # shrinks the cell INWARD by exactly that distance.  A
+            # projection lands ON the constraint boundary, which eats the
+            # whole margin; a positive margin is what keeps the corrected
+            # curve off the corridor edge instead of hugging it.
+            b[i, :f] = cell.b - float(margin)
             mask[i, :f] = True
     return (torch.as_tensor(A, dtype=dtype, device=device),
             torch.as_tensor(b, dtype=dtype, device=device),
@@ -226,7 +232,8 @@ def build_constraint_pack(codec: BSplineCodec,
                           corridors: list,
                           knot_boundaries=None,
                           device=None,
-                          dtype=torch.float32) -> BSplineConstraintPack:
+                          dtype=torch.float32,
+                          margin: float = 0.0) -> BSplineConstraintPack:
     """Build the padded pack for a batch of frozen corridors.
 
     Entries that are ``None`` or ``corridor.valid == False`` become fully masked
@@ -245,7 +252,7 @@ def build_constraint_pack(codec: BSplineCodec,
                 or corridor.num_cells < 2:
             per_sample.append(None)
             continue
-        A_reg, b_reg, mask_reg = region_table(corridor)
+        A_reg, b_reg, mask_reg = region_table(corridor, margin=margin)
         tau, _ = responsibility_intervals(corridor.anchors())
         u = exact_subdivision(tau, knot_boundaries)
         a, bb = u[:-1], u[1:]

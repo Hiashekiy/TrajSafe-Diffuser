@@ -34,7 +34,18 @@ from src.datasets.carla_spline_dataset import (CarlaSplineDataset,
                                                make_collate)
 from src.geometry.skeleton_paths import normalized_dtw, resample_polyline
 
+# Metres per scene unit; DATA, read from data.scene_to_meter in main().
 SCENE_TO_METER = 40.0
+
+
+def set_scene_to_meter(cfg, default: float = 40.0) -> float:
+    global SCENE_TO_METER
+    try:
+        SCENE_TO_METER = float((cfg.get("data") or {}).get(
+            "scene_to_meter", default))
+    except (TypeError, ValueError):
+        SCENE_TO_METER = float(default)
+    return SCENE_TO_METER
 
 
 def _collides(points, occ):
@@ -107,6 +118,8 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    print("[evaluate] scene_to_meter=%.1f m/unit (reporting only)"
+          % set_scene_to_meter(cfg), flush=True)
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available() else "cpu"))
     processed_root = cfg["data"].get("processed_root", "data/carla_processed")

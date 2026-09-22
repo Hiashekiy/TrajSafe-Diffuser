@@ -89,6 +89,32 @@ class CarlaSplineDataset(Dataset):
             self.shape4_gt = np.zeros((n0, 128, 4), np.float32)
             self.shape_valid = np.zeros((n0, 128), bool)
 
+        # ---- offline ALM safety-corridor constraint pack -------------------
+        # Written by scripts/data/carla_full/04_build_alm_constraints.py.
+        # Half-space form: a point p is inside cell i iff A_i @ p <= b_i for
+        # every face.  Face rows are unit-normalised at read time so that
+        # A.p - b is a signed distance in SCENE units (see
+        # src.losses.losses.alm_corridor_loss).
+        q_pts = int(self.candidate_xy.shape[2])
+        try:
+            self.alm_a = _load("alm_cell_a.npy", mmap=True)
+            self.alm_b = _load("alm_cell_b.npy", mmap=True)
+            self.alm_cv = _load("alm_cell_valid.npy", mmap=True)
+            self.alm_ok = _load("alm_valid.npy")
+            self.has_alm = True
+        except FileNotFoundError:
+            if require_labels:
+                raise FileNotFoundError(
+                    "missing alm_cell_a.npy in %s; run "
+                    "scripts/data/carla_full/04_build_alm_constraints.py"
+                    % self.dir)
+            n0 = len(self.conditions)
+            self.alm_a = np.zeros((n0, q_pts, 1, 2), np.float32)
+            self.alm_b = np.full((n0, q_pts, 1), np.inf, np.float32)
+            self.alm_cv = np.zeros((n0, q_pts), bool)
+            self.alm_ok = np.zeros(n0, bool)
+            self.has_alm = False
+
         n = len(self.conditions)
         if limit is not None:
             n = min(int(limit), n)
@@ -157,6 +183,15 @@ class CarlaSplineDataset(Dataset):
         occ = np.asarray(self.occupancy[i], dtype=np.float32)
         if occ.shape != (RES, RES):
             raise ValueError("occupancy[%d] has shape %s" % (i, occ.shape))
+
+        # unit-normalise the corridor faces so A.p - b is a signed distance;
+        # padded faces (A = 0, b = +inf) survive as +inf
+        alm_a = np.array(self.alm_a[i], dtype=np.float32)
+        alm_b = np.array(self.alm_b[i], dtype=np.float32)
+        nrm = np.maximum(np.linalg.norm(alm_a, axis=-1), 1e-9)
+        alm_a = alm_a / nrm[..., None]
+        alm_b = alm_b / nrm
+
         return {
             "pos": torch.as_tensor(np.asarray(self.curve_gt[i], dtype=np.float32)),
             "control_gt": torch.as_tensor(
@@ -175,6 +210,11 @@ class CarlaSplineDataset(Dataset):
             "ellipse_shape4_gt": torch.as_tensor(
                 np.asarray(self.shape4_gt[i], dtype=np.float32)),
             "shape_valid": torch.from_numpy(shape_valid),
+            "alm_cell_a": torch.from_numpy(alm_a),
+            "alm_cell_b": torch.from_numpy(alm_b),
+            "alm_cell_valid": torch.from_numpy(
+                np.asarray(self.alm_cv[i]).astype(bool)),
+            "alm_valid": bool(self.alm_ok[i]),
             "episode_id": int(self.episode_id[i]),
             "sample_id": int(self.sample_id[i]),
         }
@@ -202,6 +242,12 @@ def make_collate(ds: CarlaSplineDataset):
             "ellipse_shape4_gt": torch.stack(
                 [b["ellipse_shape4_gt"] for b in batch]),
             "shape_valid": torch.stack([b["shape_valid"] for b in batch]),
+            "alm_cell_a": torch.stack([b["alm_cell_a"] for b in batch]),
+            "alm_cell_b": torch.stack([b["alm_cell_b"] for b in batch]),
+            "alm_cell_valid": torch.stack(
+                [b["alm_cell_valid"] for b in batch]),
+            "alm_valid": torch.tensor([b["alm_valid"] for b in batch],
+                                      dtype=torch.bool),
             "episode_id": torch.tensor([b["episode_id"] for b in batch],
                                        dtype=torch.long),
             "sample_id": torch.tensor([b["sample_id"] for b in batch],

@@ -472,9 +472,10 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                                           out["control"])
                     step_q0_raw = q0_used.clone()
                     just_activated = newly
-                    pack = build_constraint_pack(model.bspline, corridors,
-                                                 device=dev,
-                                                 dtype=torch.float32)
+                    pack = build_constraint_pack(
+                        model.bspline, corridors, device=dev,
+                        dtype=torch.float32,
+                        margin=float(alm_cfg.get("constraint_margin", 0.0)))
                     lam = None
                     activation_info["candidate_trials"] = \
                         result.stats["candidate_trials"]

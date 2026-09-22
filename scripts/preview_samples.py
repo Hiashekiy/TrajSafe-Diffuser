@@ -36,6 +36,7 @@ from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import (CarlaSplineDataset,
                                                make_collate)
 
+# Metres per scene unit; DATA, set from data.scene_to_meter in main().
 METERS = 40.0
 
 
@@ -78,13 +79,29 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default=None)
     ap.add_argument("--out", default="outputs/bspline_carla/preview")
+    ap.add_argument("--no-alm", action="store_true",
+                    help="raw network only; by default the alm/corridor sections "
+                         "of the config are used, exactly like evaluate.py")
     args = ap.parse_args()
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    global METERS
     cfg = load_config(args.config)
+    METERS = float((cfg.get("data") or {}).get("scene_to_meter", 40.0))
+    # sample() leaves ALM OFF unless alm_config is passed, so the preview has to
+    # forward the config's alm / corridor sections explicitly.  --no-alm pins it
+    # to ablation A (raw diffusion) for a like-for-like raw comparison.
+    alm_cfg = dict(cfg.get("alm") or {})
+    corridor_cfg = dict(cfg.get("corridor") or {})
+    if args.no_alm:
+        from src.diffusion.sampler import ablation_configs
+        alm_cfg, corridor_cfg = ablation_configs(alm_cfg, corridor_cfg, "A")
+    print("[preview] ALM enabled=%s mode=%s corridor=%s"
+          % (bool(alm_cfg.get("enabled")), alm_cfg.get("mode"),
+             bool(corridor_cfg.get("enabled"))), flush=True)
     device = (args.device if args.device else
               ("cuda" if torch.cuda.is_available() else "cpu"))
     processed_root = cfg["data"].get("processed_root", "data/carla_processed")
@@ -118,7 +135,8 @@ def main():
                          batch["candidate_geometry"].to(device),
                          batch["candidate_geometry_lengths"].to(device),
                          device=device, steps=args.steps, seed=args.seed,
-                         return_trace=False)
+                         return_trace=False, alm_config=alm_cfg,
+                         corridor_config=corridor_cfg)
             rows["p"].append(out["p"].cpu().numpy())
             rows["control"].append(out["control"].cpu().numpy())
             rows["sel"].append(out["selected_idx"].cpu().numpy())

@@ -46,6 +46,7 @@ __all__ = [
     "ellipse_shape_loss",
     "ellipse_iou_loss",
     "ellipse_safety_loss",
+    "alm_corridor_loss",
 ]
 
 
@@ -218,3 +219,49 @@ def ellipse_safety_loss(center, a, b, theta, occ, raster_res=64, tau=10.0,
                       sorted=False).values.mean(dim=1)
     cvar = _masked_mean(cvar, weight)
     return mean + float(cvar_weight) * cvar, mean, cvar
+
+
+def alm_corridor_loss(curve: torch.Tensor, cell_a: torch.Tensor,
+                      cell_b: torch.Tensor, cell_valid: torch.Tensor,
+                      sample_mask: torch.Tensor,
+                      margin: float = 0.0) -> torch.Tensor:
+    """L_alm = penetration depth of the DECODED CURVE into the ALM corridor.
+
+    This is the training-time counterpart of the inference-only ALM: the
+    corridor is the very same object build_safety_corridor() produces and
+    bspline_alm_correct() projects onto, but it is precomputed offline by
+    scripts/data/carla_full/04_build_alm_constraints.py and stored as a
+    half-space pack
+
+        point p is inside cell i  <=>  A_i @ p <= b_i  for every face f
+
+    Because the rows of A are unit-normalised, max_f (A_if . p - b_if) is the
+    signed distance from p to cell i (positive = outside).  Hence
+
+        violation(p) = min_i max_f (A_if . p - b_if)
+
+    is positive exactly when p lies outside EVERY cell, i.e. outside the
+    corridor, and its value is the distance to the nearest cell boundary in
+    SCENE units.  The loss is the mean of relu(violation) over the decoded
+    curve points, so any curve that stays inside the corridor contributes 0.
+
+    Padding: unused faces carry b = +inf so they can never bind, and cells
+    flagged invalid are masked to +inf.  Samples whose corridor never closed
+    are excluded through sample_mask.
+
+    Shapes: curve [B,H,2] . cell_a [B,C,F,2] . cell_b [B,C,F] .
+            cell_valid [B,C] bool . sample_mask [B] bool
+    """
+    nrm = cell_a.norm(dim=-1).clamp_min(1e-9)                     # [B,C,F]
+    signed = (torch.einsum("bcfk,bhk->bhcf", cell_a, curve)
+              - cell_b[:, None])                                  # [B,H,C,F]
+    signed = signed / nrm[:, None]                                # [B,1,C,F]
+    worst_face = signed.amax(dim=-1)                              # [B,H,C]
+    worst_face = worst_face.masked_fill(~cell_valid[:, None, :],
+                                        float("inf"))
+    violation = worst_face.amin(dim=-1)                           # [B,H]
+    # no valid cell at all -> +inf; those samples are masked out anyway, but
+    # nan_to_num keeps a stray inf from poisoning the whole batch gradient
+    violation = torch.nan_to_num(violation, nan=0.0, posinf=0.0, neginf=0.0)
+    per = F.relu(violation - float(margin)).mean(dim=1)           # [B]
+    return _masked_mean(per, sample_mask)
