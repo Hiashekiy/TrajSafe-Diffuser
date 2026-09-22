@@ -1,0 +1,312 @@
+# ============================================================
+# ============================================================
+# config_160k8p - same as config_160k8 but on the BORDER-PROTECTED k=8 cache
+# (data/carla_processed_160k8p, built with 05_erode_occupancy.py
+#  --border-mode protect).
+#
+# Why the 'p': the original k=8 cache was eroded with scipy's default
+# border_value=0, which treats everything outside the 256^2 crop as FREE, so
+# the crop's outer wall was eaten from the outside too and a 5 m free "moat"
+# opened all around every scene (outermost 8 cells: 0.80-0.90 obstacle ->
+# 0.000 in ALL samples).  The corridor and the planner could therefore loop
+# around the map, and the reported free ratio was inflated by ~10 points.
+# 'protect' restores the source occupancy in the outer k cells and counts the
+# outside as obstacle, so that ring is never less blocked than the source.
+# ============================================================
+# TrajSafe-Diffuser - CARLA carla_full_160_256 (160 m / 256 px) profile.
+#
+#   Derived from configs/config.yaml.  Differences limited to:
+#     data.root / data.processed_root  -> the 160 m dataset + its cache
+#     data.scene_to_meter              -> 80.0 (reporting only)
+#     bspline.knots                    -> auto (verified == carla_v1 knots.npy)
+#     train.ckpt_dir                   -> outputs/bspline_carla_160/ckpt
+#   ALL geometric knobs are deliberately UNCHANGED (see 00_build_processed.py).
+#
+#   ONE diffusion state: the control polygon Q_t [B,C,2] (C = num_controls).
+#   The network NEVER sees decoded trajectory points any more: the control
+#   polygon itself is the token sequence
+#
+#       Q_t [B,C,2] -> ControlEncoder -> ControlBackbone -> Q_coarse [B,C,2]
+#                   -> Skeleton match (C query tokens)
+#                   -> Q safety queries on the selected Skeleton
+#                   -> safety -> control cross attention
+#                   -> FinalControlDenoiser -> Q~_final [B,C,2]
+#                   -> FIXED boundary decoder -> Q_final [B,C,2]
+#                   -> (plot / metric / controller only) B C -> curve
+#
+#   C is the ONLY trajectory representation and comes from this file
+#   (model.num_controls, mirrored by bspline.num_controls) - it is never
+#   hard-coded.  ``model.num_safety_queries`` (= candidate_points) is the ONLY
+#   place the number of Skeleton / ellipse geometry queries appears.
+#
+#   Ellipse centres are NOT a diffusion state, NOT a head output and NOT a
+#   progress prediction: c_i = Gamma_m(i/(Q-1)) on the selected dense Skeleton.
+#   There is no learned progress, no L_align and no L_traj.
+# ============================================================
+
+env:
+  python: "E:/CondaEnvData/envs/GGMPC/python.exe"
+  device: "cuda"
+  seed: 42
+
+data:
+  dataset: "carla_v1"
+  root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_full_160_256"
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed_160k8p"
+  # 160 m window maps onto scene [-1,1]  ->  1 scene unit = 80 m.
+  # REPORTING/LOG ONLY: every geometric knob below is in SCENE units on a
+  # fixed 256^2 grid, so the numeric geometry is unchanged by this value.
+  scene_to_meter: 80.0
+  batch_size: 16
+  num_workers: 0
+  splits: ["train", "val", "test"]
+  ellipse_mask_res: 64                 # GT / prediction soft-mask resolution
+  ellipse_mask_tau: 10.0
+  # legacy Maze2D roots (kept so old tooling can still read the config)
+  scenes: "data/scenes"
+  skeleton: "data/skeleton"
+  mazes: ["large"]
+
+skeleton:
+  safety_dilation_cells: 1
+  thinning_backend: "auto"
+  pure_cycle_aux_nodes: 2
+
+# --- candidate topology (offline cache) ---------------------------------
+topology:
+  num_candidates: 4
+  raw_k: 128
+  max_length_ratio: 1.5
+  dedup_jaccard: 0.75
+  candidate_points: 128                # L, S_m network input length
+  candidate_geometry_points: 1280      # dense Gamma_m padding budget
+  anchor_candidates: 16
+  tau_gt: 0.05
+
+model:
+  horizon: 128                         # decoded curve sampling density (B_128)
+  num_controls: 32                     # C: cubic B-spline control polygon
+  control_space: true                  # network runs on the C control tokens
+  num_safety_queries: 128              # Q: Skeleton / ellipse geometry queries
+  rel_bias_len: 128                    # relative index-bias table length (>= C,Q)
+  d_model: 128
+  num_heads: 4
+  traj_blocks: 8                       # Control Backbone N_T
+  skeleton_blocks: 2                   # Skeleton Transformer N_S
+  final_blocks: 3                      # Final Control Denoiser N_F
+  ffn_dim: 512
+  map_res: 256
+  global_mem_res: 16                   # C_G 16x16
+  geo_decode_res: 64                   # fine-geometry decoder output
+  geo_mem_res: 32                      # C_E 32x32
+  geo_sigma: 0.25
+  geo_bias_clip: 8.0
+  dropout: 0.0
+  coord_hidden: 256
+  head_hidden: 256
+  assert_shapes: true
+  # Fixed, NOT learned, endpoint correction on the control polygon:
+  #   Q*_i = Q~_i + w^s_i (S - Q~_0) + w^g_i (G - Q~_{C-1})
+  # with w^s = profile on the first ``span`` controls and w^g its mirror at the
+  # end (permanently 1.0 at both endpoints).  This is the single source of the
+  # profile: the boundary loss reads it from the model.
+  boundary_decoder:
+    span: 4
+    profile: [1.0, 0.75, 0.5, 0.25]
+
+# --- fixed B-spline codec (src/geometry/bspline.py) ---------------------
+# num_controls MUST agree with model.num_controls (the loader refuses to start
+# otherwise).  ``knots`` may be a .npy path or "auto" (clamped uniform knot
+# vector generated for the configured num_controls / degree), so C can be
+# changed without regenerating a knot file.
+bspline:
+  degree: 3
+  num_controls: 32
+  curve_points: 128
+  knots: "auto"                       # clamped uniform == carla_v1 knots.npy
+  endpoint_constrained: true
+
+# --- ellipse label generation (scripts/data/carla/02_build_ellipse_labels.py)
+ellipse_label:
+  num_orientations: 36
+  local_radius: 0.25
+  dilation: 1
+  # The safe ellipse is TINY (semi-axes <= local_radius = 0.25 m = 0.8 cells),
+  # so 48 boundary + 2x12 interior samples already cover every cell the ellipse
+  # can touch; 8 binary steps give a ~0.4 % axis resolution.  The exact same
+  # safety criterion as scripts/data/03_build_ellipse_labels.py is used.
+  boundary_points: 48
+  interior_rings: 2
+  interior_angles: 12
+  binary_iters: 8
+  min_semi_axis: 1.0e-3
+
+diffusion:
+  timesteps: 16
+  beta_schedule: "squaredcos_cap_v2"
+  beta_start: 0.0001
+  beta_end: 0.02
+  prediction_type: "x0"
+
+# --- loss ---------------------------------------------------------------
+#   L = lam_ctrl   L_ctrl     (raw final controls Q~_1..C-2 vs GT controls)
+#     + lam_coarse L_coarse   (raw coarse controls vs GT controls)
+#     + lam_smooth L_smooth   (2nd/3rd differences OF THE CONTROL POLYGON)
+#     + lam_bound  L_boundary (raw controls near both ends vs GT local shape)
+#     + lam_topo   L_topo     + lam_shape L_shape
+#     + lam_iou    L_iou      + lam_safe  L_safe
+# There is NO L_traj: no 128-point decoded curve ever enters the loss.
+# ``boundary_span`` / ``boundary_profile`` come from model.boundary_decoder
+# (single source of truth); only the scalar weights are configured here.
+loss:
+  lambda_control: 0.2
+  lambda_coarse: 0.5
+  lambda_smooth: 0.08
+  lambda_boundary: 0.2
+  boundary_coarse_weight: 0.5
+  smooth_acc_weight: 0.25
+  smooth_jerk_weight: 1.0
+  lambda_topology: 0.25
+  lambda_shape: 0.08
+  lambda_iou: 0.25
+  lambda_safe: 0.15
+  # Training-time ALM: penalty on the DECODED curve for lying outside the
+  # precomputed safety corridor, measured as a distance in SCENE units
+  # (1 unit = 80 m here).  0 disables the term.  The corridor comes from
+  # scripts/data/carla_full/04_build_alm_constraints.py; samples whose
+  # corridor never closed are masked out (~57 % of train, 74 % of val).
+  lambda_alm: 0.3
+  ellipse_safe_res: 64
+  ellipse_mask_tau: 10.0
+  ellipse_safe_chunk: 32
+  safe_cvar_fraction: 0.2
+  safe_cvar_weight: 1.0
+
+train:
+  epochs: 500
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  log_interval: 20
+  save_every: 5
+  eval_every: 1
+  val_batches: 12
+  max_hours: 9.0
+  ckpt_dir: "outputs/bspline_carla_160k8p/ckpt"   # NEVER the 80 m run dir
+
+eval:
+  num_candidates_ablation: [1, 2, 4]
+  samples_per_od: 4
+
+# --- inference-only safety corridor + ALM guidance -----------------------
+# Three-stage state machine in src/diffusion/sampler.py:
+#   WARMUP  -> TRY_ACTIVATE (128 regions / overlap / gap bridge / freeze)
+#           -> GUIDED (per-reverse-step control-space ALM, dual warm start)
+# The corridor and the exact B-spline constraint pack are built ONCE and then
+# frozen; only the network's clean prediction keeps being refreshed.
+corridor:
+  enabled: true
+
+  # Area intersection over min-area; 0.10 is an initial experimental value and
+  # the observed distribution is logged (never hard-code it in the code).
+  min_overlap_ratio: 0.10
+
+  # GCOPTER/FIRI style point-seeded gap region at the Skeleton progress
+  # midpoint.  V1 allows at most ONE bridge per gap (no recursion).
+  bridge:
+    enabled: true
+    max_bridge_per_gap: 1
+
+  # How many topology candidates are tried before the corridor is declared
+  # unclosable for this sample.
+  topology_trials: 4
+
+  # EllipseRegionBuilder knobs (absolute-centre semantics).
+  region:
+    safety_margin: 0.02
+    obstacle_window_half: 0.35
+    obstacle_dilation: 0
+    corridor_chunk_size: 512
+    ellipse_axis_min: 0.002
+    ellipse_axis_max: 2.0
+
+alm:
+  enabled: true
+  mode: "guided_bspline"       # "guided_bspline" | "final_only" (ablation B)
+
+  # Metres per scene unit for the ALM log fields (mean/max_curve_correction_m).
+  # Without this key sample() falls back to the module constant in
+  # src/geometry/safety_corridor.py (40.0, the old 80 m crop), which would
+  # report every correction at half its true size.
+  scene_to_meter: 80.0
+
+  # Counted in executed reverse network forwards, NEVER in absolute timesteps.
+  warmup_reverse_steps: 3
+
+  # If the first activation fails, keep denoising and retry; after this many
+  # failed retries the sample finishes as raw diffusion (alm_status).
+  max_activation_delay_steps: 2
+
+  activation_inner_steps: 8
+  # Measured (24 val / 16 test samples): inner_steps 6 -> 10 costs a little
+  # extra time but lets the smoothed correction (below) still converge, so
+  # the collision rate stays at its hw=0 value while the trajectory becomes
+  # smooth.  See correction_smooth_kernel.
+  inner_steps: 10
+
+  step_size: 0.05
+
+  rho: 5.0
+
+  proximity_weight: 1.0
+  # Penalises the smoothness of the CORRECTION inside the proximal metric.
+  # In practice this does nothing: system = I + eta*hess with eta = 0.05 makes
+  # the solve essentially the identity (measured: 0.1 -> 10 changes output
+  # smoothness by under 1 %).  Kept for backward compatibility; the real
+  # lever is correction_smooth_kernel below.
+  correction_smooth_weight: 0.1
+
+  # THE smoothing lever.  A violated constraint only needs about 4 control
+  # points to move; with no coupling they are displaced IN PLACE and the
+  # curve kinks exactly there.  Measured: the raw network has curve
+  # 2nd-difference 0.0246 m and the ALM output 0.0351 m -- the ALM made the
+  # trajectory 43 % rougher than the network it was correcting.  This
+  # low-passes each per-iteration step along the CONTROL axis so the
+  # neighbours are dragged along with a triangular decay.
+  #   hw=0  val 2nd-diff 0.0340 m, obstacle 0.000 %   (old behaviour)
+  #   hw=3  val 2nd-diff 0.0279 m, obstacle 0.130 %
+  #   hw=5  val 2nd-diff 0.0272 m, obstacle 0.130 %   (GT is 0.0264 m)
+  #   hw=3 with inner_steps=10 -> val 0.0289 m, obstacle still 0.000 %
+  # 0 disables the filter.
+  correction_smooth_kernel: 3
+  correction_smooth_sigma: 0.0     # 0 = triangular kernel
+
+  constraint_tol: 1.0e-3
+
+  # Scene-normalised units: the CARLA crop is 80 m over [-1,1], so
+  # 0.01 scene == 0.4 m.  This is the trust region of ONE inner ALM step,
+  # measured on the REAL curve displacement max_i ||B dQ_i||.
+  #
+  # MEASURED (best_task.pt, test samples 1/3/7/11, 16 reverse steps, 4 seeds):
+  #   step 0.01 + inner 3  -> final violation mean 0.041 / max 0.130,
+  #                           corridor membership 0.862, 1/4 still colliding
+  #   step 0.03 + inner 6  -> final violation mean -0.011 / max 0.004,
+  #                           corridor membership 0.998, 0/4 colliding
+  # The raw network prediction sits ~3-6 m away from the Skeleton the corridor
+  # is built on, so the spec's initial 0.4 m/step budget cannot close it inside
+  # the guided phase.  Re-measure and re-tune if the checkpoint changes.
+  max_curve_step_scene: 0.03
+
+  inherit_dual_across_reverse_steps: true
+
+  dense_verify_points: 512
+  log_per_step: true
+
+  # region-builder keys may also be mirrored here (legacy place); the
+  # ``corridor.region`` block wins when both are present.
+  safety_margin: 0.02
+  obstacle_window_half: 0.35
+  obstacle_dilation: 0
+  corridor_chunk_size: 512
+  ellipse_axis_min: 0.002
+  ellipse_axis_max: 2.0
