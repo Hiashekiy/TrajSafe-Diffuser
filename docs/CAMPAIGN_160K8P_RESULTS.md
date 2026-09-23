@@ -136,13 +136,51 @@ outputs/figures/campaign_val_curves.png 训练曲线：val task / curve RMSE /
 * 轨迹面板同时说明 4 个样本**不足以**给模型排名：例如 sample 2 上 A 的余量只有
   −0.001 而 RMSE 9.3 m，B2/REF 在同一格反而更好（−0.036/4.8 m、−0.043/5.8 m）。
 
-## 7. 产物
+## 7. ALM 消融：关掉走廊与 ALM（ablation A，纯扩散）
+
+同口径（test 16 样本 / 16 步 / seed 0），只把 ALM 关掉（`--ablation A`，
+`sample()` 直接返回网络自己的 x̂₀）：
+
+| model | ALM 关：collision | rmse_m | GT 走廊隶属 | ALM 开：collision | rmse_m |
+|---|---|---|---|---|---|
+| **A_oneshot** | **0.0000** | **4.73** | **1.000** | 0.0000 | 5.21 |
+| B2_feedback | 0.1875 | 7.52 | 0.964 | 0.0000 | 7.71 |
+| B1_base | 0.3125 | 10.05 | 0.892 | 0.0625 | 9.08 |
+| REF_160k8 | 0.3125 | 7.47 | 0.899 | 0.0000 | 6.59 |
+
+（GT 走廊隶属 = 用**同一个离线 GT 走廊**衡量的逐点隶属率，与模型无关。）
+
+结论：
+
+1. **A 可以不依赖 ALM 部署**：关掉 ALM 后仍然 0 碰撞、RMSE 4.73 m（比开 ALM 的
+   5.21 m 还低，因为 ALM 会把曲线往走廊余量方向推、牺牲一点 GT 贴合度）、
+   100% 落在 GT 走廊内。它的"原始预测"就是安全的。
+2. **B2 / REF 必须靠 ALM**：关掉后碰撞率 18.75% / 31.25%，开 ALM 才回到 0。
+3. **B1（无 feedback）ALM 也救不回来**：关 31.25% → 开 6.25%，四种配置里唯一
+   开着 ALM 仍会碰撞的。
+4. 注意训练期 val 的 `collision_rate`（B2 只有 0.0105）比这里的**部署回路**指标
+   乐观得多：val 是在随机 t 上做单步 x̂₀ 预测后解码 128 点算碰撞，而部署要跑完
+   16 步 DDIM，两者不是同一个量。以后判断"能不能不用 ALM"必须以部署回路为准。
+
+复现：
+
+```bash
+python scripts/eval_campaign_testset.py --config configs/config_160k8p.yaml     --split test --samples 16 --steps 16 --seed 0 --ablation A     --model A_oneshot=outputs/campaign_a_oneshot/ckpt/best_task.pt ...     --out outputs/campaign_testset_eval_noalm.json     --md  outputs/campaign_testset_eval_noalm.md
+python sample.py --config configs/config_160k8p.yaml     --ckpt outputs/campaign_a_oneshot/ckpt/best_task.pt     --split test --num 4 --seed 0 --ablation A --no-trace-plot     --out outputs/figures/A_oneshot_noalm          # 规划效果图（无 ALM）
+```
+
+图：`outputs/figures/{A_oneshot,B2_feedback,B1_base,REF_160k8}_noalm/`
+（`samples_test_0_s0_ablA_*.png`，标题里 `alm=disabled`）。
+
+## 8. 产物
 
 ```text
 outputs/campaign_a_oneshot/{train.log,training_summary.json,ckpt/{best,best_task,latest}.pt}
 outputs/campaign_b1_base/{train.log,training_summary.json,ckpt/...}
 outputs/campaign_b2_feedback/{train.log,training_summary.json,ckpt/...}
 outputs/campaign_compare.md          训练侧 val 曲线 + fb_* 诊断
-outputs/campaign_testset_eval.{json,md}   test 同口径采样评估（含逐 step 表）
+outputs/campaign_testset_eval.{json,md}   test 同口径采样评估（ALM 开，含逐 step 表）
+outputs/campaign_testset_eval_noalm.{json,md}  ALM 关（ablation A）的同口径评估
+outputs/figures/*_noalm/                  无 ALM 的规划效果图（sample.py --ablation A）
 outputs/stage_chain_status.json     三个 stage 的起止时间与 exit code
 ```

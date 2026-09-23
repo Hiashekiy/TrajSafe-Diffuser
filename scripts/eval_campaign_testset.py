@@ -116,15 +116,23 @@ def offline_corridor_metrics(p: torch.Tensor, batch: dict):
 
 
 def evaluate(name: str, config: str, ckpt: str, batch, schedule, device,
-             steps: int, seed: int, scene_to_meter: float) -> dict:
+             steps: int, seed: int, scene_to_meter: float,
+             ablation: str | None = None) -> dict:
+    from src.diffusion.sampler import ablation_configs
     cfg = load_config(config)
+    alm_cfg, corridor_cfg = cfg.get("alm"), cfg.get("corridor")
+    if ablation:
+        # A = raw diffusion (no corridor, no ALM): the model's OWN prediction is
+        # what is returned, so this isolates "how good is the network alone".
+        alm_cfg, corridor_cfg = ablation_configs(alm_cfg, corridor_cfg,
+                                                 ablation)
     model, _, report = load_model(cfg, ckpt, device=device, verbose=False)
     out = sample(model, schedule, batch["cond"], batch["occupancy"],
                  batch["candidate_xy"], batch["candidate_mask"],
                  batch["candidate_geometry"],
                  batch["candidate_geometry_lengths"], device=device,
                  steps=steps, seed=seed, return_trace=True,
-                 alm_config=cfg.get("alm"), corridor_config=cfg.get("corridor"))
+                 alm_config=alm_cfg, corridor_config=corridor_cfg)
     trace = out["trace"]
     p = out["p"].detach().cpu()
     gt = batch["pos"].detach().cpu()
@@ -134,6 +142,7 @@ def evaluate(name: str, config: str, ckpt: str, batch, schedule, device,
     _off_max, _off_member = offline_corridor_metrics(p, batch)
     res = {
         "name": name, "ckpt": ckpt, "config": config,
+        "ablation": ablation,
         "feedback_enabled": bool(out["feedback"]["enabled"]),
         "arch_from_ckpt": report.get("arch") if report else None,
         "guided_rate": float(guided.float().mean()),
@@ -187,6 +196,8 @@ def main():
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--ablation", default=None, choices=["A", "B", "C", "D"],
+                    help="A = raw diffusion (ALM off); default = the YAML")
     ap.add_argument("--out", default="outputs/campaign_testset_eval.json")
     ap.add_argument("--md", default="outputs/campaign_testset_eval.md")
     args = ap.parse_args()
@@ -217,7 +228,8 @@ def main():
             print("[eval] SKIP %s: %s not found" % (name, ckpt), flush=True)
             continue
         res = evaluate(name, config, ckpt, batch, schedule, device,
-                       args.steps, args.seed, scene_to_meter)
+                       args.steps, args.seed, scene_to_meter,
+                       ablation=args.ablation)
         results.append(res)
         # NOTE: 0.0 is falsy, so never use ``x or default`` here
         print("[eval] %-11s coll=%s viol=%s member=%s rmse=%.2fm "
@@ -240,6 +252,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump({"split": args.split, "samples": len(ds),
                    "steps": args.steps, "seed": args.seed,
+                   "ablation": args.ablation,
                    "results": results}, fh, indent=2, ensure_ascii=False)
     print("[eval] written %s" % out_path)
 
