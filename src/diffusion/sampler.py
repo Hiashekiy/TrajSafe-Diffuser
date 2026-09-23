@@ -395,9 +395,26 @@ def dense_validation(model, codec, q, pack, occ, cond, num_points=512,
 def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
            geometry, geometry_lengths, device="cuda", steps=None, seed=None,
            return_trace=False, alm_guidance=None, alm_config=None,
-           corridor_config=None):
+           corridor_config=None, times=None):
     """cond [B,2,2]; occ [B,1,R,R]; candidate_xy [B,M,L,2];
     candidate_mask [B,M]; geometry [B,M,G,2]; geometry_lengths [B,M].
+
+    ``steps`` / ``times`` select the reverse-time schedule:
+
+    * ``times=None`` (default) -> ``pick_times(T, steps)``: a UNIFORM
+      sub-sampling of the ``T`` training timesteps (``steps=None`` = all of them);
+    * ``times=[...]`` -> an explicit NON-UNIFORM schedule (any order, duplicates
+      dropped, ``0`` and ``T-1`` always present).  Put the fine spacing where it
+      matters: the WARMUP / TRY_ACTIVATE forwards, because the topology and the
+      corridor are decided from those states, can stay at unit spacing while the
+      post-activation part jumps - from activation onwards every step runs the
+      ALM on a frozen corridor::
+
+          times = [15, 14, 13, 12, 9, 6, 3, 0]
+
+      The warm-up is counted in EXECUTED forwards (``warmup_reverse_steps``),
+      never in absolute timesteps, so a coarse schedule must lower it too or the
+      guided phase shrinks to nothing.
 
     ``alm_guidance`` belongs to the LEGACY waypoint ALM and is refused; the
     B-spline control-space ALM is configured through ``alm_config`` /
@@ -436,7 +453,22 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     start, goal = cond[:, 0], cond[:, 1]
     sqrt_ab = schedule.sqrt_alphas_cumprod.detach().to(dev).float()
     sqrt_1ma = schedule.sqrt_one_minus_alphas_cumprod.detach().to(dev).float()
-    times = pick_times(T, steps)
+    # Schedule: uniform (``pick_times``) or an explicit NON-UNIFORM ``times``
+    # list.  Either way the pairs walk backwards and end with the terminal
+    # ``times[0] -> -1`` transition.
+    if times is None:
+        times = pick_times(T, steps)
+    else:
+        times = sorted({int(v) for v in times})
+        if not times:
+            raise ValueError("times must not be empty")
+        if times[0] < 0 or times[-1] > T - 1:
+            raise ValueError("times must lie in [0, %d], got %s"
+                             % (T - 1, times))
+        if times[0] != 0:
+            times = [0] + times
+        if times[-1] != T - 1:
+            times = times + [T - 1]
     if times is None:
         pairs = [(t, t - 1) for t in range(T - 1, -1, -1)]
     else:

@@ -266,13 +266,18 @@ class Engine:
         return {k: float(stats[k][b]) for k in ALM_STAT_KEYS if k in stats}
 
     def _run_sampler(self, model, cond, occ, packed, seed, alm_cfg,
-                     corridor_cfg):
-        """Run the production sampler (WARMUP / TRY_ACTIVATE / GUIDED)."""
+                     corridor_cfg, steps=None, times=None):
+        """Run the production sampler (WARMUP / TRY_ACTIVATE / GUIDED).
+
+        ``steps`` = number of reverse forwards (uniform sub-sampling of the 16
+        training timesteps, ``None`` = all of them); ``times`` = an explicit
+        non-uniform schedule (see :func:`src.diffusion.sampler.sample`).
+        """
         return sample(
             model, self.schedule, cond, occ, packed["xy"], packed["mask"],
             packed["geometry"], packed["geometry_lengths"],
-            device=self.device, steps=None, seed=seed, return_trace=True,
-            alm_config=alm_cfg, corridor_config=corridor_cfg)
+            device=self.device, steps=steps, times=times, seed=seed,
+            return_trace=True, alm_config=alm_cfg, corridor_config=corridor_cfg)
 
     def _steps_from_result(self, out):
         """Map the sampler trace onto the dashboard's per-frame records."""
@@ -352,7 +357,7 @@ class Engine:
     # -------------------------------------------------------------- generate
     def generate(self, sample_key, split, index, occupancy, condition, seed,
                  model_id="best_task", verify_regions=False, alm_enabled=True,
-                 ablation=None):
+                 ablation=None, steps=None, times=None):
         model, epoch = self.get_model(model_id)
         condition = np.asarray(condition, dtype=np.float32).reshape(2, 2)
         occupancy = np.asarray(occupancy, dtype=np.float32)
@@ -371,6 +376,14 @@ class Engine:
                               device=self.device)[None, None]
 
         alm_cfg, corridor_cfg = dict(self.alm_cfg), dict(self.corridor_cfg)
+        if steps is not None:
+            # Warm-up is counted in EXECUTED forwards, not in timesteps: with a
+            # short schedule the configured 3 would swallow the guided phase
+            # (4 forwards = at most 1 warm-up + 3 guided), so clamp it to keep at
+            # least 2 guided forwards.  Measured on the full test split, 4 steps
+            # with warm-up 1/2/3 is indistinguishable from the 16-step baseline.
+            base = int(alm_cfg.get("warmup_reverse_steps", 3))
+            alm_cfg["warmup_reverse_steps"] = max(1, min(base, int(steps) - 2))
         if ablation:
             alm_cfg, corridor_cfg = ablation_configs(alm_cfg, corridor_cfg,
                                                      ablation)
@@ -379,7 +392,7 @@ class Engine:
 
         with torch.no_grad():
             out = self._run_sampler(model, cond, occ, packed, seed, alm_cfg,
-                                    corridor_cfg)
+                                    corridor_cfg, steps=steps, times=times)
         steps = self._steps_from_result(out)
 
         state_history, x0_history, x0_raw_history = [], [], []
@@ -459,6 +472,10 @@ class Engine:
             "sample_key": sample_key, "model_id": model_id, "seed": int(seed),
             "cache_hit": False, "condition": condition.tolist(),
             "state_labels": labels,
+            # reverse forwards actually executed (t >= 0 frames; the trailing
+            # ``-1`` frame is the terminal x0), plus the schedule they sample
+            "steps": int(sum(1 for st in steps if int(st["t"]) >= 0)),
+            "times": [int(st["t"]) for st in steps],
             "schedule": {
                 "sqrt_alpha_bar": np.round(
                     self.schedule.sqrt_alphas_cumprod.cpu().numpy(), 8).tolist(),

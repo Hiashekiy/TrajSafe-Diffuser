@@ -121,14 +121,34 @@ def guided_series(trace, key):
     return out
 
 
+def _cast(value: str):
+    """CLI override value -> int / float / bool / str."""
+    low = str(value).strip().lower()
+    if low in ("true", "false"):
+        return low == "true"
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except ValueError:
+            pass
+    return str(value)
+
+
 def evaluate_chunk(config, ckpt, batch, schedule, device, steps, seed,
-                   ablation=None):
+                   ablation=None, alm_overrides=None):
     """Run ONE chunk; return per-sample raw numbers (aggregation is separate)."""
     cfg = load_config(config)
     alm_cfg, corridor_cfg = cfg.get("alm"), cfg.get("corridor")
     if ablation:
         alm_cfg, corridor_cfg = ablation_configs(alm_cfg, corridor_cfg,
                                                  ablation)
+    if alm_overrides:
+        alm_cfg = dict(alm_cfg or {})
+        for item in alm_overrides:
+            key, _, value = str(item).partition("=")
+            if not key:
+                raise SystemExit("[eval] --alm-set must be KEY=VALUE")
+            alm_cfg[key] = _cast(value)
     model, _, _ = load_model(cfg, ckpt, device=device, verbose=False)
     out = sample(model, schedule, batch["cond"], batch["occupancy"],
                  batch["candidate_xy"], batch["candidate_mask"],
@@ -259,6 +279,12 @@ def main():
     ap.add_argument("--device", default=None)
     ap.add_argument("--ablation", default=None, choices=["A", "B", "C", "D"],
                     help="A = raw diffusion (no corridor, no ALM)")
+    ap.add_argument("--alm-set", action="append", default=[],
+                    metavar="KEY=VALUE",
+                    help="override one alm.* value (repeatable), e.g. "
+                         "warmup_reverse_steps=1.  Warm-up is counted in "
+                         "EXECUTED reverse forwards, so a short --steps schedule "
+                         "must lower it too or the ALM barely runs.")
     ap.add_argument("--out", default="outputs/campaign_testset_eval.json")
     ap.add_argument("--md", default="outputs/campaign_testset_eval.md")
     args = ap.parse_args()
@@ -299,14 +325,16 @@ def main():
             sub = collate([ds[i] for i in range(lo, min(lo + chunk, n))])
             acc_add(acc, evaluate_chunk(mcfg, ckpt, sub, schedule, device,
                                         args.steps, args.seed,
-                                        ablation=args.ablation))
+                                        ablation=args.ablation,
+                                        alm_overrides=args.alm_set))
             print("  [%s] %d/%d samples, collisions=%d"
                   % (name, acc["n"], n,
                      sum(1 for v in acc["collision"] if v)), flush=True)
         res = acc_finalize(acc, scene_to_meter)
         res.update({"name": name, "ckpt": ckpt, "config": mcfg,
                     "ablation": args.ablation, "split": args.split,
-                    "steps": args.steps, "seed": args.seed})
+                    "steps": args.steps, "seed": args.seed,
+                    "alm_overrides": list(args.alm_set)})
         results.append(res)
         print("[eval] %-12s n=%d coll=%.4f (%d) rmse=%.2fm | OFFv=%s OFFm=%s "
               "| viol=%s member=%s | guided=%.2f fb_valid=%.3f"
