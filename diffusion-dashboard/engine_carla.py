@@ -42,16 +42,67 @@ from src.geometry.skeleton_paths import (CandidateConfig, generate_candidates,
                                          normalized_dtw)
 from src.models.trajsafe import TrajSafePlanner
 
-# Checkpoints of the carla_full_160_256 (k=8 eroded) run.  The dashboard is
-# a viewer for ONE dataset+model pair, so these paths are the switch:
-#   configs/config_160k8.yaml   -> data/carla_processed_160k8
-#   outputs/bspline_carla_160k8 -> this run's checkpoints
-CKPT_DIR = os.path.join(ROOT, "outputs", "bspline_carla_160k8", "ckpt")
-CHECKPOINTS = {
-    "best_task": os.path.join(CKPT_DIR, "best_task.pt"),
-    "best": os.path.join(CKPT_DIR, "best.pt"),
-    "latest": os.path.join(CKPT_DIR, "latest.pt"),
+# ---------------------------------------------------------------- models
+# The dashboard serves SEVERAL runs at once.  Every entry carries its OWN config
+# because the historical-feedback arms have a different architecture
+# (``model.feedback.enabled``): A/B2 were trained with feedback, B1 without, and
+# the old 160k8 baseline on the k=8 cache.  The DISPLAYED data (occupancy / GT /
+# candidates) comes from ``DASH_CONFIG`` (default: the 160k8p cache the campaign
+# models were trained on), so switching the model does not switch the map.
+#
+#   A_oneshot    一步到位：从零直接开 feedback 两步 rollout（58 ep, best_task ep50）
+#   B2_feedback  先基座再 feedback 微调（100 + 37 ep, best_task ep36）
+#   B1_base      只训基座、feedback 关闭（100 ep, best_task ep24）——对照臂
+#   REF_160k8    旧 160k8 (k=8) 的 best_task（跨缓存参考）
+MODELS = {
+    "A_oneshot": {
+        "config": "configs/config_160k8p.yaml",
+        "ckpt_dir": "outputs/campaign_a_oneshot/ckpt",
+        "label": "A · 一步到位 feedback（best_task ep50）",
+    },
+    "B2_feedback": {
+        "config": "configs/config_160k8p.yaml",
+        "ckpt_dir": "outputs/campaign_b2_feedback/ckpt",
+        "label": "B2 · 基座 + feedback 微调（best_task ep36）",
+    },
+    "B1_base": {
+        "config": "configs/config_160k8p_s1.yaml",
+        "ckpt_dir": "outputs/campaign_b1_base/ckpt",
+        "label": "B1 · 基座（无 feedback，best_task ep24）",
+    },
+    "REF_160k8": {
+        "config": "configs/config_160k8.yaml",
+        "ckpt_dir": "outputs/bspline_carla_160k8/ckpt",
+        "label": "REF · 旧 160k8 best_task（跨缓存）",
+    },
 }
+# ``best`` is deliberately NOT offered for the campaign arms: their val-total
+# best (epoch 7-26) is an overfit-topology artifact, ``best_task`` is the model
+# that is actually deployed.
+CKPT_KINDS = ("best_task", "latest")
+CHECKPOINTS = {
+    "%s:%s" % (run, kind): os.path.join(ROOT, spec["ckpt_dir"],
+                                        "%s.pt" % kind)
+    for run, spec in MODELS.items() for kind in CKPT_KINDS
+}
+DEFAULT_CONFIG = os.path.join(ROOT, "configs", "config_160k8p.yaml")
+
+
+def model_config(model_id, cache={}):
+    """The YAML a given model id must be BUILT with (architecture mismatch)."""
+    run = str(model_id).split(":", 1)[0]
+    if run not in MODELS:
+        raise ValueError("unknown checkpoint %r" % model_id)
+    path = os.path.join(ROOT, MODELS[run]["config"])
+    if path not in cache:
+        cache[path] = load_config(path)
+    return cache[path]
+
+
+def model_label(model_id):
+    run = str(model_id).split(":", 1)[0]
+    spec = MODELS.get(run) or {}
+    return "%s · %s" % (spec.get("label", run), model_id.split(":", 1)[-1])
 
 # ALM stat keys that are forwarded to the dashboard (floats only).
 ALM_STAT_KEYS = (
@@ -65,9 +116,14 @@ ALM_STAT_KEYS = (
 
 
 class Engine:
-    def __init__(self, device, processed_root=None):
+    def __init__(self, device, processed_root=None, config_path=None):
         self.device = device
-        cfg = load_config(os.path.join(ROOT, "configs", "config_160k8.yaml"))
+        # ``DASH_CONFIG`` (or the default 160k8p config) decides WHICH dataset is
+        # displayed; each model still builds itself from its own YAML.
+        self.config_path = os.path.abspath(
+            config_path or os.environ.get("DASH_CONFIG", DEFAULT_CONFIG))
+        print("[engine] display config: %s" % self.config_path, flush=True)
+        cfg = load_config(self.config_path)
         self.cfg = cfg
         self.processed_root = os.path.abspath(
             processed_root or cfg["data"].get("processed_root",
@@ -128,7 +184,10 @@ class Engine:
                 raise FileNotFoundError("checkpoint not found: %s" % path)
             # arch='auto': a checkpoint written before the control-space
             # refactor replays the legacy 128-curve-token chain unchanged.
-            model, ckpt, _ = load_model(self.cfg, path, arch="auto",
+            # The MODEL config (feedback architecture, C, knots) comes from the
+            # run itself; the DISPLAYED data still comes from self.cfg.
+            cfg = model_config(model_id)
+            model, ckpt, _ = load_model(cfg, path, arch="auto",
                                         device=self.device)
             model.eval()
             self._models[model_id] = (model, ckpt.get("epoch"))
