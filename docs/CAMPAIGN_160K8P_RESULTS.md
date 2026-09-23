@@ -114,7 +114,29 @@ python scripts/eval_campaign_testset.py --config configs/config_160k8p.yaml \
 4. 评估时把走廊固定成同一份 GT 走廊（本文 OFFLINE 列已是这个思路的初版），
    避免“不同模型不同走廊”的解释空间。
 
-## 6. 产物
+## 6. 图（`python scripts/plot_campaign.py --samples 4 --steps 16`）
+
+```text
+outputs/figures/campaign_panels.png     4 样本 x 4 模型 轨迹面板：
+                                        占据栅格 + 各模型自己的走廊 + GT 曲线 +
+                                        预测曲线 + 预测椭圆 + 起终点
+outputs/figures/campaign_per_step.png   逐步诊断：raw violation / ALM 修正量 /
+                                        ALM 引起的曲线粗糙化(%) vs 反向步
+outputs/figures/campaign_val_curves.png 训练曲线：val task / curve RMSE /
+                                        collision / fb_valid_rate vs epoch
+```
+
+图里能直接看到的：
+* 逐步诊断图上 A_oneshot（蓝）的 raw violation 比 B1/REF 低 1~2 个数量级，
+  且 ALM 修正量同步变小；粗糙化那一栏 A 贴 0%，B2 ≈ +20%，B1 ≈ +32%，
+  REF ≈ +65%。
+* 训练曲线上 A 的 task 从 epoch 20 起就压在 10~12，B1 停在 15~20 且抖动大，
+  B2 在第 25 个 epoch 接上 B1 后继续下探到 ~12；`fb_valid_rate` 在 A 上前
+  15 个 epoch 从 0.20 爬到 0.73。
+* 轨迹面板同时说明 4 个样本**不足以**给模型排名：例如 sample 2 上 A 的余量只有
+  −0.001 而 RMSE 9.3 m，B2/REF 在同一格反而更好（−0.036/4.8 m、−0.043/5.8 m）。
+
+## 7. 产物
 
 ```text
 outputs/campaign_a_oneshot/{train.log,training_summary.json,ckpt/{best,best_task,latest}.pt}
