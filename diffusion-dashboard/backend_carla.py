@@ -36,7 +36,9 @@ ROOT = os.path.abspath(os.path.join(SITE_ROOT, ".."))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, SITE_ROOT)
 
-from engine_carla import CHECKPOINTS, Engine
+from engine_carla import (CHECKPOINTS, DATASETS, DEFAULT_DATASET, Engine,
+                          dataset_catalog, dataset_key, dataset_root,
+                          dataset_splits)
 
 CACHE_DIR = os.path.join(SITE_ROOT, "cache-carla")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -46,7 +48,10 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 #    switch or the step count used to replay a payload generated with the OTHER
 #    setting - that is the "缓存不会清理" bug), and the payload reports the
 #    executed schedule (``steps`` / ``times``).
-PAYLOAD_FORMAT = 5
+# 6: the panel can display SEVERAL processed caches (``dataset``), so the cache
+#    key gained ``dataset``: without it, switching the dataset replayed the
+#    payload generated on the other map (same bug class as the ALM/steps one).
+PAYLOAD_FORMAT = 6
 CACHE_FORMAT = PAYLOAD_FORMAT
 
 # UI/cache contract string shared with the web client (``/health.engine`` and
@@ -61,6 +66,8 @@ CATALOG_PATH = os.path.join(SITE_ROOT, "lib",
 # the split is picked first (train/val/test), then the sample inside it, either
 # randomly or by typing its index.  ``/splits`` and ``/sample`` serve that
 # metadata on demand, so nothing has to be baked into the front-end bundle.
+# Several caches are served at once (``dataset``): 160k8p (the campaign cache)
+# and 160k4p (the stricter, TEST-ONLY k=4 cache), see ``engine_carla.DATASETS``.
 SPLITS = ("train", "val", "test")
 RES = 256
 
@@ -71,16 +78,31 @@ with open(CATALOG_PATH, "r", encoding="utf-8") as handle:
 occupancy_cache = {}
 
 
-def normalize_split(split) -> str:
+def normalize_dataset(dataset) -> str:
+    return dataset_key(dataset)
+
+
+def dataset_split_names(dataset=None):
+    return dataset_splits(dataset)[1]
+
+
+def normalize_split(split, dataset=None) -> str:
+    """Validate a split against the SPLITS THAT EXIST in that dataset.
+
+    ``160k4p`` ships ``test`` only, so offering train/val for it would only
+    produce a traceback in ``np.load``; raise a readable error instead.
+    """
     name = str("test" if split is None else split).strip().lower()
-    if name not in SPLITS:
-        raise ValueError("未知数据划分 %r（可选：%s）"
-                         % (split, ", ".join(SPLITS)))
+    allowed = dataset_split_names(dataset)
+    if name not in allowed:
+        raise ValueError("数据集 %s 没有 %r 划分（可选：%s）"
+                         % (normalize_dataset(dataset), name,
+                            ", ".join(allowed)))
     return name
 
 
-def split_size(split: str) -> int:
-    return int(len(get_engine().split_data(split)["conditions"]))
+def split_size(split: str, dataset=None) -> int:
+    return int(len(get_engine().split_data(split, dataset)["conditions"]))
 
 
 def parse_key(sample_key):
@@ -101,29 +123,33 @@ def parse_key(sample_key):
     raise ValueError("无法识别的样本 %r" % (sample_key,))
 
 
-def resolve_sample(sample_key, split=None):
+def resolve_sample(sample_key, split=None, dataset=None):
     """(sample_key, split) -> (split, index).
 
     The split chosen in the panel wins; otherwise it comes from the key prefix
     ("train_0100") and finally falls back to test, so a stale front-end bundle
     or a hand-typed key can never break the panel.
     """
+    dkey = normalize_dataset(dataset)
     key_split, index = parse_key(sample_key)
-    name = normalize_split(split) if split else (key_split or "test")
+    if key_split is not None and key_split not in dataset_split_names(dkey):
+        key_split = None
+    name = normalize_split(split, dkey) if split else (key_split or "test")
     if index is None:
         index = 0
-    n = split_size(name)
+    n = split_size(name, dkey)
     if not 0 <= index < n:
-        raise ValueError("%s 的样本编号 %d 超出范围（0 … %d）"
-                         % (name, index, n - 1))
+        raise ValueError("%s/%s 的样本编号 %d 超出范围（0 … %d）"
+                         % (dkey, name, index, n - 1))
     return name, index
 
 
-def sample_occupancy(split: str, index: int) -> np.ndarray:
-    key = (split, int(index))
+def sample_occupancy(split: str, index: int, dataset=None) -> np.ndarray:
+    dkey = normalize_dataset(dataset)
+    key = (dkey, split, int(index))
     if key not in occupancy_cache:
         engine = get_engine()
-        occupancy_cache[key] = engine.sample_arrays(split, int(index))[0]
+        occupancy_cache[key] = engine.sample_arrays(split, int(index), dkey)[0]
         if len(occupancy_cache) > 64:
             occupancy_cache.pop(next(iter(occupancy_cache)))
     return occupancy_cache[key].copy()
@@ -148,18 +174,22 @@ def wall_runs(occupancy: np.ndarray):
     return runs
 
 
-def sample_metadata(split: str, index: int):
+def sample_metadata(split: str, index: int, dataset=None):
     """Everything the panel needs for ONE sample (occupancy is not included:
     it is drawn from the run-length map, and the sampler reads it directly)."""
+    dkey = normalize_dataset(dataset)
     eng = get_engine()
-    occupancy, condition, curve_gt = eng.sample_arrays(split, index)
+    occupancy, condition, curve_gt = eng.sample_arrays(split, index, dkey)
     gt = {"P": np.round(curve_gt, 5).tolist()}
-    control_gt = eng.split_control_gt(split, index)
+    control_gt = eng.split_control_gt(split, index, dkey)
     if control_gt is not None:
         gt["control"] = np.round(control_gt, 5).tolist()
     return {
         "key": "%s_%04d" % (split, int(index)),
         "split": split,
+        "dataset": dkey,
+        "datasetLabel": DATASETS[dkey]["label"],
+        "datasetRoot": dataset_root(dkey)[1],
         "datasetId": int(index),
         "maze": "carla_%04d" % int(index),
         "condition": np.round(condition, 5).tolist(),
@@ -205,11 +235,12 @@ def clear_generation_cache():
 @torch.no_grad()
 def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
              obstacles=None, alm_enabled: bool | None = None, split=None,
-             steps: int | None = None, times=None):
-    split, index = resolve_sample(sample_key, split)
+             steps: int | None = None, times=None, dataset=None):
+    dkey = normalize_dataset(dataset)
+    split, index = resolve_sample(sample_key, split, dkey)
     eng = get_engine()
-    base = sample_occupancy(split, index)
-    default_condition = eng.split_data(split)["conditions"][index]
+    base = sample_occupancy(split, index, dkey)
+    default_condition = eng.split_data(split, dkey)["conditions"][index]
     condition = np.asarray(
         custom_condition if custom_condition is not None else default_condition,
         dtype=np.float32)
@@ -221,8 +252,12 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
                            seed, model_id=model_id,
                            verify_regions=False,
                            alm_enabled=alm_enabled is not False,
-                           steps=steps, times=times)
+                           steps=steps, times=times, dataset=dkey)
     payload["split"] = split
+    payload["dataset"] = dkey
+    payload["datasetLabel"] = DATASETS[dkey]["label"]
+    payload["datasetRoot"] = dataset_root(dkey)[1]
+    payload["datasetNote"] = DATASETS[dkey].get("note", "")
     payload["obstacles"] = obstacles or []
     payload["format"] = PAYLOAD_FORMAT
     if alm_enabled is False:
@@ -264,27 +299,49 @@ class Handler(BaseHTTPRequestHandler):
                 "format": PAYLOAD_FORMAT,
                 "features": ["control_history", "topology", "ellipse_history",
                              "corridor", "alm_stats", "raw_vs_safe",
-                             "splits"],
+                             "splits", "datasets"],
                 "checkpoints": sorted(CHECKPOINTS.keys()),
-                "splits": {name: split_size(name) for name in SPLITS},
+                "dataset": DEFAULT_DATASET,
+                "datasets": [d["id"] for d in dataset_catalog()],
+                "splits": {name: split_size(name)
+                           for name in dataset_split_names(DEFAULT_DATASET)},
                 "cached": len(os.listdir(CACHE_DIR))})
         elif parsed.path == "/splits":
+            query = parse_qs(parsed.query)
+            requested = query.get("dataset", [None])[0]
+            try:
+                dkey = normalize_dataset(requested)
+            except Exception as error:
+                return self.send_json(400, {"error": str(error)})
+            names = dataset_split_names(dkey)
             self.send_json(200, {
                 "engine": CONTROL_SPACE_ENGINE, "format": PAYLOAD_FORMAT,
-                "splits": [{"name": name, "count": split_size(name)}
-                           for name in SPLITS],
+                "dataset": dkey,
+                "datasetLabel": DATASETS[dkey]["label"],
+                "datasetRoot": dataset_root(dkey)[1],
+                # flat list for older bundles (the default dataset)
+                "splits": [{"name": name, "count": split_size(name, dkey)}
+                           for name in names],
+                # every cache the panel may switch to, with its own counts
+                "datasets": [
+                    dict(entry,
+                         counts={name: split_size(name, entry["id"])
+                                 for name in entry["splits"]})
+                    for entry in dataset_catalog()],
                 "provenance": catalog.get("provenance", {}),
                 "checkpoints": sorted(CHECKPOINTS.keys())})
         elif parsed.path == "/sample":
             try:
                 query = parse_qs(parsed.query)
-                split = normalize_split(query.get("split", ["test"])[0])
+                dataset = query.get("dataset", [None])[0]
+                dkey = normalize_dataset(dataset)
+                split = normalize_split(query.get("split", ["test"])[0], dkey)
                 index = int(query.get("index", ["0"])[0])
-                n = split_size(split)
+                n = split_size(split, dkey)
                 if not 0 <= index < n:
-                    raise ValueError("%s 的样本编号 %d 超出范围（0 … %d）"
-                                     % (split, index, n - 1))
-                self.send_json(200, sample_metadata(split, index))
+                    raise ValueError("%s/%s 的样本编号 %d 超出范围（0 … %d）"
+                                     % (dkey, split, index, n - 1))
+                self.send_json(200, sample_metadata(split, index, dkey))
             except Exception as error:
                 self.send_json(400, {"error": str(error)})
         else:
@@ -298,6 +355,7 @@ class Handler(BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length))
             sample_key = request.get("sample_key")
             split = request.get("split")
+            dataset = request.get("dataset")
             model_id = request.get("model_id")
             seed = int(request.get("seed", 42))
             custom_condition = request.get("condition")
@@ -308,7 +366,9 @@ class Handler(BaseHTTPRequestHandler):
                 steps = int(steps)
                 if not 1 <= steps <= 64:
                     raise ValueError("steps 必须在 1..64 之间")
-            resolved_split, resolved_index = resolve_sample(sample_key, split)
+            dkey = normalize_dataset(dataset)
+            resolved_split, resolved_index = resolve_sample(sample_key, split,
+                                                            dkey)
             sample_key = "%s_%04d" % (resolved_split, resolved_index)
             if model_id not in CHECKPOINTS:
                 raise ValueError("未知模型")
@@ -317,9 +377,12 @@ class Handler(BaseHTTPRequestHandler):
             cache_payload = json.dumps(
                 {"format": CACHE_FORMAT, "engine": CONTROL_SPACE_ENGINE,
                  "features": ["control_history", "topology", "corridor",
-                              "alm_stats", "raw_vs_safe"],
+                              "alm_stats", "raw_vs_safe", "datasets"],
                  "sample": sample_key, "split": resolved_split,
                  "index": resolved_index,
+                 # the same sample/seed on the OTHER cache is a different map
+                 # and must not replay this payload
+                 "dataset": dkey,
                  "model": model_id, "seed": seed, "condition": custom_condition,
                  "obstacles": obstacles,
                  # WITHOUT these two every toggle of the ALM switch / step count
@@ -343,7 +406,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = generate(sample_key, model_id, seed,
                                       custom_condition, obstacles,
                                       alm_enabled=alm_enabled,
-                                      split=resolved_split, steps=steps)
+                                      split=resolved_split, steps=steps,
+                                      dataset=dkey)
                     with open(cache_path, "w", encoding="utf-8") as handle:
                         json.dump(result, handle, separators=(",", ":"))
             result["elapsed_ms"] = round(

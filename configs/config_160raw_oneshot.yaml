@@ -1,0 +1,32 @@
+# ============================================================
+# config_160raw_oneshot —— Arm A（一步到位 feedback）在「腐蚀前」数据集上重训
+#
+# 与 config_160k8p.yaml（campaign A_oneshot 用的 recipe）**只差三件事**：
+#   * data.processed_root: data/carla_processed_160    腐蚀前（k=0）的缓存
+#   * train.ckpt_dir:      outputs/oneshot_raw160/ckpt 全新目录，不覆盖任何已有 run
+#   * train.epochs / max_hours: 与 campaign A 相同的预算（65 ep / 2.4 h）
+# 其余（几何、损失权重、model.feedback 段、alm/corridor、lr、batch）全部继承
+# config_160k8p.yaml，所以与 A_oneshot 的差异只有数据集。
+#
+# 数据集差异（自由面积 = occupancy 里 0 的占比，scene 网格 256²）：
+#   raw160(k=0)  0.1854      ← 本次
+#   160k4p(k=4)  0.2792
+#   160k8p(k=8)  0.3573      ← campaign 各 arm 用的
+# GT 在三种缓存里都 100% 落在自由空间内，监督信号合法。
+#
+# ⚠ 离线 GT 走廊覆盖率低得多（两步 rollout 的第二帧和 Lfbsafe 依赖它）：
+#     split   raw160 alm_valid / cells per sample      160k8p 对照
+#     train      0.566 / 72.5                          0.978 / 127
+#     val        0.737 / 94.3                          0.986 / 127
+#     test       0.676 / 86.6                          0.990 / 127
+#   即 43% 的训练样本没有走廊包：那里 ALM 不修正、安全项为 0，feedback 分支
+#   学到的多为"无修正"信号。这是数据集本身的性质，不是配置问题。
+base: "configs/config_160k8p.yaml"
+
+data:
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed_160"
+
+train:
+  epochs: 65                  # 与 campaign A 同预算，便于对照
+  max_hours: 2.4
+  ckpt_dir: "outputs/oneshot_raw160/ckpt"

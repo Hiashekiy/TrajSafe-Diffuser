@@ -1,0 +1,29 @@
+# ============================================================
+# config_160raw_oneshot_tol015 —— 同 config_160raw_oneshot.yaml，
+# 但把 alm.feedback_accept_tol 从 1e-2 放宽到 0.15。
+#
+# 为什么：在**腐蚀前**的紧走廊（自由面积 0.185，k8p 是 0.357）里，control-space
+# ALM 迭代**收敛不到**严格的 1e-2（实测 epoch 0 修正后残余 max_violation ≈ 0.14），
+# 而训练侧的可靠性判据是
+#     reliable = has_pack & (max_violation_after <= feedback_accept_tol)
+# （train.py feedback_rollout），所以 1e-2 下 |fb_valid| 只有 0.073，
+# 而 k8p 上稳定在 0.73 —— 历史安全反馈这条臂等于被丢掉了。
+# 放宽到 0.15 后 epoch 0 的残余（0.14）即落入接受区间，feedback 真正被训练；
+# 上限由走廊覆盖率决定：train 的 alm_valid=0.566，乘 (1-drop_prob 0.25) ≈ 0.42
+# （k8p 是 0.978 × 0.75 ≈ 0.73）。
+#
+# 注意：该阈值在**训练**（train.py:302）与**推理**（src/diffusion/sampler.py:527）
+# 两端都会读，所以配置本身保证两侧一致；评估/上 dashboard 时必须带上这个 config。
+#
+# 代价：recipe 与 campaign A_oneshot（1e-2）不再单变量可比 —— 与 A 的差异里同时
+# 含"数据集换成腐蚀前"和"feedback 接受阈值放宽"两个因素。若之后要干净的
+# 单变量对照，用 config_160raw_oneshot.yaml（1e-2）再跑一遍即可。
+base: "configs/config_160raw_oneshot.yaml"
+
+alm:
+  feedback_accept_tol: 0.15
+
+train:
+  epochs: 65
+  max_hours: 9.5               # 紧走廊里 ALM 迭代不早停，实测 ≈508 s/epoch
+  ckpt_dir: "outputs/oneshot_raw160_tol015/ckpt"

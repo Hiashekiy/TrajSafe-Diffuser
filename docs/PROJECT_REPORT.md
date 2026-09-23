@@ -345,16 +345,25 @@ python scripts/data/carla/03_validate_processed.py   --config configs/config.yam
 
 ### 6.3 交互式可视化（Diffusion Lens）
 
-- 后端 `diffusion-dashboard/backend.py` → 转发到 `backend_carla.py`
-  （HTTP：`GET /health`、`POST /generate`，端口 8765；payload format = 4）。
+- 后端 `diffusion-dashboard/backend_carla.py`（`backend.py` 转发到它）
+  （HTTP：`GET /health`、`GET /splits`、`GET /sample`、`POST /generate`，端口 8765；
+  payload format = 6）。
 - 前端 Next.js（3000 端口），`app/page.tsx`。
-- 功能：选样本 / checkpoint / seed；**画布上点选起终点、增删圆形障碍**；在线重建骨架图与
-  候选路径；跑真实 16 步 DDIM；逐步回放 `P_t`、`x̂₀`、椭圆、控制点；图层可切
+- 功能：选**处理缓存** / 数据划分 / 样本 / checkpoint / seed；**画布上点选起终点、增删圆形障碍**；
+  在线重建骨架图与候选路径；跑真实 DDIM；逐步回放 `P_t`、`x̂₀`、椭圆、控制点；图层可切
   （候选拓扑 / 选中 m / 冻结走廊 128 区域 + bridge / raw x̂₀ 洋红 vs safe x̂₀ 青色 /
   GT / occupancy）；右侧诊断面板显示 `π(m)`、候选数、CenterFree、ALM 违约 before→after、
   λ、内迭代、稠密验证结果。
+- **处理缓存下拉**（`engine_carla.DATASETS`）：同一批 420 个 test 样本可在两套缓存间切换 ——
+  `160k8p`（k=8，障碍各让 5 m，自由面积 0.357，train/val/test）与 `160k4p`（k=4，各让
+  2.5 m，自由面积 0.279，**仅 test**；见 `docs/CAMPAIGN_160K8P_RESULTS.md` 第 9 节）。
+  同一 `test_0167` 在两者上是两张不同的地图，所以切换缓存会作废当前样本与已生成序列；
+  `dataset` 已加入 HTTP 缓存键（format 6），切换必然 `cache_hit=false`，不会回放另一张
+  地图的旧结果。划分下拉按该缓存实际存在的目录生成，选 `160k4p` 时只提供 test。
 - 一键启动：`start_dashboard.cmd`（清 8765 端口 → 起后端 → 必要时起前端 → 打开页面）。
-- 缓存：`diffusion-dashboard/cache-carla/*.json`（派生数据，键含样本/ckpt/seed/条件/障碍）。
+- 缓存：`diffusion-dashboard/cache-carla/*.json`（派生数据，键含 dataset/样本/ckpt/seed/
+  条件/障碍/ALM 开关/步数）。
+- 注意：`diffusion-dashboard/README.md` 仍是 Maze2D 版本（见第 8 节遗留问题）。
 
 ### 6.4 测试
 

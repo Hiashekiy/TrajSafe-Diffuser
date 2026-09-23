@@ -285,23 +285,28 @@ def main():
                          "warmup_reverse_steps=1.  Warm-up is counted in "
                          "EXECUTED reverse forwards, so a short --steps schedule "
                          "must lower it too or the ALM barely runs.")
+    ap.add_argument("--processed", default=None,
+                    help="override data.processed_root (e.g. the stricter "
+                         "data/carla_processed_160k4p test cache)")
     ap.add_argument("--out", default="outputs/campaign_testset_eval.json")
     ap.add_argument("--md", default="outputs/campaign_testset_eval.md")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     data_cfg = cfg["data"]
+    processed_root = args.processed or data_cfg.get("processed_root")
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     scene_to_meter = float(data_cfg.get("scene_to_meter", 40.0))
-    ds = CarlaSplineDataset(args.split, data_cfg.get("processed_root"),
+    ds = CarlaSplineDataset(args.split, processed_root,
                             geometry_points=1280,
                             limit=(int(args.samples) if args.samples else None),
                             num_controls=num_controls(cfg),
                             num_safety_queries=num_safety_queries(cfg))
     n, chunk = len(ds), max(1, int(args.chunk))
     print("[eval] split=%s samples=%d chunk=%d steps=%d seed=%s ablation=%s "
-          "device=%s" % (args.split, n, chunk, args.steps, args.seed,
-                         args.ablation, device), flush=True)
+          "device=%s\n[eval] processed=%s" % (args.split, n, chunk, args.steps,
+                                              args.seed, args.ablation, device,
+                                              processed_root), flush=True)
     schedule = NoiseSchedule(
         cfg["diffusion"]["timesteps"],
         beta_schedule=cfg["diffusion"].get("beta_schedule", "squaredcos_cap_v2"),

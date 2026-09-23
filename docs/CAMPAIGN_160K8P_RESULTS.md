@@ -244,3 +244,156 @@ outputs/campaign_testset_eval_noalm.{json,md}  ALM 关（ablation A）的同口�
 outputs/figures/*_noalm/                  无 ALM 的规划效果图（sample.py --ablation A）
 outputs/stage_chain_status.json     三个 stage 的起止时间与 exit code
 ```
+
+---
+
+## 9. 附加：更严格的 p4 测试缓存 `data/carla_processed_160k4p`（仅 test）
+
+**动机.** `160k8p` 用 `05_erode_occupancy.py --k 8` 把障碍腐蚀 8 格（1 格 = 0.625 m，
+通道两侧各让出 5 m、合计 **+10 m**），test 自由面积从 18.5% 抬到 35.7%。上表里所有
+模型都是在这个"宽走廊"上评估的，所以"碰撞 2/420"可能只是几何太宽松。为了看模型在
+**更紧的真几何**下是否仍然安全，额外用 `--k 4`（两侧各 2.5 m、合计 **+5 m**）生成
+一套**只含 test** 的缓存，其余流程与 `160k8p` 完全一致（同一个
+`configs/config_160k8p.yaml`，走廊配置逐字段相同 —— 已核对，与
+`160k8p/alm_constraints_report.json` 的 `corridor_cfg` 完全相等）。
+
+**构建**（`scripts/build_k4p_test.sh`，实测 ~4 分钟 / 48 MB）：
+
+```bash
+python scripts/data/carla_full/05_erode_occupancy.py     --source data/carla_processed_160 \
+    --out data/carla_processed_160k4p --k 4 --border-mode protect --splits test   # 0.6 s
+python scripts/data/carla/01_build_candidates.py         --processed data/carla_processed_160k4p \
+    --config configs/config_160k8p.yaml --splits test                             # 8.4 s
+python scripts/data/carla/02_build_ellipse_labels.py     --processed data/carla_processed_160k4p \
+    --config configs/config_160k8p.yaml --splits test                             # 172 s
+python scripts/data/carla_full/04_build_alm_constraints.py --processed data/carla_processed_160k4p \
+    --config configs/config_160k8p.yaml --splits test                             # 51 s
+python scripts/data/carla/03_validate_processed.py       --processed data/carla_processed_160k4p \
+    --config configs/config_160k8p.yaml --splits test                             # VALID=True, 0 error
+```
+
+**test（420 样本）逐缓存对比** —— 由 `scripts/check_k4p_cache.py` 实测：
+
+| 缓存 | 自由面积 mean (min) | 直线起终点碰撞 | GT 逐点自由率 | GT vs 自身走廊 可行 / max | `alm_valid` | cells/sample | `shape_valid` |
+|---|---|---|---|---|---|---|---|
+| `carla_processed_160`（原始） | 0.1854 (0.0508) | 261/420 | 1.0000 | 295/420 / 1.2222 | 0.6762 | 86.6 | 0.9949 |
+| **`..._160k4p`（本次）** | **0.2792 (0.0811)** | **234/420** | 1.0000 | 407/420 / 0.9148 | 0.9929 | 127.1 | 0.9994 |
+| `..._160k8p`（训练/评估用） | 0.3573 (0.1094) | 220/420 | 1.0000 | 406/420 / 0.8839 | 0.9905 | 126.8 | 0.9997 |
+
+（"直线碰撞" = 起点→终点 128 点直线落在障碍上的样本数；"GT vs 自身走廊" = 用**该缓存
+自己的**离线 ALM 走廊衡量的 GT 曲线最大违反量 / 可行样本数 —— 走廊本身是从 GT 路线
+提的，所以这里 GT 仍有 ~13 个样本 max≈0.9 m，是走廊拼接处的固有缝隙，k8p 上同样
+存在，不是 p4 的问题。）
+
+**结论**
+
+1. **监督信号合法**：三种缓存里 GT 逐点自由率都是 **1.0000**（GT 端点距裁剪边 ≥8.4 格，
+   而 `protect` 保证"原图自由 ⇒ 新图自由"，实测 `raw_free ⊆ k4p_free` 逐格成立），
+   所以 k4p 上 GT 依旧可行、可直接用来评估。
+2. **k4p 确实比 k8p 严格**：自由面积 0.2792 vs 0.3573，直线碰撞 234 vs 220；逐样本
+   比较 **234/420 更难、0 更容易**（直线自由率平均低 5.97 个百分点）。顺序单调：
+   raw(0.5551) < k4p(0.6451) < k8p(0.7047)。
+3. **两套缓存不是嵌套关系**：k4p 整体自由面积更小，但有 72 270 格（0.26%）在 k4p 自由、
+   在 k8p 是障碍。原因已定位：`--border-mode protect` 把外侧 **k** 格恢复成原图，k=8
+   保护 0–7 环、k=4 只保护 0–3，所以多出来的格子**全部**落在 4≤d≤7 环带内
+   （逐带计数 16300/16600/19700/19670）。远离边界（d≥8）时严格嵌套
+   （k8p 障碍 ⊆ k4p 障碍，实测 True）。这是保护规则本身的性质，不是数据错误。
+4. 两个困难样本在 k4p 上更难（直线自由率 `test_0167` 0.234、`test_0291` 0.336，
+   k8p 为 0.313 / 0.430），但它们的 GT 依旧全自由、且 100% 落在自身走廊内。
+
+**在 k4p 上评估**（无需新建 config，`--processed` 覆盖 `data.processed_root`）：
+
+```bash
+python scripts/eval_campaign_testset.py --config configs/config_160k8p.yaml \
+    --processed data/carla_processed_160k4p --split test --samples 0 --steps 4 --seed 0 \
+    --model "A_oneshot=outputs/campaign_a_oneshot/ckpt/best_task.pt" \
+    --model "B2_feedback=outputs/campaign_b2_feedback/ckpt/best_task.pt" \
+    --out outputs/eval_k4p_testset.json --md outputs/eval_k4p_testset.md
+```
+
+冒烟已验证：2 样本 / 4 步 / ALM 开 → `A_oneshot` collision 0，`OFFv=-0.0331`、隶属 1.000。
+
+**注意**：本次**只构建了 test**（train/val 未生成）。若要在 k4p 上训练，把上面的
+`--splits test` 去掉重跑（train 3850 + val 1550，按本次速率约 35–40 分钟）。
+
+### 9.1 k4p 实测（只跑了 A_oneshot，与 k8p 同口径：test 420 / 16 步 / seed 0 / ALM 开）
+
+```bash
+python scripts/eval_campaign_testset.py --config configs/config_160k8p.yaml \
+    --processed data/carla_processed_160k4p --split test --samples 0 --chunk 32 \
+    --steps 16 --seed 0 \
+    --model "A_oneshot=outputs/campaign_a_oneshot/ckpt/best_task.pt" \
+    --out outputs/eval_k4p_A_oneshot_alm.json --md outputs/eval_k4p_A_oneshot_alm.md
+```
+
+| 指标 | k8p (宽走廊) | **k4p (紧走廊)** |
+|---|---|---|
+| collision | 2/420 = 0.48% | **11/420 = 2.62%** |
+| free_rate | 0.9997 | 0.9981 |
+| curve_rmse_m | 17.50 | 17.90 |
+| 自身走廊隶属 | 0.9970 | 0.9859 |
+| max_constraint_violation | −0.0298 | **−0.0122** |
+| 离线 GT 走廊隶属 / maxviol | 0.9885 / −0.0313 | 0.9796 / −0.0090 |
+
+逐样本（`per_sample_collision`）：
+
+- **k8p 上碰撞的 167 / 291，在 k4p 上一个都没被"修好"**，而且更糟：free_rate
+  0.9551→0.9258、0.9316→0.8672；
+- **新增 9 个碰撞**：{2, 10, 189, 206, 285, 307, 313, 325, 342}，全部是**边缘擦碰**
+  （free_rate 0.84–0.998，maxviol +0.02 ~ +0.14 m）。
+
+结论：k8 腐蚀带来的宽走廊**贡献了相当一部分"安全性"**。机制是余量而不是优化失败 ——
+ALM 照常收敛（`guided=1.00`，`fb_valid=0.964`），但在紧走廊上收敛后的约束余量从
+−0.030 m 缩到 −0.012 m，几乎贴着零，于是 1 cm 级的数值余量不足就无法再兜住碰撞。
+换句话说：**"ALM 打开后 0.48%"这个数字里，有 5.5 倍是几何给的**。A_oneshot 是在 k8p 上
+训的，所以这个差值同时混着"几何更紧"和"训练/测试分布不一致"两个因素；要分开需要
+在 k4p 的 train+val 上重训（本次未构建 train/val）。
+
+### 9.2 dashboard 里切换这两套缓存
+
+`diffusion-dashboard` 的左侧面板新增「处理缓存（地图难度）」下拉（`engine_carla.DATASETS`），
+可在 `160k8p` / `160k4p` 之间切换；同一 `test_0167` 在两套缓存上是两张不同的地图，所以
+切换后样本与已生成序列都会作废。`dataset` 已加入 HTTP 缓存键与 payload（format 6，
+`backend_carla.PAYLOAD_FORMAT`），实测切缓存必然 `cache_hit=false`、同一设置重复才 `HIT`。
+`160k4p` 只有 test，划分下拉自动只提供 test。详见 `docs/PROJECT_REPORT.md` 第 6.3 节。
+
+---
+
+## 10. 附加：在「腐蚀前」数据集上重训 OneShot（RAW160_oneshot）
+
+动机：上面所有 arm 都在 k=8 的宽走廊上训。把同一个 recipe（Arm A：feedback 一步到位）
+原样搬到**未腐蚀**的 `data/carla_processed_160`（k=0，自由面积 0.185），即可把“安全性里
+有多少是几何给的”变成单变量对照。
+
+配置：`configs/config_160raw_oneshot.yaml`（base 继承 `config_160k8p.yaml`，逐 key 只差
+`data.processed_root`、`train.ckpt_dir`、`train.epochs/max_hours`）；产物全新目录
+`outputs/oneshot_raw160/`，**不覆盖**任何已有 run。65 epoch 跑满，`best_task` 在 epoch 59
+（task 12.94），用时 4662 s。
+
+同口径评测（test 420 / 16 步 / seed 0，`scripts/eval_raw160_oneshot.sh`）：
+
+| 评估地图 | ALM | collision | rmse_m | 自身走廊违约 | 走廊隶属 | guided | fb_valid |
+|---|---|---|---|---|---|---|---|
+| raw160（自己的） | 开 | **122/420 = 29.1%** | 25.03 | **+0.1028（不可行）** | 0.8867 | 0.78 | 0.619 |
+| raw160（自己的） | 关 | **219/420 = 52.1%** | 19.23 | +0.0228 | 0.7416 | — | — |
+| k8p（跨缓存） | 开 | **3/420 = 0.71%** | 18.07 | −0.0085 | 0.9958 | 0.99 | 0.960 |
+| k8p（跨缓存） | 关 | **15/420 = 3.57%** | 18.08 | −0.0315 | 0.9864 | — | — |
+| k8p（对照：A_oneshot，k8p 训练） | 开 | 2/420 = 0.48% | 17.50 | −0.0298 | 0.9970 | 1.00 | 0.964 |
+| k8p（对照：A_oneshot） | 关 | 38/420 = 9.05% | 17.38 | −0.0313 | 0.9885 | — | — |
+
+（raw160 test 的直线起终点基线：261/420 = 62% 碰撞；GT 自身 100% 自由。）
+
+结论：
+
+1. **窄地图上训练让裸预测明显更稳**：在 k8p 上关掉 ALM，RAW160 模型 3.57% vs A_oneshot
+   9.05%（好 2.5 倍）；开着 ALM 时两者同级（3 vs 2，噪声量级）。即“更难地图上训出来的
+   策略对宽地图更鲁棒”，而 ALM 需要做的修正也更少。
+2. **在窄地图自身上，当前 recipe 远远不够**：29.1%（开 ALM）/ 52.1%（关），虽然比直线
+   基线 62% 好，但离“安全”很远。
+3. **ALM 在窄地图上收敛不了**：修正后 max violation = **+0.1028**（正的 = 曲线在走廊外），
+   说明冻结走廊上的精确证书在 k=0 几何下不成立；ALM 仍把碰撞从 52.1% 降到 29.1%，但
+   它输出的是“尽力而为”的不可行解。这是为什么 raw160 训练集里只有 56.6% 的样本能建出
+   GT 走廊（k8p 是 97.8%）——同一个瓶颈。
+4. dashboard 已注册 `RAW160_oneshot:best_task/latest`（用
+   `configs/config_160raw_oneshot.yaml`），并把 `raw160` 作为第三张地图加进数据集下拉。
+

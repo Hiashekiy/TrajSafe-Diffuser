@@ -75,6 +75,17 @@ MODELS = {
         "ckpt_dir": "outputs/bspline_carla_160k8/ckpt",
         "label": "REF · 旧 160k8 best_task（跨缓存）",
     },
+    # Arm A's recipe retrained on the PRE-EROSION cache (k=0, free area 0.185):
+    # 65 epochs / 2.4 h, best_task at epoch 59.  Only the dataset differs from
+    # ``A_oneshot``, so it is the single-variable control for "how much of the
+    # safety came from the widened k=8 channels".  It needs its OWN config
+    # because that YAML points at data/carla_processed_160 (the architecture is
+    # identical to A's, so the checkpoint files are drop-in interchangeable).
+    "RAW160_oneshot": {
+        "config": "configs/config_160raw_oneshot.yaml",
+        "ckpt_dir": "outputs/oneshot_raw160/ckpt",
+        "label": "RAW160 · 腐蚀前数据集上重训的 OneShot（best_task ep59）",
+    },
 }
 # ``best`` is deliberately NOT offered for the campaign arms: their val-total
 # best (epoch 7-26) is an overfit-topology artifact, ``best_task`` is the model
@@ -86,6 +97,75 @@ CHECKPOINTS = {
     for run, spec in MODELS.items() for kind in CKPT_KINDS
 }
 DEFAULT_CONFIG = os.path.join(ROOT, "configs", "config_160k8p.yaml")
+
+# ---------------------------------------------------------------- datasets
+# The SAME 420 test samples exist on two processed caches, so the panel can show
+# how the identical sample/model/seed behaves when the free space is tighter:
+#
+#  160k8p  obstacles eroded by k=8 cells -> every channel widened by 10 m
+#          (the cache the campaign models were trained and evaluated on)
+#  160k4p  obstacles eroded by k=4 cells -> +5 m, built TEST-ONLY
+#
+# They are NOT nested near the crop border: ``--border-mode protect`` restores
+# the outer k cells from the source occupancy, so at k=8 the ring 0..7 keeps the
+# original obstacles while at k=4 it does not (72 270 cells differ, all inside
+# 4 <= d <= 7 of the edge).  Elsewhere (d >= 8) k8p is strictly more permissive.
+# Measured on test: free area 0.3573 (k8p) vs 0.2792 (k4p), straight start->goal
+# line collides in 220/420 (k8p) vs 234/420 (k4p) samples.
+DATASETS = {
+    "raw160": {
+        "root": "data/carla_processed_160",
+        "label": "raw160 · 未腐蚀（障碍不动）",
+        "note": "自由面积 0.185 · RAW160_oneshot 的训练缓存",
+    },
+    "160k8p": {
+        "root": "data/carla_processed_160k8p",
+        "label": "160k8p · 宽走廊（障碍各让 5 m）",
+        "note": "campaign 训练/评估所用缓存 · 自由面积 0.357",
+    },
+    "160k4p": {
+        "root": "data/carla_processed_160k4p",
+        "label": "160k4p · 紧走廊（障碍各让 2.5 m）",
+        "note": "更严格的地图 · 自由面积 0.279 · 仅 test",
+    },
+}
+DEFAULT_DATASET = "160k8p"
+SPLIT_ORDER = ("train", "val", "test")
+
+
+def dataset_key(dataset_id=None) -> str:
+    """Validate a dataset id (``None`` -> the default cache)."""
+    key = str(dataset_id or DEFAULT_DATASET).strip().lower()
+    if key not in DATASETS:
+        raise ValueError("未知数据集 %r（可选：%s）"
+                         % (dataset_id, ", ".join(DATASETS)))
+    return key
+
+
+def dataset_root(dataset_id=None):
+    """(id, absolute processed root) for a dataset id."""
+    key = dataset_key(dataset_id)
+    return key, os.path.abspath(os.path.join(ROOT, DATASETS[key]["root"]))
+
+
+def dataset_splits(dataset_id=None):
+    """(id, splits actually present on disk) - 160k4p ships test only, so the
+    panel must not offer train/val for it."""
+    key, root = dataset_root(dataset_id)
+    return key, tuple(name for name in SPLIT_ORDER
+                      if os.path.isdir(os.path.join(root, name)))
+
+
+def dataset_catalog():
+    """Everything the front-end needs to render the dataset selector."""
+    out = []
+    for key in DATASETS:
+        _, root = dataset_root(key)
+        _, splits = dataset_splits(key)
+        out.append({"id": key, "label": DATASETS[key]["label"],
+                    "note": DATASETS[key].get("note", ""),
+                    "root": root, "splits": list(splits)})
+    return out
 
 
 def model_config(model_id, cache={}):
@@ -116,18 +196,36 @@ ALM_STAT_KEYS = (
 
 
 class Engine:
-    def __init__(self, device, processed_root=None, config_path=None):
+    def __init__(self, device, processed_root=None, config_path=None,
+                 dataset=None):
         self.device = device
-        # ``DASH_CONFIG`` (or the default 160k8p config) decides WHICH dataset is
-        # displayed; each model still builds itself from its own YAML.
+        # ``DASH_CONFIG`` (or the default 160k8p config) decides the GEOMETRY
+        # (knots / candidates / corridor knobs) shared by every cached dataset;
+        # each model still builds itself from its own YAML.
         self.config_path = os.path.abspath(
             config_path or os.environ.get("DASH_CONFIG", DEFAULT_CONFIG))
         print("[engine] display config: %s" % self.config_path, flush=True)
         cfg = load_config(self.config_path)
         self.cfg = cfg
-        self.processed_root = os.path.abspath(
-            processed_root or cfg["data"].get("processed_root",
-                                              "data/carla_processed"))
+        # ``dataset`` selects the displayed cache per request; ``processed_root``
+        # (or DASH_DATASET) only overrides the DEFAULT dataset's root, which is
+        # what the single-dataset deployments used to pass.
+        self.dataset_id = dataset_key(
+            dataset or os.environ.get("DASH_DATASET") or DEFAULT_DATASET)
+        if processed_root:
+            self.processed_root = os.path.abspath(processed_root)
+        else:
+            _, self.processed_root = dataset_root(self.dataset_id)
+        cfg_root = cfg["data"].get("processed_root")
+        if cfg_root and os.path.abspath(cfg_root) != self.processed_root:
+            # The dataset registry - not the YAML - decides which cache is
+            # served, otherwise the selector would lie about what is displayed.
+            print("[engine] note: config data.processed_root=%s is ignored; "
+                  "dataset %s comes from the registry"
+                  % (os.path.abspath(cfg_root), self.dataset_id), flush=True)
+        print("[engine] default dataset: %s -> %s (%s)"
+              % (self.dataset_id, self.processed_root,
+                 ", ".join(dataset_splits(self.dataset_id)[1])), flush=True)
         self.geometry_points = int((cfg.get("topology") or {}).get(
             "candidate_geometry_points", 1280))
         self.cand_cfg = CandidateConfig.from_dict(cfg.get("topology") or {},
@@ -146,11 +244,31 @@ class Engine:
         self._graphs = {}
 
     # ------------------------------------------------------------------ data
-    def split_data(self, split):
-        if split not in self._splits:
-            d = os.path.join(self.processed_root, split)
+    def dataset_dir(self, dataset=None):
+        """(id, root) for one request; the default dataset honours the
+        ``processed_root`` / ``DASH_CONFIG`` override from the constructor."""
+        key = dataset_key(dataset)
+        if key == self.dataset_id:
+            return key, self.processed_root
+        return dataset_root(key)
+
+    def split_data(self, split, dataset=None):
+        """Arrays of one (dataset, split), cached per pair.
+
+        ``160k4p`` only ships ``test``; asking for train/val raises a readable
+        error instead of an np.load traceback.
+        """
+        key, root = self.dataset_dir(dataset)
+        cache_key = (key, str(split))
+        if cache_key not in self._splits:
+            d = os.path.join(root, str(split))
+            if not os.path.isdir(d):
+                raise FileNotFoundError(
+                    "数据集 %s 没有 %r 划分（%s）; 可用: %s"
+                    % (key, str(split), d, ", ".join(dataset_splits(key)[1])))
             control_gt = os.path.join(d, "control_gt.npy")
-            self._splits[split] = {
+            self._splits[cache_key] = {
+                "dataset": key,
                 "conditions": np.load(os.path.join(d, "conditions.npy")),
                 "curve_gt": np.load(os.path.join(d, "curve_gt.npy")),
                 "occupancy": np.load(os.path.join(d, "occupancy.npy"),
@@ -158,17 +276,17 @@ class Engine:
                 "control_gt": (np.load(control_gt, mmap_mode="r")
                                if os.path.exists(control_gt) else None),
             }
-        return self._splits[split]
+        return self._splits[cache_key]
 
-    def split_control_gt(self, split, index):
+    def split_control_gt(self, split, index, dataset=None):
         """The dataset's 32-control GT polygon for one sample (may be absent)."""
-        data = self.split_data(split)
+        data = self.split_data(split, dataset)
         if data["control_gt"] is None:
             return None
         return np.asarray(data["control_gt"][int(index)], dtype=np.float32)
 
-    def sample_arrays(self, split, index):
-        data = self.split_data(split)
+    def sample_arrays(self, split, index, dataset=None):
+        data = self.split_data(split, dataset)
         i = int(index)
         return (np.asarray(data["occupancy"][i], dtype=np.float32),
                 np.asarray(data["conditions"][i], dtype=np.float32),
@@ -357,12 +475,14 @@ class Engine:
     # -------------------------------------------------------------- generate
     def generate(self, sample_key, split, index, occupancy, condition, seed,
                  model_id="best_task", verify_regions=False, alm_enabled=True,
-                 ablation=None, steps=None, times=None):
+                 ablation=None, steps=None, times=None, dataset=None):
         model, epoch = self.get_model(model_id)
+        dkey = dataset_key(dataset)
         condition = np.asarray(condition, dtype=np.float32).reshape(2, 2)
         occupancy = np.asarray(occupancy, dtype=np.float32)
         graph = self.get_graph(
-            "%s:%d:%s" % (split, int(index), self.occupancy_key(occupancy)),
+            "%s:%s:%d:%s" % (dkey, split, int(index),
+                             self.occupancy_key(occupancy)),
             occupancy)
         cands = generate_candidates(graph, condition[0], condition[1],
                                     self.cand_cfg)
@@ -471,6 +591,9 @@ class Engine:
         return {
             "sample_key": sample_key, "model_id": model_id, "seed": int(seed),
             "cache_hit": False, "condition": condition.tolist(),
+            "dataset": dkey,
+            "dataset_label": DATASETS[dkey]["label"],
+            "dataset_root": self.dataset_dir(dkey)[1],
             "state_labels": labels,
             # reverse forwards actually executed (t >= 0 frames; the trailing
             # ``-1`` frame is the terminal x0), plus the schedule they sample
