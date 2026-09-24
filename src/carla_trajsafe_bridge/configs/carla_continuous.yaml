@@ -1,0 +1,108 @@
+# Long-distance CARLA rolling planner.  Sampling is deliberately fixed at 4
+# reverse forwards even though the model was trained with a 16-step schedule.
+carla:
+  host: 127.0.0.1
+  port: 2000
+  town: Town03_Opt
+  fixed_dt: 0.05
+  # Keep simulated seconds aligned with wall seconds so asynchronous planning
+  # deadlines have their intended physical meaning.
+  real_time_pacing: true
+  timeout_s: 120.0
+  reload_world: true
+  ego_blueprint: vehicle.audi.tt
+  spawn_z_offset_m: 0.30
+  max_sim_seconds: 300.0
+  python_vendor: E:/CarDataSample/tools/carla/_vendor
+  # Contains the top-level ``agents`` package used by GlobalRoutePlanner.
+  python_agents: E:/CARLA_0.9.16/PythonAPI/carla
+
+route:
+  start_spawn_index: 0
+  # Town03 validation route: 201.8 m. Set -1 to select the farthest spawn
+  # (about 715 m from spawn 0) after validating the shorter route first.
+  goal_spawn_index: 200
+  sampling_resolution_m: 2.0
+
+planner:
+  model_config: configs/config_160k8p.yaml
+  processed_root: data/carla_processed_160k8p
+  model_id: A_oneshot:best_task
+  device: cuda
+  diffusion_seed: 43
+  # Each attempt still runs exactly four reverse forwards. Retry only when a
+  # candidate fails a hard gate such as vehicle curvature.
+  max_seed_attempts: 4
+  # Ignore only the one-sided numerical derivative layer at both spline ends.
+  # Intermediate plans execute only through replan_every + handoff_ahead.
+  # Validate physical curvature on that executable prefix, not on the local
+  # B-spline endpoint that is replaced before the vehicle reaches it.
+  curvature_endpoint_ignore_m: 0.6
+  curvature_validation_horizon_m: 50.0
+  min_corridor_membership: 0.95
+  reverse_steps: 4
+  # The real, un-eroded road map needs two warm-up forwards for corridor
+  # activation; compensate with stronger ALM solves in the two guided forwards.
+  four_step_warmup_reverse_steps: 2
+  alm_activation_inner_steps: 20
+  alm_inner_steps: 20
+  alm_max_curve_step_scene: 0.05
+  require_guided: true
+  window_size_m: 160.0
+  window_margin_m: 12.0
+  lookahead_m: 90.0
+  lane_sample_spacing_m: 1.5
+  # Deployment uses the physical CARLA road boundary.  The k=8 training cache
+  # expands free space and is not safe enough for body-footprint validation.
+  obstacle_erosion_cells: 0
+  dynamic_obstacle_margin_m: 0.30
+  ego_length_m: 4.18
+  ego_width_m: 1.99
+  required_body_free_rate: 0.99
+  corridor_region:
+    # 1 scene unit = 80 m, so 0.02 = 1.6 m.
+    safety_margin: 0.020
+  replan_every_m: 25.0
+  replan_remaining_m: 45.0
+  handoff_ahead_m: 15.0
+  passed_handoff_tolerance_m: 2.0
+  switch_lead_m: 0.8
+  max_handoff_heading_deg: 12.0
+  route_max_error_m: 12.0
+  final_radius_m: 3.0
+
+controller:
+  wheelbase_m: 2.641
+  steer_sign: 1.0
+  lookahead_base_m: 2.0
+  lookahead_speed_gain: 0.45
+  lookahead_min_m: 2.5
+  lookahead_max_m: 5.0
+  max_steer_rad: 1.2217
+  heading_gain: 0.25
+  path_spacing_m: 0.20
+  max_speed_mps: 3.0
+  min_speed_mps: 0.8
+  a_lat_max_mps2: 1.0
+  a_brake_mps2: 1.5
+  stop_radius_m: 0.8
+  stop_speed_mps: 0.3
+  creep_accel_mps2: 0.9
+  accel_min_mps2: -4.0
+  accel_max_mps2: 2.5
+  jerk_mps3: 3.0
+  steer_speed_rad_s: 1.0
+  tracking_abort_m: 2.0
+  pid: {kp: 1.2, ki: 0.08, kd: 0.05}
+
+video:
+  enabled: true
+  filename: trajsafe_continuous.mp4
+  width: 1024
+  height: 1024
+  fps: 10
+  camera_height_m: 45.0
+  fov: 90.0
+
+output:
+  dir: outputs/carla_continuous

@@ -1,0 +1,201 @@
+{
+  "mode": "all",
+  "config": "E:\\CarDataSample\\Neural-IRISDiffuser\\configs\\carla_demo.yaml",
+  "ablation": "none",
+  "out_dir": "E:\\CarDataSample\\outputs\\carla_t0056",
+  "acceptance": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "guided",
+        "ok": true,
+        "value": true,
+        "limit": "True"
+      },
+      {
+        "name": "alm_status_guided",
+        "ok": true,
+        "value": "guided",
+        "limit": "guided"
+      },
+      {
+        "name": "final_collision_false",
+        "ok": true,
+        "value": false,
+        "limit": "False"
+      },
+      {
+        "name": "endpoint_error",
+        "ok": true,
+        "value": 0.0,
+        "limit": "<= 1e-3 scene"
+      },
+      {
+        "name": "max_constraint_violation",
+        "ok": true,
+        "value": 0.0009235590696334839,
+        "limit": "<= 5e-3 scene"
+      },
+      {
+        "name": "corridor_membership",
+        "ok": true,
+        "value": 0.994140625,
+        "limit": ">= 0.99"
+      },
+      {
+        "name": "dense_curve_free",
+        "ok": true,
+        "value": true,
+        "limit": "True"
+      },
+      {
+        "name": "curvature_within_vehicle",
+        "ok": true,
+        "value": 0.65196,
+        "limit": "<= 1.04022 1/m"
+      },
+      {
+        "name": "obstacle_body_gap",
+        "ok": true,
+        "value": 2.07,
+        "limit": ">= 0.30 m"
+      },
+      {
+        "name": "body_in_drivable_area",
+        "ok": true,
+        "value": 0.9935,
+        "limit": ">= 0.99"
+      }
+    ],
+    "failed": []
+  },
+  "plan": {
+    "npz": "E:/CarDataSample/outputs/carla_t0056\\plan_test_0056.npz",
+    "json": "E:/CarDataSample/outputs/carla_t0056\\plan_test_0056.json",
+    "planning_ms": 2916.6167999974277,
+    "validation": {
+      "final_collision": false,
+      "final_free_rate": 1.0,
+      "endpoint_error": 0.0,
+      "dense_points": 512,
+      "final_max_constraint_violation": 0.0009235590696334839,
+      "final_constraint_feasible": true,
+      "final_corridor_membership_rate": 0.994140625,
+      "alm_status": "guided",
+      "guided": true,
+      "selected_idx": 0,
+      "curve_in_free": true,
+      "raw_in_free": false,
+      "free_rate_curve": 1.0
+    },
+    "quality": {
+      "candidate_mask": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "num_candidates": 4,
+      "candidate_count_valid": 4,
+      "completion_rate": 0.0,
+      "length_m": 69.161174502242,
+      "endpoint_scene_error": 8.267076180277877e-09,
+      "endpoint_world_error_m": 3.3068301752178276e-07,
+      "max_abs_curvature": 0.6519574659895004,
+      "min_obstacle_body_gap_m": 2.0696772109835138,
+      "body_free_rate": 0.9934971098265896,
+      "body_penetration_m": 0.6274510025978088
+    }
+  },
+  "drive": {
+    "sample": {
+      "key": "test_0056",
+      "split": "test",
+      "index": 56,
+      "dataset_sample_id": 1252,
+      "episode_id": 70,
+      "town": "Town03",
+      "anchor_raw_index": 104,
+      "seed": 43,
+      "model_id": "best_task",
+      "condition_scene": [
+        [
+          -0.75,
+          0.0
+        ],
+        [
+          0.1353,
+          0.8473
+        ]
+      ]
+    },
+    "path": {
+      "points": 346,
+      "length_m": 69.161,
+      "spacing_m": 0.2005,
+      "v_ref_max": 2.0,
+      "v_ref_min_moving": 0.0,
+      "curvature_max": 0.64668
+    },
+    "carla": {
+      "host": "127.0.0.1",
+      "port": 2000,
+      "town": "Town03_Opt",
+      "fixed_dt": 0.05
+    },
+    "steer_probe": {
+      "steer_sign": 1.0,
+      "usable": true,
+      "probe_throttle": 0.55,
+      "lateral_m": 0.16693770685243908,
+      "travelled_m": 1.0550962849114829,
+      "probe_steer_rad": 0.2,
+      "yaw_start_deg": -0.14886474609375,
+      "yaw_end_deg": 5.044032573699951
+    },
+    "steer_sign": 1.0,
+    "video": {
+      "path": "E:/CarDataSample/outputs/carla_t0056\\trajsafe_guided.mp4",
+      "errors": [],
+      "visible_width_m": 55.99999999999999,
+      "pixels_per_m": 18.28571428571429
+    },
+    "status": "arrived",
+    "wall_seconds": 45.29,
+    "frames": 693,
+    "sim_seconds": 34.65,
+    "final_pose": {
+      "x": 167.54486083984375,
+      "y": 95.85457611083984,
+      "yaw_deg": 83.4312515258789
+    },
+    "goal_world": [
+      167.5853100267397,
+      96.2872057868978
+    ],
+    "final_distance_to_goal_m": 0.4345164822265738,
+    "cross_track": {
+      "rms_m": 0.2759340680650498,
+      "max_abs_m": 0.7370015758672765
+    },
+    "speed": {
+      "mean_mps": 1.9431427817113633,
+      "max_mps": 2.628711835883839
+    },
+    "collisions": [],
+    "mode": "guided",
+    "alm_status": "guided",
+    "plan_off_road_points": 0,
+    "plan_free_rate": 1.0,
+    "plan_min_obstacle_body_gap_m": 2.0696772109835138,
+    "video_frames": 351,
+    "spawn_transform": {
+      "x": 132.0853729248047,
+      "y": 62.487327575683594,
+      "z": 0.30000001192092896,
+      "yaw_deg": -0.14886474609375
+    },
+    "trajectory_csv": "E:/CarDataSample/outputs/carla_t0056\\trajectory_guided.csv",
+    "overlay_png": "E:/CarDataSample/outputs/carla_t0056\\plan_vs_executed_guided.png"
+  }
+}

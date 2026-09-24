@@ -1,0 +1,42 @@
+# ============================================================
+# config_160k4p_c48_oneshot —— 48 控制点 B 样条，在 k=4 边界保护腐蚀缓存上重训
+#
+# 与 config_160k4p_oneshot.yaml（C=32，同一 k=4 缓存、同一 recipe、同样 200 轮）
+# 构成「控制点数量」的严格单变量对照：几何/损失/feedback/alm/corridor 全部继承，
+# 只改 model.num_controls / bspline.num_controls 与数据根、输出目录。
+#
+#   C     ckpt                  数据根
+#   32    outputs/oneshot_k4p        data/carla_processed_160k4p
+#   48    outputs/oneshot_k4p_c48    data/carla_processed_160k4p_c48   <- 本配置
+#
+# 为什么 C 变了必须换数据根（而不是原地改）：
+#   control_gt.npy 是**离线数据**（用与网络解码同一个端点约束最小二乘投影，从
+#   trajectory_128 拟合出的控制多边形标签）。数据加载器在 config 的
+#   num_controls 与 control_gt.npy 形状不一致时会直接报错退出，所以 C=48 需要
+#   一份重新拟合过控制点标签的缓存。C 是 C 之外**唯一**受影响的派生标签：ALM
+#   约束包按 model.num_safety_queries(=128) 个走廊单元存储，候选/椭圆标签只依赖
+#   occupancy 与 conditions，occupancy 更与 C 无关 —— 所以新缓存用
+#   scripts/data/carla_full/06_refit_controls.py 从 curve_gt.npy 重拟合
+#   control_gt，其余数组逐字节复制复用（保证单变量）。
+#
+# 提示：control_gt 的拟合 RMSE 会随 C 增大而下降（自由度更多），这是本实验的
+# 自变量本身；若要判断「48 点是否更贴合真实轨迹」，直接看
+# data/carla_processed_160k4p_c48/refit_controls_report.json 里两个 C 的
+# decode RMSE 对比。
+# ============================================================
+base: "configs/config_160k4p_oneshot.yaml"
+
+data:
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed_160k4p_c48"
+
+# The ONE number of control points: read by src/utils/config.num_controls() from
+# BOTH keys (they are refused to disagree).  bspline.knots="auto" regenerates the
+# clamped uniform knot vector for C=48, so no knot file has to be rebuilt.
+model:
+  num_controls: 48                     # C: cubic B-spline control polygon
+
+bspline:
+  num_controls: 48
+
+train:
+  ckpt_dir: "outputs/oneshot_k4p_c48/ckpt"

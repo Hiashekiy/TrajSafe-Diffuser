@@ -1,0 +1,241 @@
+{
+  "mode": "all",
+  "config": "E:\\CarDataSample\\Neural-IRISDiffuser\\configs\\carla_demo.yaml",
+  "ablation": "raw",
+  "out_dir": "E:\\CarDataSample\\outputs\\carla_t0056",
+  "acceptance": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "guided",
+        "ok": false,
+        "value": false,
+        "limit": "True"
+      },
+      {
+        "name": "alm_status_guided",
+        "ok": false,
+        "value": "disabled",
+        "limit": "guided"
+      },
+      {
+        "name": "final_collision_false",
+        "ok": false,
+        "value": true,
+        "limit": "False"
+      },
+      {
+        "name": "endpoint_error",
+        "ok": true,
+        "value": 0.0,
+        "limit": "<= 1e-3 scene"
+      },
+      {
+        "name": "max_constraint_violation",
+        "ok": false,
+        "value": null,
+        "limit": "<= 5e-3 scene"
+      },
+      {
+        "name": "corridor_membership",
+        "ok": false,
+        "value": null,
+        "limit": ">= 0.99"
+      },
+      {
+        "name": "dense_curve_free",
+        "ok": false,
+        "value": false,
+        "limit": "True"
+      },
+      {
+        "name": "curvature_within_vehicle",
+        "ok": true,
+        "value": 0.11323,
+        "limit": "<= 1.04022 1/m"
+      },
+      {
+        "name": "obstacle_body_gap",
+        "ok": false,
+        "value": 0.0,
+        "limit": ">= 0.30 m"
+      },
+      {
+        "name": "body_in_drivable_area",
+        "ok": false,
+        "value": 0.5777,
+        "limit": ">= 0.99"
+      }
+    ],
+    "failed": [
+      "guided",
+      "alm_status_guided",
+      "final_collision_false",
+      "max_constraint_violation",
+      "corridor_membership",
+      "dense_curve_free",
+      "obstacle_body_gap",
+      "body_in_drivable_area"
+    ]
+  },
+  "plan": {
+    "npz": "E:/CarDataSample/outputs/carla_t0056\\plan_test_0056_raw.npz",
+    "json": "E:/CarDataSample/outputs/carla_t0056\\plan_test_0056_raw.json",
+    "planning_ms": 1493.1290000022273,
+    "validation": {
+      "final_collision": true,
+      "final_free_rate": 0.58984375,
+      "endpoint_error": 0.0,
+      "dense_points": 512,
+      "final_max_constraint_violation": null,
+      "final_constraint_feasible": null,
+      "final_corridor_membership_rate": null,
+      "alm_status": "disabled",
+      "guided": false,
+      "selected_idx": 1,
+      "curve_in_free": false,
+      "raw_in_free": false,
+      "free_rate_curve": 0.5859375
+    },
+    "quality": {
+      "candidate_mask": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "num_candidates": 4,
+      "candidate_count_valid": 4,
+      "completion_rate": 0.0,
+      "length_m": 59.188700139062,
+      "endpoint_scene_error": 8.267076180277877e-09,
+      "endpoint_world_error_m": 3.3068301752178276e-07,
+      "max_abs_curvature": 0.11322794217511263,
+      "min_obstacle_body_gap_m": 0.0,
+      "body_free_rate": 0.5777027027027027,
+      "body_penetration_m": 4.701019287109375
+    }
+  },
+  "drive": {
+    "sample": {
+      "key": "test_0056",
+      "split": "test",
+      "index": 56,
+      "dataset_sample_id": 1252,
+      "episode_id": 70,
+      "town": "Town03",
+      "anchor_raw_index": 104,
+      "seed": 43,
+      "model_id": "best_task",
+      "condition_scene": [
+        [
+          -0.75,
+          0.0
+        ],
+        [
+          0.1353,
+          0.8473
+        ]
+      ]
+    },
+    "path": {
+      "points": 296,
+      "length_m": 59.189,
+      "spacing_m": 0.2006,
+      "v_ref_max": 2.0,
+      "v_ref_min_moving": 0.0,
+      "curvature_max": 0.1132
+    },
+    "carla": {
+      "host": "127.0.0.1",
+      "port": 2000,
+      "town": "Town03_Opt",
+      "fixed_dt": 0.05
+    },
+    "steer_probe": {
+      "steer_sign": 1.0,
+      "usable": true,
+      "probe_throttle": 0.55,
+      "lateral_m": 0.16693770685243908,
+      "travelled_m": 1.0550962849114829,
+      "probe_steer_rad": 0.2,
+      "yaw_start_deg": -0.14886474609375,
+      "yaw_end_deg": 5.044032573699951
+    },
+    "steer_sign": 1.0,
+    "video": {
+      "path": "E:/CarDataSample/outputs/carla_t0056\\trajsafe_raw.mp4",
+      "errors": [],
+      "visible_width_m": 55.99999999999999,
+      "pixels_per_m": 18.28571428571429
+    },
+    "status": "collision",
+    "wall_seconds": 14.17,
+    "frames": 422,
+    "sim_seconds": 21.1,
+    "final_pose": {
+      "x": 163.8770294189453,
+      "y": 78.92145538330078,
+      "yaw_deg": 74.98438262939453
+    },
+    "goal_world": [
+      167.5853100267397,
+      96.2872057868978
+    ],
+    "final_distance_to_goal_m": 17.75726983931297,
+    "cross_track": {
+      "rms_m": 0.1888330924097148,
+      "max_abs_m": 0.39478197677615967
+    },
+    "speed": {
+      "mean_mps": 1.9400270965586401,
+      "max_mps": 2.4783845478706468
+    },
+    "collisions": [
+      {
+        "frame": 330823,
+        "other": "vehicle.mini.cooper_s",
+        "impulse": 7345.486224057263
+      },
+      {
+        "frame": 330824,
+        "other": "vehicle.mini.cooper_s",
+        "impulse": 25198.89983958531
+      },
+      {
+        "frame": 330825,
+        "other": "vehicle.mini.cooper_s",
+        "impulse": 1843.2424704455425
+      },
+      {
+        "frame": 330826,
+        "other": "vehicle.mini.cooper_s",
+        "impulse": 9943.357284331574
+      },
+      {
+        "frame": 330827,
+        "other": "vehicle.mini.cooper_s",
+        "impulse": 8408.979309321792
+      },
+      {
+        "frame": 330828,
+        "other": "vehicle.mini.cooper_s",
+        "impulse": 5034.8409879582405
+      }
+    ],
+    "mode": "raw",
+    "alm_status": "disabled",
+    "plan_off_road_points": 53,
+    "plan_free_rate": 0.5859375,
+    "plan_min_obstacle_body_gap_m": 0.0,
+    "video_frames": 215,
+    "spawn_transform": {
+      "x": 132.0853729248047,
+      "y": 62.487327575683594,
+      "z": 0.30000001192092896,
+      "yaw_deg": -0.14886474609375
+    },
+    "trajectory_csv": "E:/CarDataSample/outputs/carla_t0056\\trajectory_raw.csv",
+    "overlay_png": "E:/CarDataSample/outputs/carla_t0056\\plan_vs_executed_raw.png"
+  }
+}

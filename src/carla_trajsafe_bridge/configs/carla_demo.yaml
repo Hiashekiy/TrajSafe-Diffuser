@@ -1,0 +1,137 @@
+# TrajSafe-Diffuser -> CARLA closed-loop demo (sample test_0056)
+carla_bridge:
+  dataset_root: E:/CarDataSample/data/carla_v1
+  processed_root: E:/CarDataSample/Neural-IRISDiffuser/data/carla_processed
+
+carla:
+  host: 127.0.0.1
+  port: 2000
+  # CARLA's packaged build crashes with 'Shader compilation failures are Fatal'
+  # when loading the non-optimised Town03 at run time; Town03_Opt shares the
+  # exact same OpenDRIVE road geometry, so the dataset anchors stay valid.
+  town: Town03_Opt
+  fixed_dt: 0.05
+  synchronous: true
+  timeout_s: 120.0
+  reload_world: true       # start every run from a clean, identical world
+  ego_blueprint: vehicle.audi.tt
+  spawn_z_offset_m: 0.30
+  max_sim_seconds: 90.0
+  python_vendor: E:/CarDataSample/tools/carla/_vendor
+  python_agents: E:/CARLA_0.9.16/PythonAPI/carla
+
+sample:
+  key: test_0056
+  split: test
+  index: 56
+  dataset_sample_id: 1252
+  episode_id: 70
+  town: Town03
+  anchor_raw_index: 104
+  seed: 43
+  model_id: best_task
+  # local (35.4, 33.9) m -> scene; the goal the operator circled on the frame
+  condition_scene: [[-0.75, 0.0], [0.1353, 0.8473]]
+
+scenario:
+  # A car parked at the fork, on the left kerb of the side road the plan turns
+  # into.  It is burned into the occupancy (Minkowski-expanded) BEFORE the
+  # single planning call, so the frozen plan already avoids it.
+  obstacle_margin_m: 0.20
+  ego_length_m: 4.18      # used for the body-in-drivable-area acceptance check
+  ego_width_m: 1.99
+  obstacles:
+    - name: fork_parked_car
+      blueprint: vehicle.mini.cooper_s
+      x_local_m: 34.0        # metres ahead of the anchor
+      y_local_m: 18.0        # metres to the anchor right (up the side road)
+      yaw_offset_deg: 90.0   # aligned with the side road, i.e. across ego heading
+      length_m: 3.85
+      width_m: 1.73
+
+planner:
+  # Current deployment model: 160 m world frame and the full 16-step schedule.
+  backend: latest_160m
+  model_config: configs/config_160k8p.yaml
+  processed_root: data/carla_processed_160k8p
+  reverse_steps: 16
+  max_seed_attempts: 4
+  window_size_m: 160.0
+  window_margin_m: 12.0
+  lookahead_m: 90.0
+  lane_sample_spacing_m: 1.5
+  obstacle_erosion_cells: 0
+  dynamic_obstacle_margin_m: 0.30
+  ego_length_m: 4.18
+  ego_width_m: 1.99
+  required_body_free_rate: 0.99
+  min_corridor_membership: 0.95
+  route_max_error_m: 12.0
+  curvature_endpoint_ignore_m: 0.6
+  curvature_validation_horizon_m: 90.0
+  route_sampling_resolution_m: 2.0
+  corridor_region:
+    safety_margin: 0.020
+  checkpoint: outputs/bspline_carla/ckpt/best_task.pt
+  model_id: A_oneshot:best_task
+  diffusion_seed: 43
+  device: cuda
+  alm_enabled: true
+  require_guided: true
+  occupancy_source: live_160m
+
+controller:
+  type: pure_pursuit_pid
+  # measured from carla.WheelPhysicsControl: wheel positions 13332.5 / 13068.4 cm
+  # -> wheelbase 2.641 m, max_steer_angle 70.0 DEG = 1.2217 rad
+  # -> min turning radius 0.961 m, hard curvature limit 1.040 1/m
+  wheelbase_m: 2.641
+  steer_sign: 0.0          # 0 = measure it at run time with a probe
+  default_steer_sign: 1.0  # fallback: CARLA is left-handed, +steer turns right
+  probe_steer_rad: 0.2
+  probe_speed_mps: 1.5
+  probe_ticks: 30
+  lookahead_base_m: 1.8
+  lookahead_speed_gain: 0.45
+  lookahead_min_m: 2.0
+  lookahead_max_m: 4.0
+  max_steer_rad: 1.2217
+  heading_gain: 0.25
+  path_spacing_m: 0.20
+  max_speed_mps: 2.0
+  min_speed_mps: 0.7
+  a_lat_max_mps2: 1.0
+  a_brake_mps2: 1.5
+  stop_radius_m: 0.6
+  stop_speed_mps: 0.3
+  creep_accel_mps2: 0.9
+  accel_min_mps2: -4.0
+  accel_max_mps2: 2.5
+  jerk_mps3: 3.0
+  steer_speed_rad_s: 1.0
+  longitudinal_mode: speed_pid    # speed_pid | accel
+  tracking_abort_m: 1.2
+  pid: {kp: 1.2, ki: 0.08, kd: 0.05}
+
+video:
+  enabled: true
+  # square, cropped to exactly the action: 56 m x 56 m at 18.3 px/m.
+  # image width follows ego-local +y and image height follows ego-local +x.
+  width: 1024
+  height: 1024
+  fps: 10
+  camera_height_m: 28.0
+  fov: 90.0
+  world_up: true          # north-up map view instead of a car-aligned view
+  fixed_center: true      # one static camera for the whole run
+  center_local_m: [20.0, 19.0]  # local x in [-8, 48], local y in [-9, 47]
+  overlay: true
+  show_occupancy: true     # tint the drivable area (green) vs kerb/grass (red)
+  show_corridor: true
+  show_raw: false
+  show_ellipses: false     # ellipses are not drawn any more
+  show_candidates: false
+  show_executed: true
+
+output:
+  dir: outputs/carla_latest_fixed
