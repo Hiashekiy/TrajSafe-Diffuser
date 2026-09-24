@@ -1,0 +1,30 @@
+# ============================================================
+# config_160k4p_oneshot —— Arm A（一步到位 feedback）在 k=4 边界保护数据集上重训
+#
+# 与 config_160k8p.yaml（campaign A_oneshot 的 recipe）只差数据集与输出目录，
+# 三个数据点因此构成一条"宽容度"曲线：
+#
+#   缓存                     自由面积(test)  直线起终点碰撞   GT 走廊覆盖(train)
+#   data/carla_processed_160     0.1854        261/420          0.566    <- RAW160_oneshot
+#   data/carla_processed_160k4p  0.2792        234/420          ~0.95?   <- 本配置
+#   data/carla_processed_160k8p  0.3573        220/420          0.978    <- A_oneshot
+#
+# 几何/损失/feedback/alm/corridor 全部继承 config_160k8p.yaml，只换数据集，
+# 因此与 A_oneshot / RAW160_oneshot 都是单变量对照。
+#
+# 注意 k4p 的边界保护规则：--border-mode protect 会把外侧 k 格恢复成原图，
+# 所以 k=4 保护 0..3 环、k=8 保护 0..7；两套缓存在该环带内不是嵌套关系
+# （详见 docs/CAMPAIGN_160K8P_RESULTS.md 第 9 节）。
+base: "configs/config_160k8p.yaml"
+
+data:
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed_160k4p"
+
+train:
+  # 200 epoch：依据参考 run（outputs/bspline_carla_160k8，同一 recipe 的 k=8 版）
+  # 的 best_task 出现在 epoch 175，且 65 epoch 的 RAW160_oneshot 也是在 epoch 59
+  # （接近末端）才刷出最好任务指标 —— 65 明显不够。这里让 epoch 数（而非墙钟）
+  # 成为约束：200 x ~150-180 s/epoch ≈ 8-10 h。
+  epochs: 200
+  max_hours: 11.0             # 只当保险丝（跨重启累计墙钟）
+  ckpt_dir: "outputs/oneshot_k4p/ckpt"

@@ -60,6 +60,8 @@ const models = [
   { id: 'REF_160k8:latest', name: 'REF · 旧 160k8 latest(ep264)', source: 'bspline_carla_160k8 · 最后状态' },
   { id: 'RAW160_oneshot:best_task', name: 'RAW160 · 腐蚀前数据集重训 · best_task(ep59)', source: 'oneshot_raw160 · 只换数据集（k=0），与 A 单变量对照' },
   { id: 'RAW160_oneshot:latest', name: 'RAW160 · 腐蚀前数据集重训 · latest(ep64)', source: 'oneshot_raw160 · 最后状态' },
+  { id: 'K4P_oneshot:best_task', name: 'K4P · k=4 腐蚀数据集重训 · best_task(ep98)', source: 'oneshot_k4p · 200 ep，自由面积 0.279 的自训模型（5/420）' },
+  { id: 'K4P_oneshot:latest', name: 'K4P · k=4 腐蚀数据集重训 · latest(ep200)', source: 'oneshot_k4p · 最后状态（拓扑项已过拟合，不建议用）' },
 ];
 const mazeNames: Record<string, string> = { umaze: 'U-Maze', medium: 'Medium', large: 'Large' };
 const mazeLabel = (key: string): string => mazeNames[key] ?? key.replace('carla_', 'CARLA #');

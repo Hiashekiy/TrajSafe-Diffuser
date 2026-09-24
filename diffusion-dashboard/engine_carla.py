@@ -86,6 +86,18 @@ MODELS = {
         "ckpt_dir": "outputs/oneshot_raw160/ckpt",
         "label": "RAW160 · 腐蚀前数据集上重训的 OneShot（best_task ep59）",
     },
+    # Same recipe again, this time on the k=4 eroded build
+    # (data/carla_processed_160k4p, free area 0.279, all three splits).
+    # 200 epochs / 5.7 h;
+    # ``best_task`` sits at epoch 98 (the val topology term is overfit from
+    # ~epoch 20 on, so the last epoch is NOT the model to use).
+    # On its own eroded test split: 5/420 collisions with ALM (viol -0.018),
+    # 50/420 without -- see docs/CAMPAIGN_160K8P_RESULTS.md §11.
+    "K4P_oneshot": {
+        "config": "configs/config_160k4p_oneshot.yaml",
+        "ckpt_dir": "outputs/oneshot_k4p/ckpt",
+        "label": "K4P · k=4 腐蚀数据集上重训的 OneShot（best_task ep98）",
+    },
 }
 # ``best`` is deliberately NOT offered for the campaign arms: their val-total
 # best (epoch 7-26) is an overfit-topology artifact, ``best_task`` is the model
@@ -99,12 +111,14 @@ CHECKPOINTS = {
 DEFAULT_CONFIG = os.path.join(ROOT, "configs", "config_160k8p.yaml")
 
 # ---------------------------------------------------------------- datasets
-# The SAME 420 test samples exist on two processed caches, so the panel can show
-# how the identical sample/model/seed behaves when the free space is tighter:
+# The SAME 420 test samples exist on three processed caches, so the panel can show
+# how the identical sample/model/seed behaves when the free space changes:
 #
+#  raw160  the pre-erosion cache (k=0, free area 0.185)
 #  160k8p  obstacles eroded by k=8 cells -> every channel widened by 10 m
 #          (the cache the campaign models were trained and evaluated on)
-#  160k4p  obstacles eroded by k=4 cells -> +5 m, built TEST-ONLY
+#  160k4p  obstacles eroded by k=4 cells -> +5 m (free area 0.279); originally
+#          built test-only for §9, later completed to train/val/test for §11
 #
 # They are NOT nested near the crop border: ``--border-mode protect`` restores
 # the outer k cells from the source occupancy, so at k=8 the ring 0..7 keeps the

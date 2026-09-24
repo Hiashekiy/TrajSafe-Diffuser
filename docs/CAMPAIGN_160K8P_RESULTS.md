@@ -397,3 +397,71 @@ ALM 照常收敛（`guided=1.00`，`fb_valid=0.964`），但在紧走廊上收�
 4. dashboard 已注册 `RAW160_oneshot:best_task/latest`（用
    `configs/config_160raw_oneshot.yaml`），并把 `raw160` 作为第三张地图加进数据集下拉。
 
+## 11. 附加：k=4 腐蚀数据集做成完整三 split 并重训 OneShot（K4P_oneshot）
+
+§9 的 k=4 缓存当时只建了 test。这一节把它扩成 train/val/test 全套并在其上重训，
+回答「k=4 这条中间道路（不腐蚀 0.185 / k=4 0.279 / k=8 0.357 自由面积）值不值得」。
+
+### 11.1 数据集
+
+`scripts/k4p_finish_and_train.sh`
+（labels → ALM → validate → 训练，全程可断点续跑，逐样本缓存）。
+
+- 腐蚀：`05_erode_occupancy.py --k 4 --border-mode protect`，三个 split 都做。
+  自由面积：train 0.186 → 0.283，val 0.339 → 0.448，test 0.185 → 0.279；
+  通道两侧各 +2.5 m（1 格 = 0.625 m，共 +5 m）。
+- 边界回归检查：外圈 w=1/2/4/8/12/16 的障碍率在 k=4 后 `regressed=0`，
+  即 `protect` 语义生效，腐蚀没有吃掉裁剪边界。
+- 之后重建全部派生缓存：候选几何、椭圆标签、ALM 约束（`alm_*`）。
+  离线 GT 走廊覆盖率（`alm_valid`）test = **99.3%**（§9 记录）。
+- `03_validate_processed.py`：`VALID = True`，errors 0 / warnings 0。
+  control_fit_rmse 0.0053 m（val）/ 0.0067 m（test），shape_valid 99.96% / 99.94%。
+
+### 11.2 训练
+
+`outputs/oneshot_k4p/`，02:45 → 08:30，**200/200 epoch，5 h 45 min**（20698 s），
+3850 train / 1550 val，batch 8 × accum 2，lr 2e-4，`best_task.pt` 在第 **98** 轮
+（任务分 10.28；对照 `RAW160_oneshot` 是 ep59 / 12.94，验证集不同不可直接比）。
+
+**200 轮对这个任务是过量的**：验证集总损失的最小值出现在第 5 轮（0.4932），
+而它是被拓扑项的过拟合造出来的假信号 —— `val Ltopo` 从第 20 轮起单调恶化
+（1.3 → 7.3，末轮 7.32），`ctrl_rmse` 则稳定在 9.5–11.1 m 不再改善。
+选点机制挑到的是第 98 轮，所以没有落到坏模型上，但后 100 轮基本是白烧的。
+同类训练以后可以把上限压到 ~100 轮，或者给拓扑头加正则/早停。
+
+### 11.3 test 全量评测（420 样本 / 16 步 / seed 0 / chunk 32，**自身腐蚀缓存**）
+
+| 模型 | 测试地图 | ALM 开 | ALM 关 |
+|---|---|---|---|
+| **K4P_oneshot**（k=4 自训） | `160k4p` | **5/420 = 1.19%** | 50/420 = 11.90% |
+| A_oneshot（k=8 训练，§9 记录） | `160k4p` | 11/420 = 2.62% | — |
+
+K4P_oneshot + ALM 的细节：`curve_rmse_m` 17.78 m，`final_max_constraint_violation`
+**−0.0177（负 = 可行）**，走廊归属率 0.995，引导成功率 0.998，历史反馈有效率 0.981。
+
+### 11.4 结论
+
+1. **在自己这张腐蚀图上，k=4 自训是目前这条线上最好的**：5/420，比拿 k=8 地图训的
+   同一 recipe（11/420）好一倍；加上 ALM 后把裸预测的 11.90% 压到 1.19%（10 倍）。
+2. **ALM 在 k=4 上收敛良好**（残差 −0.0177），和 §10 里 k=0 的 **+0.1028（不可行）**
+   正好形成对照：k=4 已经把走廊几何改善到「精确证书成立」的程度，k=0 不行。
+   这和离线覆盖率一致（k=0 的 GT 走廊只有 56.6% 的样本能建出来，k8p 是 97.8%）。
+3. **但碰撞是按「缩小后的障碍物」统计的**：k=4 把每个障碍物在每个方向缩了 2.5 m，
+   贴着真墙跑 2.4 m 在这张图上算无碰撞。同一个模型放到未腐蚀地图上是
+   184/420（ALM 开）/ 168/420（关）—— 模型确实学到了「离真障碍很近也算安全」。
+   也就是说 k=4 提升了**自身一致性**，但没有直接提升**真实障碍下的安全性**；
+   要的是后者的话，收尾还得在真地图上做，或者把「到障碍的距离」写进约束，
+   而不是靠腐蚀来放宽。
+4. 200 轮过量（见 11.2），同类实验建议 ~100 轮。
+
+### 11.5 产物
+
+- 数据：`data/carla_processed_160k4p/{train,val,test}`（含 `erode_report.json`、
+  `alm_constraints_report.json`、`preprocess_*_report.json`）
+- 模型：`outputs/oneshot_k4p/ckpt/{best_task.pt(ep98), best.pt(ep5), latest.pt(ep200)}`
+  + `training_summary.json` + `train.log`
+- 评测：`outputs/eval_k4p_own_alm.{json,md}`、`outputs/eval_k4p_own_noalm.{json,md}`
+  （脚本 `scripts/eval_k4p_oneshot.sh`，日志 `outputs/logs/eval_k4p_own.log`）
+- dashboard：注册 `K4P_oneshot:best_task / latest`（`configs/config_160k4p_oneshot.yaml`），
+  数据集下拉里的 `160k4p` 可直接与它配对。
+
