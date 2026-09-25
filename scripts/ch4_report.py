@@ -157,13 +157,13 @@ def ablation_table(groups: dict, spec: list) -> list:
             lines.append("| %s | _未运行_ |  |  |  |  |  |  |  |" % label)
             continue
         agg = pool(runs)
-        raw_viol, correction, inner = step_summary(runs)
-        lines.append("| %s | %.2f | %.2f | %.4f | %.3f | %.3f | %.2f | %.2f | %s |"
+        # a run without the processor has no such quantity: print the em dash a
+        # paper table uses for "does not exist" instead of nan
+        raw_viol, correction, inner = (_dash(v) for v in step_summary(runs))
+        lines.append("| %s | %.2f | %.2f | %.4f | %s | %s | %s | %.2f | %s |"
                      % (label, 100.0 * agg["collision_rate"],
                         100.0 * agg["feasible_rate"], agg["violation_mean"],
-                        raw_viol if raw_viol is not None else float("nan"),
-                        correction if correction is not None else float("nan"),
-                        inner if inner is not None else float("nan"),
+                        raw_viol, correction, inner,
                         agg["rmse"], fmt(agg["runtime_mean"], 1)))
     return lines
 
@@ -189,6 +189,15 @@ def step_summary(runs: list):
 
 def _mean(values):
     return float(np.mean(values)) if values else None
+
+
+def _dash(value, digits: int = 3):
+    """``None`` / ``nan`` -> the em dash a paper table uses for "does not exist"."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "—"
+    if isinstance(value, float):
+        return "%.*f" % (digits, value)
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -315,14 +324,18 @@ def digest(groups: dict) -> list:
             "协议记为碰撞，而指南定义的 r^SDF 只描述占据栅格，不含裁剪边界；"
             "四个 SDF 基线的优化器使用的是含边界的组合场，越界在其约束里是可见的。"
             % "、".join("%s %.2f%%" % (k, 100 * v) for k, v in excursion.items()))
-    if full and diffusion:
+    if full:
         say("本文完整方法碰撞 %d/%d（%.2f%%），SDF 平均违规量 %.4f m，RMSE %.2f m，"
-            "平滑度 %.3f m，%.1f ms/轨迹；相对标准 Diffusion 的代价是 RMSE %.2f → %.2f m、"
-            "时间 %s → %s ms。"
+            "平滑度 %.3f m，%.1f ms/轨迹。"
             % (full["collisions"], full["n"], 100 * full["collision_rate"],
                full["violation_mean"], full["rmse"], full["smoothness"],
-               full["runtime_mean"] or float("nan"), diffusion["rmse"], full["rmse"],
-               fmt(diffusion["runtime_mean"], 1), fmt(full["runtime_mean"], 1)))
+               full["runtime_mean"] or float("nan")))
+        say("⚠ 该行与前五行**不是同一个生成先验**：前五行共用 D-C48（标准条件扩散），"
+            "只改推理期约束处理器；本行用 A-C48（含椭圆/安全区域特征且经历史反馈训练的"
+            "完整生成模型）外加末端硬投影。它的 RMSE 优势（%.2f vs %.2f m）里既有约束"
+            "处理的贡献，也有模型本身更强的贡献。主表属于端到端系统比较，不能据此声称"
+            "「同一先验下本文的约束处理器更好」——那要由 4.3 的内部消融回答。"
+            % (full["rmse"], diffusion["rmse"] if diffusion else float("nan")))
     a = {tag: row(tag) for tag, _ in ABLATION_A}
     if all(a.values()):
         say("推理期消融：A0→A1 碰撞率 %.2f%% → %.2f%%（逐步 ALM 的作用）；"
@@ -343,6 +356,24 @@ def digest(groups: dict) -> list:
                100 * t["T3_A-C48_alm"]["collision_rate"],
                100 * t["T0_S-C48_noalm"]["collision_rate"],
                100 * t["T2_A-C48_noalm"]["collision_rate"]))
+    # ---- the feedback mechanism's claim lives in the PROCESS metrics ---------
+    # Its final collision rate is unchanged (the ALM alone already reaches 0), so a
+    # collision-only digest would hide the effect completely.  These are exactly
+    # the three numbers guide 4.3.1 / 4.3.2 asks for: the raw violation BEFORE the
+    # processor, the correction distance, and the inner iterations consumed.
+    if a.get("A1") and a.get("A2"):
+        p1, p2 = step_summary(groups["A1"]), step_summary(groups["A2"])
+        say("推理期反馈的作用体现在**过程指标**上，而不是最终碰撞率（两者都是 0）："
+            "ALM 前原始违规量 %.3f → %.3f m，平均修正距离 %.3f → %.3f m，"
+            "有效内迭代 %.2f → %.2f。即历史反馈让网络自己的预测更靠近可行域，"
+            "从而减轻约束优化器需要承担的修正负担。"
+            % (p1[0], p2[0], p1[1], p2[1], p1[2], p2[2]))
+    if t.get("T1_S-C48_alm") and t.get("T3_A-C48_alm"):
+        q1 = step_summary(groups["T1_S-C48_alm"])
+        q3 = step_summary(groups["T3_A-C48_alm"])
+        say("训练期反馈的作用（两者 ALM 都开）：ALM 前原始违规量 %.3f → %.3f m，"
+            "平均修正距离 %.3f → %.3f m，有效内迭代 %.2f → %.2f。"
+            % (q1[0], q3[0], q1[1], q3[1], q1[2], q3[2]))
     if not out:
         out.append("- （尚无已完成的运行）")
     return out
