@@ -167,16 +167,33 @@ def load_checkpoint(path, model, optimizer=None, map_location=None,
     return data
 
 
-def resolve_architecture(model_cfg, state, arch: str = "auto") -> dict:
+def resolve_architecture(model_cfg, state, arch: str = "auto",
+                         checkpoint_cfg: dict | None = None) -> dict:
     """Copy ``model_cfg`` with ``control_space`` resolved from ``arch``.
 
     ``arch='auto'`` (the default everywhere) picks the forward chain from the
-    checkpoint contents, so an existing pre-refactor checkpoint keeps working
-    without any manual flag.
+    checkpoint, so an existing pre-refactor checkpoint keeps working without any
+    manual flag.  Resolution order:
+
+    1. the checkpoint's OWN stored config (``data["config"]["model"]``) -- this
+       is what actually built the weights, and unlike the key heuristic below it
+       stays correct for a model variant that drops some modules;
+    2. the key heuristic (``detect_architecture``), for checkpoints saved before
+       the config was recorded.
+
+    The heuristic alone is NOT sufficient: it uses the presence of the safety
+    branch as the marker of the control-token chain, so a model built with
+    ``model.safety_features.enabled = false`` (D-C48, guide 一.1) looks "legacy"
+    and would be dispatched to the curve-token chain -- which then calls the
+    absent ``ellipse_geometry`` module and crashes.
     """
     cfg = dict(model_cfg or {})
     mode = str(arch or "auto").strip().lower()
     if mode == "auto":
+        stored = ((checkpoint_cfg or {}).get("model") or {})
+        if "control_space" in stored:
+            cfg["control_space"] = bool(stored["control_space"])
+            return cfg
         if state is None:
             return cfg
         cfg["control_space"] = detect_architecture(state) == ARCH_CONTROL_SPACE
@@ -208,7 +225,9 @@ def load_model(cfg, ckpt=None, arch: str = "auto", device="cpu",
     elif isinstance(ckpt, dict):
         data = ckpt
     state = extract_state_dict(data) if data is not None else None
-    model_cfg = resolve_architecture(cfg.get("model"), state, arch)
+    model_cfg = resolve_architecture(
+        cfg.get("model"), state, arch,
+        checkpoint_cfg=(data.get("config") if isinstance(data, dict) else None))
     model = TrajSafePlanner(model_cfg, cfg.get("ellipse_label"),
                             cfg.get("bspline"))
     report = None

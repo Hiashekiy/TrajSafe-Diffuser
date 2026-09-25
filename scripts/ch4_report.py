@@ -350,14 +350,20 @@ def digest(groups: dict) -> list:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs-dir", default="outputs/ch4/runs")
+    ap.add_argument("--runs-dir", nargs="+", default=["outputs/ch4/runs"],
+                    help="one or more directories of run JSONs (the main "
+                         "table and the ablation tables live apart)")
     ap.add_argument("--out", default="outputs/ch4/REPORT.md")
     args = ap.parse_args()
 
-    paths = sorted(glob.glob(os.path.join(ROOT, args.runs_dir, "*.json")))
-    paths = [p for p in paths if not p.endswith(".jsonl")]
+    paths = []
+    for runs_dir in args.runs_dir:
+        found = glob.glob(os.path.join(ROOT, runs_dir, "*.json"))
+        paths.extend(q for q in sorted(found) if not q.endswith(".jsonl"))
+
     if not paths:
-        raise SystemExit("[report] no run JSONs under %s" % args.runs_dir)
+        raise SystemExit("[report] no run JSONs under %s"
+                         % ", ".join(args.runs_dir))
     runs = [load_run(p) for p in paths]
     groups = group_runs(runs)
     report = build_report(groups, environment())

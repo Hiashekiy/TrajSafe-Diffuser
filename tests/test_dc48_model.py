@@ -210,3 +210,40 @@ def test_fusion_mlp_default_keeps_checkpoint_compatible_shapes():
         three(h, h)                       # the paper model needs the ellipse stream
     with pytest.raises(ValueError):
         FusionMLP(128, num_streams=4)
+
+
+# ------------------------------------------------- architecture resolution
+def test_architecture_detection_does_not_depend_on_the_safety_branch():
+    """D-C48 has no safety modules, so the KEY HEURISTIC calls it "legacy".
+
+    ``resolve_architecture`` must therefore prefer the checkpoint's own stored
+    config.  Without that, a D-C48 checkpoint is dispatched to the legacy
+    curve-token chain, which calls the (absent) ``ellipse_geometry`` and dies --
+    this actually happened for every validation-sweep candidate.
+    """
+    from src.utils.checkpoint import (ARCH_CONTROL_SPACE, detect_architecture,
+                                      resolve_architecture)
+
+    # no safety keys at all (exactly D-C48's state dict)
+    d_state = {"traj_backbone.0.norm.weight": torch.zeros(1),
+               "fusion_mlp.net.1.weight": torch.zeros(1)}
+    assert detect_architecture(d_state) != ARCH_CONTROL_SPACE     # the heuristic
+    # 1) the checkpoint's own config wins
+    resolved = resolve_architecture(
+        {"control_space": True}, d_state, "auto",
+        checkpoint_cfg={"model": {"control_space": True}})
+    assert resolved["control_space"] is True
+    # 2) without it, the heuristic is still used (old checkpoints)
+    assert resolve_architecture({}, d_state, "auto")["control_space"] is False
+    # 3) a safety-branch state is detected as control-space either way
+    a_state = {"safety_query_head.net.0.weight": torch.zeros(1)}
+    assert detect_architecture(a_state) == ARCH_CONTROL_SPACE
+    assert resolve_architecture({}, a_state, "auto")["control_space"] is True
+    # 4) an explicit arch always wins
+    assert resolve_architecture(
+        {}, d_state, "control",
+        checkpoint_cfg={"model": {"control_space": False}})["control_space"] is True
+    # 5) the stored config must beat a WRONG caller default
+    assert resolve_architecture(
+        {"control_space": False}, d_state, "auto",
+        checkpoint_cfg={"model": {"control_space": True}})["control_space"] is True

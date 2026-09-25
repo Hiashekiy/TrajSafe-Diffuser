@@ -649,6 +649,13 @@ class TrajSafePlanner(nn.Module):
         center = self.curve_decoder(gamma, gamma_len, s)
         center = torch.where(has_cand[:, None, None], center, coarse)
 
+        if not self.safety_features_enabled:
+            raise RuntimeError(
+                "forward_curve_tokens (the legacy 128-token chain) needs the "
+                "ellipse safety branch, which model.safety_features.enabled = "
+                "false removes.  This model must run on the CONTROL-token chain "
+                "(model.control_space = true); check what made the checkpoint "
+                "resolve to the legacy architecture.")
         h_ell, a_e = self.ellipse_geometry(h_path, center, c_e, h_t, ab)
         shape = self.ellipse_shape_head(h_ell, h_t)
 

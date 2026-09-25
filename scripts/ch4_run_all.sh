@@ -50,12 +50,16 @@ step "3/6 4.2 主表：6 方法 × seed 0/1/2 × test 420"
   --a-ckpt "$A_CKPT" --a-config "$A_CFG"
 
 step "4/6 4.3.1 推理期消融 A0..A3"
+# Ablations go to their own dir: otherwise the main-table figures would
+# plot A0..A3 / T0..T3 alongside the six methods.
 "$PY" scripts/ch4_campaign.py --stage ablation_a --seeds 0 \
+  --out-dir outputs/ch4/runs_abl \
   --a-ckpt "$A_CKPT" --a-config "$A_CFG"
 
 step "5/6 4.3.2 训练期消融 T0..T3"
 if [ -f "$S_CKPT" ]; then
   "$PY" scripts/ch4_campaign.py --stage ablation_t --seeds 0 \
+    --out-dir outputs/ch4/runs_abl \
     --d-ckpt "$D_CKPT" --d-config "$D_CFG" \
     --a-ckpt "$A_CKPT" --a-config "$A_CFG" \
     --s-ckpt "$S_CKPT" --s-config "$S_CFG"
@@ -64,7 +68,8 @@ else
 fi
 
 step "6/6 汇总表 + 图"
-"$PY" scripts/ch4_report.py --runs-dir outputs/ch4/runs \
+"$PY" scripts/ch4_report.py \
+  --runs-dir outputs/ch4/runs outputs/ch4/runs_abl \
   --out outputs/ch4/REPORT.md
 mkdir -p outputs/ch4/figures
 # NOTE: method names contain spaces ("Full (A-C48+ALM+FB+Proj)__s0.json"), so the
