@@ -56,8 +56,22 @@ GRIDS = {
 }
 
 
-def candidates(guidance: str):
-    grid = GRIDS[guidance]
+def candidates(guidance: str, fix_inner_steps: int | None = None):
+    """The guide's grid, optionally with the inner-iteration budget FIXED.
+
+    Guide 4.1.4 item 6 requires the four external baselines to share the same
+    warm-up start AND the same total inner-iteration budget, while the grids of
+    4.1.2 let ``inner_steps`` take two values per method.  Fixing
+    ``inner_steps`` (default 10 = the full method's ``alm.inner_steps``) removes
+    that conflict: only the remaining knobs are tuned, and the per-step
+    optimisation budget is identical for all five rows of the main table.
+    """
+    grid = dict(GRIDS[guidance])
+    if fix_inner_steps is not None and "inner_steps" in grid:
+        if fix_inner_steps not in grid["inner_steps"]:
+            raise SystemExit("[sweep] --fix-inner-steps %d is outside the grid %s"
+                             % (fix_inner_steps, grid["inner_steps"]))
+        grid["inner_steps"] = [fix_inner_steps]
     keys = list(grid)
     for values in itertools.product(*(grid[k] for k in keys)):
         yield dict(zip(keys, values))
@@ -120,7 +134,11 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--processed", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--fix-inner-steps", type=int, default=10,
+                    help="force a common inner-iteration budget for all four "
+                         "baselines (guide 4.1.4 #6); 0 disables")
     args = ap.parse_args()
+    fix_inner = args.fix_inner_steps or None
 
     out_path = args.out or os.path.join(ROOT, "outputs", "ch4",
                                         "sweep_%s.json" % args.guidance)
@@ -129,7 +147,7 @@ def main() -> int:
     os.makedirs(work_dir, exist_ok=True)
 
     entries = []
-    for index, params in enumerate(candidates(args.guidance)):
+    for index, params in enumerate(candidates(args.guidance, fix_inner)):
         out_json = os.path.join(work_dir, "cand_%03d.json" % index)
         entries.append(run_one(args, params, out_json))
     ranked = sorted(entries, key=rank_key)
@@ -145,6 +163,11 @@ def main() -> int:
         "seed": args.seed,
         "selection_rule": ("min collisions, then min mean SDF violation (m), "
                            "then min RMSE (m), then min point-mean violation"),
+        "fixed_inner_steps": fix_inner,
+        "fairness_note": ("inner_steps is FIXED across the four external "
+                          "baselines (and equals the full method's "
+                          "alm.inner_steps) so that the per-step optimisation "
+                          "budget is identical, per guide 4.1.4 #6"),
         "n_candidates": len(entries),
         "winner": winner["params"],
         "winner_aggregate": winner.get("aggregate"),

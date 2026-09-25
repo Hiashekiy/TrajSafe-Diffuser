@@ -296,6 +296,25 @@ def digest(groups: dict) -> list:
         say("SDF-ALM 相对原始—对偶：平均违规量 %.4f → %.4f m，P95 %.4f → %.4f m。"
             % (primal["violation_mean"], alm_sdf["violation_mean"],
                primal["violation_p95"], alm_sdf["violation_p95"]))
+    # "collision but SDF-feasible" cases are explained by the crop, not by a
+    # metric bug: the primary SDF column follows the guide's occupancy-only
+    # formula, while leaving [-1,1]^2 is still counted as a collision.
+    excursion = {}
+    for path in glob.glob(os.path.join(ROOT, "outputs", "ch4", "runs", "*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        rate = (payload.get("aggregate") or {}).get("map_excursion_rate")
+        if rate:
+            excursion[payload.get("method", path)] = rate
+    if excursion:
+        say("超出归一化地图范围 [-1,1]² 的轨迹比例（按方法）：%s。"
+            "该比例非零时，主表中「SDF 可行」与「碰撞」可以同时成立——越界按评价"
+            "协议记为碰撞，而指南定义的 r^SDF 只描述占据栅格，不含裁剪边界；"
+            "四个 SDF 基线的优化器使用的是含边界的组合场，越界在其约束里是可见的。"
+            % "、".join("%s %.2f%%" % (k, 100 * v) for k, v in excursion.items()))
     if full and diffusion:
         say("本文完整方法碰撞 %d/%d（%.2f%%），SDF 平均违规量 %.4f m，RMSE %.2f m，"
             "平滑度 %.3f m，%.1f ms/轨迹；相对标准 Diffusion 的代价是 RMSE %.2f → %.2f m、"

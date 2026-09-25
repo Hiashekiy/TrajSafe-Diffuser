@@ -102,6 +102,12 @@ def _file_hash(path: str) -> str:
         return "missing"
 
 
+def _ms_key(key: str) -> str:
+    """``network_s`` -> ``network_ms`` (the accumulator is in seconds)."""
+    stem = key[:-2] if key.endswith("_s") else key
+    return stem + "_ms"
+
+
 def _tolist(value):
     if value is None:
         return []
@@ -229,11 +235,19 @@ def evaluate_controls(codec, q: torch.Tensor, occ: torch.Tensor, cond: torch.Ten
 # per-step aggregation (guide 4.4.1 / 4.4.2)
 # ---------------------------------------------------------------------------
 
-#: name -> (corridor-ALM trace key, external-SDF trace key)
+#: name -> candidate sources, first present one wins.  A source is either a
+#: plain trace key or ``("alm_stats", key)`` for a nested corridor-ALM quantity.
+#: The nested entries are REQUIRED: the corridor ALM stores its correction-after
+#: value only inside ``alm_stats``, so a top-level-only lookup silently produced
+#: an all-null "correction after" curve for the paper's own method (the SDF
+#: baselines worked, which made the omission easy to miss).
 STEP_SERIES = {
-    "raw_violation": ("raw_violation", "guard_violation_before"),
-    "safe_violation": (None, "guard_violation_after"),
-    "correction": ("alm_correction", "guard_correction"),
+    "raw_violation": ("raw_violation", "guard_violation_before",
+                      ("alm_stats", "max_violation_before")),
+    "safe_violation": (("alm_stats", "max_violation_after"),
+                       "guard_violation_after"),
+    "correction": ("alm_correction", "guard_correction",
+                   ("alm_stats", "max_curve_correction_scene")),
     "smooth_raw": ("smooth_raw", "guard_smoothness_before"),
     "smooth_safe": ("smooth_safe", "guard_smoothness_after"),
 }
@@ -243,7 +257,11 @@ def _step_values(step: dict, keys, n_expected: int):
     for key in keys:
         if key is None:
             continue
-        value = step.get(key)
+        if isinstance(key, tuple):
+            container = step.get(key[0])
+            value = container.get(key[1]) if isinstance(container, dict) else None
+        else:
+            value = step.get(key)
         if value is None:
             continue
         value = torch.as_tensor(value).reshape(-1).float()
@@ -616,8 +634,12 @@ def main() -> int:
         "runtime_ms_mean": _mean(per_traj_ms),
         "runtime_ms_std": _std(per_traj_ms),
         "timed_chunks": timed_chunks,
+        # NOTE: every value here is MILLISECONDS PER TRAJECTORY (the raw
+        # accumulator below is in seconds for the whole run).  The keys end in
+        # ``_ms`` on purpose: an earlier ``network_s``-style naming made a
+        # correct 95.2 ms/traj read as "95 seconds" during review.
         "timing_ms_per_trajectory": {
-            key: (1000.0 * value / n if n else None)
+            _ms_key(key): (1000.0 * value / n if n else None)
             for key, value in timing.items()},
         "solver_status": dict(status_counter),
         "solver_failure_samples": failing_samples,
