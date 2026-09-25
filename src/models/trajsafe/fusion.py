@@ -26,19 +26,35 @@ __all__ = ["FusionMLP", "FinalDenoiser", "SafetyControlFusion"]
 
 
 class FusionMLP(nn.Module):
-    """Channel-only fusion of the three C-control-token latents."""
+    """Channel-only fusion of the C-control-token latents.
 
-    def __init__(self, d_model: int):
+    ``num_streams=3`` (the default, and what every existing checkpoint uses) is
+    the paper's model: ``[h_traj ; h_path ; h_ell]``.  ``num_streams=2`` is
+    D-C48 (guide 一.1, the standard conditional diffusion): it has no ellipse
+    safety-region stream, so the input is ``[h_traj ; h_path]`` and the
+    ``LayerNorm``/``Linear`` widths change accordingly.  The default keeps the
+    parameter shapes bit-identical, so A-C48 / S-C48 checkpoints still load.
+    """
+
+    def __init__(self, d_model: int, num_streams: int = 3):
         super().__init__()
+        self.num_streams = int(num_streams)
+        if self.num_streams not in (2, 3):
+            raise ValueError("num_streams must be 2 or 3, got %d" % self.num_streams)
         self.net = nn.Sequential(
-            nn.LayerNorm(3 * d_model),
-            nn.Linear(3 * d_model, 2 * d_model), nn.GELU(),
+            nn.LayerNorm(self.num_streams * d_model),
+            nn.Linear(self.num_streams * d_model, 2 * d_model), nn.GELU(),
             nn.Linear(2 * d_model, d_model),
         )
 
     def forward(self, h_traj: torch.Tensor, h_path: torch.Tensor,
-                h_ell: torch.Tensor) -> torch.Tensor:
-        return self.net(torch.cat([h_traj, h_path, h_ell], dim=-1))
+                h_ell: torch.Tensor | None = None) -> torch.Tensor:
+        streams = [h_traj, h_path]
+        if self.num_streams == 3:
+            if h_ell is None:
+                raise ValueError("FusionMLP(num_streams=3) needs h_ell")
+            streams.append(h_ell)
+        return self.net(torch.cat(streams, dim=-1))
 
 
 class SafetyControlFusion(_MHABase):

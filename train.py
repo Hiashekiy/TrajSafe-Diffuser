@@ -131,8 +131,13 @@ def _point_collision(points: torch.Tensor, occ: torch.Tensor) -> torch.Tensor:
     return hit | (~inside)
 
 
-def metrics(batch, out, occ, device):
-    """Evaluation metrics that are NOT just the training losses."""
+def metrics(batch, out, occ, device, use_ellipse=True):
+    """Evaluation metrics that are NOT just the training losses.
+
+    ``use_ellipse=False`` is D-C48 (guide 一.1): it has no safety-region head, so
+    its ellipse entries are zero placeholders and every ellipse-derived number
+    would be an artefact -- they are skipped (reported as NaN) instead.
+    """
     p_gt = batch["pos"].to(device)
     q_gt = batch["control_gt"].to(device)
     cond = batch["cond"].to(device)
@@ -168,18 +173,23 @@ def metrics(batch, out, occ, device):
         res["goal_error_m"] = float(goal_err.mean()) * SCENE_TO_METER
         coll = _point_collision(final, occ)
         res["collision_rate"] = float(coll.float().mean())
-        center = ell["center"]
-        res["ellipse_center_free_rate"] = float(
-            (~_point_collision(center, occ)).float().mean())
-        a, b, theta = ell["a"], ell["b"], ell["theta"]
-        res64 = 64
-        mask = ellipse_soft_mask(center, a, b, theta, res64, 10.0)
-        free = 1.0 - torch.nn.functional.adaptive_max_pool2d(
-            occ.float(), output_size=(res64, res64))[:, 0]
-        inside = (mask * free[:, None]).sum(dim=(-1, -2))
-        total = mask.sum(dim=(-1, -2)).clamp_min(1e-6)
-        res["ellipse_free_frac"] = float((inside / total).mean())
-        res["ellipse_area_mean"] = float((np.pi * a * b).mean())
+        if use_ellipse:
+            center = ell["center"]
+            res["ellipse_center_free_rate"] = float(
+                (~_point_collision(center, occ)).float().mean())
+            a, b, theta = ell["a"], ell["b"], ell["theta"]
+            res64 = 64
+            mask = ellipse_soft_mask(center, a, b, theta, res64, 10.0)
+            free = 1.0 - torch.nn.functional.adaptive_max_pool2d(
+                occ.float(), output_size=(res64, res64))[:, 0]
+            inside = (mask * free[:, None]).sum(dim=(-1, -2))
+            total = mask.sum(dim=(-1, -2)).clamp_min(1e-6)
+            res["ellipse_free_frac"] = float((inside / total).mean())
+            res["ellipse_area_mean"] = float((np.pi * a * b).mean())
+        else:
+            res["ellipse_center_free_rate"] = float("nan")
+            res["ellipse_free_frac"] = float("nan")
+            res["ellipse_area_mean"] = float("nan")
     return res
 
 
@@ -438,36 +448,50 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
         + float(lcfg.get("boundary_coarse_weight", 0.5))
         * boundary_control_loss(out["q_coarse_raw"], q0, cond, ws, wg))
     l_topo = topology_ce(out["topo"]["pi"], best, has_cand)
-    l_shape = ellipse_shape_loss(ell["shape4"], shape_gt, shape_valid, has_cand)
 
-    # GT soft mask from the DETACHED fixed Skeleton centres + offline shape
-    mask_res = int(lcfg.get("ellipse_safe_res", 64))
-    mask_tau = float(lcfg.get("ellipse_mask_tau", 10.0))
-    a_gt, b_gt, theta_gt = shape4_to_abtheta(shape_gt)
-    gt_mask = ellipse_soft_mask(ell["center"].detach(), a_gt, b_gt, theta_gt,
-                                mask_res, mask_tau)
-    gt_mask = gt_mask * shape_valid[..., None, None].to(gt_mask.dtype)
-    l_iou = ellipse_iou_loss(
-        ell["center"], ell["a"], ell["b"], ell["theta"], gt_mask,
-        shape_valid, has_cand, raster_res=mask_res, tau=mask_tau)
-    l_safe, safe_mean, safe_cvar = ellipse_safety_loss(
-        ell["center"], ell["a"], ell["b"], ell["theta"], occ,
-        raster_res=mask_res, tau=mask_tau,
-        chunk_size=int(lcfg.get("ellipse_safe_chunk", 32)),
-        cvar_fraction=float(lcfg.get("safe_cvar_fraction", 0.2)),
-        cvar_weight=float(lcfg.get("safe_cvar_weight", 1.0)),
-        sample_mask=has_cand)
+    # ---- safety-region supervision (absent in D-C48) ----------------------
+    # D-C48 (guide 一.1) is a STANDARD conditional diffusion: it has no ellipse
+    # safety-region representation and no convex corridor, so the shape / IoU /
+    # safety / corridor terms are not merely down-weighted, they are NOT
+    # COMPUTED.  Skipping them matters: the ellipse entries of a D-C48 forward
+    # are zero placeholders, and a term that divides by their (zero) area can
+    # produce NaN, which `0.0 * NaN` would happily inject into the total loss.
+    zero_loss = q0.sum() * 0.0
+    safe_mean = safe_cvar = 0.0
+    if getattr(model, "safety_features_enabled", True):
+        l_shape = ellipse_shape_loss(ell["shape4"], shape_gt, shape_valid,
+                                     has_cand)
 
-    # --- ALM corridor: the TRAINING-TIME counterpart of the inference ALM ---
-    # out["final"] is the decoded 128-point curve (B_128 @ Q_final), so the
-    # gradient reaches the control polygon.  The corridor is the same object
-    # bspline_alm_correct() projects onto, precomputed offline; alm_valid gates
-    # out the samples whose corridor never closed.
-    l_alm = alm_corridor_loss(
-        out["final"], batch["alm_cell_a"].to(device),
-        batch["alm_cell_b"].to(device),
-        batch["alm_cell_valid"].to(device).bool(),
-        batch["alm_valid"].to(device).bool())
+        # GT soft mask from the DETACHED fixed Skeleton centres + offline shape
+        mask_res = int(lcfg.get("ellipse_safe_res", 64))
+        mask_tau = float(lcfg.get("ellipse_mask_tau", 10.0))
+        a_gt, b_gt, theta_gt = shape4_to_abtheta(shape_gt)
+        gt_mask = ellipse_soft_mask(ell["center"].detach(), a_gt, b_gt,
+                                    theta_gt, mask_res, mask_tau)
+        gt_mask = gt_mask * shape_valid[..., None, None].to(gt_mask.dtype)
+        l_iou = ellipse_iou_loss(
+            ell["center"], ell["a"], ell["b"], ell["theta"], gt_mask,
+            shape_valid, has_cand, raster_res=mask_res, tau=mask_tau)
+        l_safe, safe_mean, safe_cvar = ellipse_safety_loss(
+            ell["center"], ell["a"], ell["b"], ell["theta"], occ,
+            raster_res=mask_res, tau=mask_tau,
+            chunk_size=int(lcfg.get("ellipse_safe_chunk", 32)),
+            cvar_fraction=float(lcfg.get("safe_cvar_fraction", 0.2)),
+            cvar_weight=float(lcfg.get("safe_cvar_weight", 1.0)),
+            sample_mask=has_cand)
+
+        # --- ALM corridor: the TRAINING-TIME counterpart of the inference ALM -
+        # out["final"] is the decoded 128-point curve (B_128 @ Q_final), so the
+        # gradient reaches the control polygon.  The corridor is the same object
+        # bspline_alm_correct() projects onto, precomputed offline; alm_valid
+        # gates out the samples whose corridor never closed.
+        l_alm = alm_corridor_loss(
+            out["final"], batch["alm_cell_a"].to(device),
+            batch["alm_cell_b"].to(device),
+            batch["alm_cell_valid"].to(device).bool(),
+            batch["alm_valid"].to(device).bool())
+    else:
+        l_shape = l_iou = l_safe = l_alm = zero_loss
 
     raw1 = {"Lctrl": l_ctrl, "Lcoarse": l_coarse,
             "Lsmooth": l_smooth, "Lboundary": l_boundary, "Ltopo": l_topo,
@@ -477,12 +501,15 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
                for k, key in LOSS_WEIGHT_KEYS.items()}
     total1 = sum(weights[k] * raw1[k] for k in LOSS_KEYS)
 
-    stats = {
-        "safe_mean": float(safe_mean.detach()),
-        "safe_cvar": float(safe_cvar.detach()),
-        "a_mean": float(ell["a"].mean().detach()),
-        "b_mean": float(ell["b"].mean().detach()),
-    }
+    if getattr(model, "safety_features_enabled", True):
+        stats = {
+            "safe_mean": float(safe_mean.detach()),
+            "safe_cvar": float(safe_cvar.detach()),
+            "a_mean": float(ell["a"].mean().detach()),
+            "b_mean": float(ell["b"].mean().detach()),
+        }
+    else:
+        stats = {"safe_mean": 0.0, "safe_cvar": 0.0, "a_mean": 0.0, "b_mean": 0.0}
 
     # ---- step 2: the historical-safety-feedback rollout -------------------
     # The SECOND network's OWN raw output is supervised (safety + smoothness +
@@ -557,7 +584,9 @@ def validate(model, schedule, loader, lcfg, device, max_batches,
                 acc[k] = acc.get(k, 0.0) + float(raw[k].detach())
             acc["total"] = acc.get("total", 0.0) + float(total)
             for k, v in metrics(batch, out, batch["occupancy"].to(device),
-                                device).items():
+                                device,
+                                use_ellipse=getattr(model, "safety_features_enabled",
+                                                    True)).items():
                 met[k] = met.get(k, 0.0) + float(v)
             n += 1
     model.train()

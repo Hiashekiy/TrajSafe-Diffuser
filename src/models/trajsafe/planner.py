@@ -126,6 +126,23 @@ class TrajSafePlanner(nn.Module):
                                          model_cfg.get("path_hidden", 256)))
         self.assert_shapes = bool(model_cfg.get("assert_shapes", True))
 
+        # ---- safety-region branch switch (guide 一.1) ----------------------
+        # True (default)  : the paper's model -- Q ellipse-geometry queries on the
+        #                   selected Skeleton, an ellipse shape head and a
+        #                   safety->control cross attention.
+        # False           : "D-C48", the STANDARD conditional diffusion used as
+        #                   the shared prior of section 4.2.  It may only receive
+        #                   the occupancy grid, the endpoints, the noisy control
+        #                   polygon and the timestep, so NONE of the safety-region
+        #                   modules are even constructed (not merely zeroed): no
+        #                   ellipse geometry, no shape head, no safety cross
+        #                   attention, and a 2-stream fusion MLP.  The
+        #                   map-derived topology/candidate path (a deterministic
+        #                   function of occupancy + endpoints) is kept for
+        #                   backbone parity with the other two models.
+        self.safety_features_enabled = bool(
+            dict(model_cfg.get("safety_features") or {}).get("enabled", True))
+
         geo_sigma = float(model_cfg.get(
             "geo_sigma", ellipse_cfg.get("geo_sigma", 0.25)))
         geo_bias_clip = float(model_cfg.get(
@@ -196,10 +213,15 @@ class TrajSafePlanner(nn.Module):
         self.topology_head = TopologyHead(self.d_model, head_hidden)
         self.path_feature_head = PathFeatureHead(self.d_model, head_hidden)
         # selected-Skeleton -> safety/ellipse geometry query (own parameters)
-        self.safety_query_head = PathFeatureHead(self.d_model, head_hidden)
         # safety (Q tokens) -> control (C tokens) cross attention
-        self.safety_cross_attention = SafetyControlFusion(
-            self.d_model, self.num_heads, dropout)
+        # (both belong to the safety-region branch; absent in D-C48)
+        if self.safety_features_enabled:
+            self.safety_query_head = PathFeatureHead(self.d_model, head_hidden)
+            self.safety_cross_attention = SafetyControlFusion(
+                self.d_model, self.num_heads, dropout)
+        else:
+            self.safety_query_head = None
+            self.safety_cross_attention = None
 
         # ---- fixed boundary decoder (no parameters, never trained) --------
         boundary_cfg = dict(model_cfg.get("boundary_decoder") or {})
@@ -209,15 +231,21 @@ class TrajSafePlanner(nn.Module):
 
         # ---- ellipse branch (centre from the FIXED progress on Gamma_m) ---
         self.curve_decoder = CurveDecoder()
-        self.ellipse_geometry = EllipseGeometry(
-            self.d_model, self.num_heads, self.spatial_pe,
-            geo_mem_res=self.geo_mem_res, geo_sigma=geo_sigma,
-            geo_bias_clip=geo_bias_clip, hidden=coord_hidden, dropout=dropout)
-        self.ellipse_shape_head = EllipseShapeHead(
-            self.d_model, head_hidden, dropout)
+        if self.safety_features_enabled:
+            self.ellipse_geometry = EllipseGeometry(
+                self.d_model, self.num_heads, self.spatial_pe,
+                geo_mem_res=self.geo_mem_res, geo_sigma=geo_sigma,
+                geo_bias_clip=geo_bias_clip, hidden=coord_hidden, dropout=dropout)
+            self.ellipse_shape_head = EllipseShapeHead(
+                self.d_model, head_hidden, dropout)
+        else:
+            # D-C48: the learned safety-region representation does not exist
+            self.ellipse_geometry = None
+            self.ellipse_shape_head = None
 
         # ---- fusion + final denoiser -----------------------------------
-        self.fusion_mlp = FusionMLP(self.d_model)
+        self.fusion_mlp = FusionMLP(
+            self.d_model, num_streams=(3 if self.safety_features_enabled else 2))
         self.final_denoiser = FinalDenoiser(
             self.d_model, self.num_heads, self.ffn_dim, self.curve_points,
             blocks=self.final_blocks, dropout=dropout,
@@ -466,22 +494,38 @@ class TrajSafePlanner(nn.Module):
         h_path = self.path_feature_head(r_use)                  # [B,C,D]
 
         # ---- Q safety geometry queries on the SELECTED Skeleton -----------
-        h_gamma = self.safety_query_head(h_s[ar, idx])          # [B,Q,D]
-        Q = h_gamma.shape[1]
-        s = self.progress_for(Q, device=dev, dtype=h_gamma.dtype)
-        s = s[None].expand(B, Q)
+        h_gamma = None
+        h_ell = None
+        h_safe_ctrl = None
+        a_e = None
+        shape = None
         gamma = geometry[ar, idx]                               # [B,G,2]
         gamma_len = geometry_lengths[ar, idx]                   # [B]
-        center = self.curve_decoder(gamma, gamma_len, s)        # [B,Q,2]
-        fallback = self._resample_curve(coarse, Q)
-        center = torch.where(has_cand[:, None, None], center, fallback)
+        if self.safety_features_enabled:
+            h_gamma = self.safety_query_head(h_s[ar, idx])      # [B,Q,D]
+            Q = h_gamma.shape[1]
+            s = self.progress_for(Q, device=dev, dtype=h_gamma.dtype)
+            s = s[None].expand(B, Q)
+            center = self.curve_decoder(gamma, gamma_len, s)    # [B,Q,2]
+            fallback = self._resample_curve(coarse, Q)
+            center = torch.where(has_cand[:, None, None], center, fallback)
 
-        h_ell, a_e = self.ellipse_geometry(h_gamma, center, c_e, h_t, ab)
-        shape = self.ellipse_shape_head(h_ell, h_t)
+            h_ell, a_e = self.ellipse_geometry(h_gamma, center, c_e, h_t, ab)
+            shape = self.ellipse_shape_head(h_ell, h_t)
 
-        # ---- safety -> control cross attention + fusion --------------------
-        h_safe_ctrl = self.safety_cross_attention(h_path, h_ell, h_t)
-        f = self.fusion_mlp(h_ctrl, h_path, h_safe_ctrl)
+            # ---- safety -> control cross attention + fusion ----------------
+            h_safe_ctrl = self.safety_cross_attention(h_path, h_ell, h_t)
+            f = self.fusion_mlp(h_ctrl, h_path, h_safe_ctrl)
+        else:
+            # D-C48: NO ellipse-geometry tokens and NO safety cross attention.
+            # The safety/ellipse entries of ``out`` stay present but are ZERO
+            # placeholders, because the shared sampler / trace / dashboard
+            # plumbing reads them; they carry no information and train.py must
+            # not feed them to any loss (guarded by ``safety_features_enabled``).
+            Q = int(self.num_safety_queries)
+            s = torch.zeros(B, Q, device=dev, dtype=h_ctrl.dtype)
+            center = torch.zeros(B, Q, 2, device=dev, dtype=h_ctrl.dtype)
+            f = self.fusion_mlp(h_ctrl, h_path)
         h_clean = self.final_denoiser(f, c_g, h_t)
         q_raw_final = self.head_p(h_clean)                      # [B,C,2]
         q_final = self.boundary_decoder(q_raw_final, cond)      # [B,C,2]
@@ -491,6 +535,21 @@ class TrajSafePlanner(nn.Module):
             raw_curve = self.bspline.decode_controls(q_raw_final)
         final = self.bspline.decode_controls(q_final)
         final = torch.where(has_cand[:, None, None], final, coarse)
+
+        if not self.safety_features_enabled:
+            # D-C48 zero placeholders, so the shared plumbing (sampler result /
+            # trace / dashboard) can still read the same keys.  They are NOT
+            # predictions and no loss may consume them (guarded in train.py).
+            zero_qd = f.new_zeros(B, Q, self.d_model)
+            zero_q4 = f.new_zeros(B, Q, 4)
+            zero_q = f.new_zeros(B, Q)
+            h_gamma = zero_qd
+            h_ell = zero_qd
+            h_safe_ctrl = f.new_zeros(B, C, self.d_model)
+            shape = {"raw": zero_q4, "shape4": zero_q4,
+                     "a": zero_q.clone(), "b": zero_q.clone(),
+                     "theta": zero_q.clone()}
+
 
         out = {
             "input_control": q_t,
@@ -659,12 +718,14 @@ class TrajSafePlanner(nn.Module):
         assert out["final"].shape[-1] == 2
         assert out["ellipse"]["center"].shape[-1] == 2
         assert out["ellipse"]["shape4"].shape[-1] == 4
-        a, b = out["ellipse"]["a"], out["ellipse"]["b"]
-        assert bool((a >= b - 1e-7).all())
-        assert bool(torch.isfinite(out["ellipse"]["shape4"]).all())
-        direction = (out["ellipse"]["shape4"][..., 2] ** 2
-                     + out["ellipse"]["shape4"][..., 3] ** 2)
-        assert torch.allclose(direction, torch.ones_like(direction), atol=1e-5)
+        if self.safety_features_enabled:
+            a, b = out["ellipse"]["a"], out["ellipse"]["b"]
+            assert bool((a >= b - 1e-7).all())
+            assert bool(torch.isfinite(out["ellipse"]["shape4"]).all())
+            direction = (out["ellipse"]["shape4"][..., 2] ** 2
+                         + out["ellipse"]["shape4"][..., 3] ** 2)
+            assert torch.allclose(direction, torch.ones_like(direction), atol=1e-5)
+        # D-C48 has no shape head, so a/b/shape4 are zero placeholders here
         # clamped B-spline: the hard control endpoints ARE the curve endpoints
         for key in ("input_curve", "coarse", "final"):
             p = out[key]
@@ -696,10 +757,11 @@ class TrajSafePlanner(nn.Module):
         assert out["ellipse"]["center"].shape == (B, Q, 2)
         assert out["ellipse"]["H_ell"].shape == (B, Q, D)
         assert out["ellipse"]["shape4"].shape == (B, Q, 4)
-        s = out["ellipse"]["progress"]
-        assert torch.allclose(s[:, 0], torch.zeros_like(s[:, 0]), atol=1e-6)
-        assert torch.allclose(s[:, -1], torch.ones_like(s[:, -1]), atol=1e-6)
-        assert bool((s[:, 1:] > s[:, :-1]).all())
+        if self.safety_features_enabled:
+            s = out["ellipse"]["progress"]
+            assert torch.allclose(s[:, 0], torch.zeros_like(s[:, 0]), atol=1e-6)
+            assert torch.allclose(s[:, -1], torch.ones_like(s[:, -1]), atol=1e-6)
+            assert bool((s[:, 1:] > s[:, :-1]).all())
         assert out["final"].shape == (B, H, 2)
         assert out["coarse"].shape == (B, H, 2)
 

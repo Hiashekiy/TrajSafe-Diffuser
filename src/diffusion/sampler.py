@@ -62,7 +62,11 @@ from ..geometry.bspline_constraints import build_constraint_pack
 from ..geometry.convex_region import EllipseRegionBuilder
 from ..geometry.safety_corridor import (SCENE_TO_METER, build_safety_corridor,
                                         progress_alignment_stats)
+import time as _time
+
 from .bspline_alm import bspline_alm_correct, bspline_hard_project
+from .sdf_guidance import GUIDANCE_MODES, apply_sdf_guidance
+from ..geometry.sdf_field import build_occupancy_sdf
 
 __all__ = ["sample", "pick_times", "ActivationResult", "try_activate_corridor",
            "dense_validation", "ablation_configs", "feedback_step"]
@@ -395,9 +399,25 @@ def dense_validation(model, codec, q, pack, occ, cond, num_points=512,
 def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
            geometry, geometry_lengths, device="cuda", steps=None, seed=None,
            return_trace=False, alm_guidance=None, alm_config=None,
-           corridor_config=None, times=None):
+           corridor_config=None, times=None, guidance=None, sdf_config=None,
+           seed_offset=0):
     """cond [B,2,2]; occ [B,1,R,R]; candidate_xy [B,M,L,2];
     candidate_mask [B,M]; geometry [B,M,G,2]; geometry_lengths [B,M].
+
+    ``guidance`` selects the inference-time constraint processor (section 4.2):
+
+    * ``"alm"`` (default, unchanged)  -- the paper's generative-corridor ALM with
+      history feedback and the final L1 hard projection;
+    * ``"none"``                      -- plain DDIM, no safety processing;
+    * ``"penalty" | "projection" | "primal_dual" | "alm_sdf"`` -- the four
+      EXTERNAL SDF baselines.  They share one ``OccupancySDF``, the same 128
+      optimisation points, the same warm-up and the same multiplier-inheritance
+      setting, and they use no corridor, no feedback and no final projection.
+
+    ``seed_offset`` is added to ``seed`` before the initial noise is drawn.  The
+    evaluation harness passes the chunk's global sample offset, so every test
+    sample gets its OWN noise instead of the first ``chunk`` rows being reused
+    (the old behaviour made 420 samples share 32 noise draws).
 
     ``steps`` / ``times`` select the reverse-time schedule:
 
@@ -425,7 +445,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
             "alm_guidance 是旧 waypoint ALM 语义，禁止套用到 32-control "
             "B-spline；请改用 alm_config/corridor_config（guided_bspline）")
     if seed is not None:
-        torch.manual_seed(int(seed))
+        torch.manual_seed(int(seed) + int(seed_offset))
     model.eval()
     cond = cond.to(device)
     occ = occ.to(device)
@@ -437,8 +457,53 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     alm_cfg = dict(alm_config or {})
     alm_cfg.setdefault("scene_to_meter", SCENE_TO_METER)
     corridor_cfg = dict(corridor_config or {})
-    alm_enabled = bool(alm_cfg.get("enabled", False))
+    scene_to_meter = float(alm_cfg["scene_to_meter"])
+
+    # ---- phase timers (section 4.2.3) -------------------------------------
+    # CUDA is asynchronous, so every timed region is bracketed by
+    # ``torch.cuda.synchronize()`` when the device is a GPU -- otherwise the
+    # numbers measure the enqueue rate, not the work.
+    def _sync():
+        # use the ``device`` PARAMETER, not the local ``dev``: this helper is
+        # defined before ``dev`` is bound, and the parameter is always a string
+        # ("cuda"/"cuda:0"/"cpu") here -- never assume a torch.device.
+        if torch.cuda.is_available() and str(device).startswith("cuda"):
+            torch.cuda.synchronize()
+
+    timing = {"network_s": 0.0, "corridor_s": 0.0, "guard_s": 0.0,
+              "final_projection_s": 0.0, "sdf_build_s": 0.0}
+
+    # ---- which constraint processor runs this sample? (section 4.2) --------
+    guidance_mode = str(guidance if guidance is not None
+                        else alm_cfg.get("guidance", "alm")).lower()
+    if guidance_mode not in GUIDANCE_MODES:
+        raise ValueError("unknown guidance %r (use %s)"
+                         % (guidance_mode, ", ".join(GUIDANCE_MODES)))
+    sdf_mode = guidance_mode if guidance_mode in (
+        "penalty", "projection", "primal_dual", "alm_sdf") else None
+    corridor_on = guidance_mode == "alm"
+    # corridor ALM / feedback / final hard projection belong to the paper's
+    # method ONLY: for the four SDF baselines and for plain DDIM they are off,
+    # so the baselines cannot accidentally receive a safety-region feature.
+    alm_enabled = corridor_on and bool(alm_cfg.get("enabled", False))
     mode = str(alm_cfg.get("mode", "guided_bspline"))
+    sdf_cfg = dict(sdf_config or {})
+    sdf_cfg.setdefault("scene_to_meter", scene_to_meter)
+    sdf_cfg.setdefault("d_safe", float(alm_cfg.get("d_safe", 0.0)))
+    sdf_cfg.setdefault("inner_steps", int(alm_cfg.get("sdf_inner_steps",
+                                                     alm_cfg.get("inner_steps", 5))))
+    sdf_cfg.setdefault("inherit_dual_across_reverse_steps",
+                       bool(alm_cfg.get("inherit_dual_across_reverse_steps", True)))
+    sdf = None
+    if sdf_mode is not None:
+        _t0 = _time.perf_counter()
+        sdf = build_occupancy_sdf(
+            occ, scene_to_meter=scene_to_meter,
+            map_margin=float(sdf_cfg.get("map_margin",
+                                         alm_cfg.get("map_margin", 0.0))))
+        _sync()
+        timing["sdf_build_s"] += _time.perf_counter() - _t0
+        sdf_cfg.setdefault("map_margin", sdf.map_margin)
     dense_verify_points = int(alm_cfg.get("dense_verify_points", 512))
     inherit_dual = bool(alm_cfg.get("inherit_dual_across_reverse_steps", True))
     builder_cfg = {k: alm_cfg[k] for k in _DEFAULT_REGION_KEYS if k in alm_cfg}
@@ -479,9 +544,9 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     max_delay = int(alm_cfg.get("max_activation_delay_steps", 2))
     activation_inner = int(alm_cfg.get("activation_inner_steps", 6))
     inner_steps = int(alm_cfg.get("inner_steps", 3))
-    if not alm_enabled:
+    if not alm_enabled and sdf_mode is None:
         warmup = 10 ** 9
-    elif mode == "final_only":
+    elif corridor_on and mode == "final_only":
         # ablation B: the corridor is only built on the LAST reverse forward
         warmup = max(0, len(pairs) - 1)
         max_delay = 0
@@ -520,7 +585,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     # ``model.feedback.enabled``; otherwise the sampler is byte-for-byte the old
     # one.  ``feedback_valid = 0`` means "no reliable history" and makes the
     # fusion an exact identity, which is what the warm-up phase relies on.
-    fb_on = bool(getattr(model, "feedback_enabled", False))
+    fb_on = bool(getattr(model, "feedback_enabled", False)) and corridor_on
     fb_control = torch.zeros(B, C, 2, device=dev, dtype=q.dtype)
     fb_delta = torch.zeros(B, C, 2, device=dev, dtype=q.dtype)
     fb_valid = torch.zeros(B, dtype=torch.bool, device=dev)
@@ -529,11 +594,28 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     fb_history = {"accepted": 0, "already_safe": 0, "rejected": 0,
                   "invalid_steps": 0}
 
+    # guide 4.3.1 A1/A2: keep the FeedbackEncoder and its weights, but FORCE
+    # ``feedback_valid = 0`` (features zeroed).  The gated fusion is then the
+    # exact identity, so the network sees the same input distribution it would
+    # without the module -- without deleting anything from the state dict.
+    fb_force_zero = bool(alm_cfg.get("force_feedback_valid_zero", False))
+
     def _fb_kwargs():
         if not fb_on:
             return {}
+        if fb_force_zero:
+            return {"feedback_control": torch.zeros_like(fb_control),
+                    "feedback_delta": torch.zeros_like(fb_delta),
+                    "feedback_valid": torch.zeros_like(fb_valid)}
         return {"feedback_control": fb_control, "feedback_delta": fb_delta,
                 "feedback_valid": fb_valid}
+
+    if alm_enabled and sdf_mode is not None:
+        raise ValueError("guidance 'alm' and an SDF mode are mutually exclusive")
+    lam_sdf = None
+    guard_frames: list = []
+    sdf_applied_steps = torch.zeros(B, dtype=torch.long, device=dev)
+
 
     trace = []
     last = None
@@ -551,9 +633,12 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         # frozen one.  ``-1`` = "argmax(pi) for this row" (planner convention).
         sel = torch.where(guided, frozen_idx, torch.full_like(frozen_idx, -1))
         fb_in_valid = fb_valid.clone()
+        _t0 = _time.perf_counter()
         out = model.forward_all(q, occ, cond, tb, ab, candidate_xy,
                                 candidate_mask, geometry, geometry_lengths,
                                 select_index=sel, **_fb_kwargs())
+        _sync()
+        timing["network_s"] += _time.perf_counter() - _t0
         last = out
         q0_used = out["control"]
         idx_used = out["selected_idx"].clone()
@@ -614,6 +699,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                         if bool(failed[b]):
                             alm_status[b] = "activation_failed"
 
+        _t0 = _time.perf_counter()
         if alm_enabled and bool(guided.any()):
             budget = torch.where(
                 just_activated,
@@ -626,6 +712,30 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 lam if inherit_dual else None, alm_cfg,
                 inner_steps=max(activation_inner, inner_steps),
                 max_steps=budget)
+        _sync()
+        timing["corridor_s"] += _time.perf_counter() - _t0
+
+        # ---- external SDF constraint processors (section 4.2) -------------
+        # SAME action site as the corridor ALM above: the corrected clean
+        # prediction is what enters the DDIM update below, so the correction
+        # propagates through the remaining reverse steps instead of being a
+        # final post-processing step.  The warm-up gate is the SAME
+        # ``warmup_reverse_steps`` for every method, and samples without a
+        # candidate are skipped.
+        step_guard_stats = None
+        if sdf_mode is not None:
+            sdf_active = (reverse_forward_count >= warmup) & has_cand
+            if bool(sdf_active.any()):
+                _t0 = _time.perf_counter()
+                q0_used, lam_sdf, step_guard_stats = apply_sdf_guidance(
+                    sdf_mode, q0_used, sdf, model.bspline, cond, lam_sdf,
+                    sdf_cfg, sdf_active)
+                _sync()
+                timing["guard_s"] += _time.perf_counter() - _t0
+                q0_used = model.hard_control_endpoints(q0_used, cond)
+                sdf_applied_steps = sdf_applied_steps + sdf_active.long()
+        if step_guard_stats is not None:
+            guard_frames.append(step_guard_stats)
 
         # ---- refresh the historical safety feedback ------------------------
         # Only a step whose ALM output PASSES the (frozen, exact) constraint
@@ -633,7 +743,8 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         # network is told "stay where you are" (delta = 0), otherwise it is told
         # where the ALM moved it and by how much.  A failing ALM NEVER overwrites
         # the last verified feedback.
-        if fb_on and step_alm_stats is not None and pack is not None:
+        if (fb_on and not fb_force_zero and step_alm_stats is not None
+                and pack is not None):
             before = step_alm_stats["max_violation_before"]
             after = step_alm_stats["max_violation_after"]
             fb_control, fb_delta, fb_valid, fb_stats = feedback_step(
@@ -694,6 +805,36 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "curve_smoothness_raw": _curve_roughness(
                     model, step_q0_raw),
                 "curve_smoothness_safe": _curve_roughness(model, q0_used),
+                # the evaluation harness historically read ``smooth_raw`` /
+                # ``smooth_safe`` while the trace stored the ``curve_*`` names,
+                # which silently produced an all-None smoothness curve.  Emit
+                # BOTH names so neither reader can miss it.
+                "smooth_raw": _curve_roughness(model, step_q0_raw),
+                "smooth_safe": _curve_roughness(model, q0_used),
+                # external SDF baseline diagnostics (None on every other method)
+                "guard_violation_before": (
+                    step_guard_stats["violation_before"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_violation_after": (
+                    step_guard_stats["violation_after"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_residual_before": (
+                    step_guard_stats["residual_before"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_residual_after": (
+                    step_guard_stats["residual_after"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_correction": (
+                    step_guard_stats["correction_scene"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_smoothness_before": (
+                    step_guard_stats["roughness_before"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_smoothness_after": (
+                    step_guard_stats["roughness_after"].detach().cpu().clone()
+                    if step_guard_stats is not None else None),
+                "guard_status": (list(step_guard_stats["status"])
+                                 if step_guard_stats is not None else None),
                 "alm_stats": ({k: v.detach().cpu().clone()
                                for k, v in step_alm_stats.items()}
                               if step_alm_stats is not None else None),
@@ -714,13 +855,19 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         # keep the polygon the guided phase produced, for the dashboard overlay
         # ("what the trajectory was BEFORE the hard projection")
         q_pre_projection = q.clone()
+        _t0 = _time.perf_counter()
         q, final_projection = bspline_hard_project(
             q, pack, model.bspline, alm_cfg,
             tol=float(alm_cfg.get("final_project_tol", 1e-9)))
+        _sync()
+        timing["final_projection_s"] += _time.perf_counter() - _t0
         q = model.hard_control_endpoints(q, cond)
 
     p = model.bspline.decode_controls(q)
-    result = {"control": q, "p": p, "final": p, "has_candidate": has_cand}
+    result = {"control": q, "p": p, "final": p, "has_candidate": has_cand,
+              "guidance": guidance_mode, "sdf_mode": sdf_mode,
+              "sdf_guided_steps": sdf_applied_steps,
+              "guard_frames": guard_frames, "timing": timing}
     if q_pre_projection is not None:
         result["control_pre_projection"] = q_pre_projection
         result["p_pre_projection"] = model.bspline.decode_controls(

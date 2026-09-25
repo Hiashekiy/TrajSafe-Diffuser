@@ -302,9 +302,21 @@ def test_alm_safe_prediction_enters_the_ddim_update():
     moved = [s for s in out["trace"]
              if s["alm_active"] and not torch.equal(s["q0_safe"], s["q0_raw"])]
     assert moved, "the ALM never changed the clean prediction"
-    # the trajectory that is actually returned is the last SAFE prediction
-    assert torch.equal(out["control"], out["trace"][-1]["q"]) 
+    # the DDIM consumed the last SAFE prediction
     assert torch.equal(out["trace"][-1]["q"], out["trace"][-1]["q0_safe"])
+    # The terminal hard projection (commit bf37aa3) runs AFTER the reverse loop,
+    # so the returned polygon is the PROJECTED one and the trace ends one step
+    # earlier; ``control_pre_projection`` is what the guided phase produced.
+    if "control_pre_projection" in out:
+        assert torch.equal(out["control_pre_projection"],
+                           out["trace"][-1]["q"])
+        # The projection's contract is MONOTONE NON-REGRESSION (a sample whose LP
+        # is infeasible keeps its input and is flagged), never "always feasible".
+        projection = out["final_projection"]
+        assert bool((projection["hard_project_violation"]
+                     <= projection["hard_project_violation_before"] + 1e-9).all())
+    else:
+        assert torch.equal(out["control"], out["trace"][-1]["q"])
 
 
 def test_alm_reduces_the_final_constraint_violation_end_to_end():
@@ -355,7 +367,10 @@ def test_ddim_never_applies_a_second_final_projection():
     assert int(out["trace"][-1]["t"]) == 0
     assert int(out["trace"][-1]["s"]) == -1
     assert torch.equal(out["trace"][-1]["q"], out["trace"][-1]["q0_safe"])
-    assert torch.equal(out["control"], out["trace"][-1]["q0_safe"])
+    # ``control`` may additionally carry the terminal hard projection, which is
+    # applied once, after the loop -- never inside it.
+    assert torch.equal(out.get("control_pre_projection", out["control"]),
+                       out["trace"][-1]["q0_safe"])
 
 
 def test_legacy_waypoint_alm_is_still_refused():

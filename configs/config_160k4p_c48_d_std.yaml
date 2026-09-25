@@ -1,0 +1,51 @@
+# ============================================================
+# config_160k4p_c48_d_std —— D-C48：标准条件扩散先验（4.2 的统一生成先验）
+#
+# 定义见 paper/TrajSafe-Diffuser第4章实验执行指南.md 一.1。它【可以】接收：
+#   占据栅格 / 起点终点 / 带噪的 48 控制点 / 扩散时间步
+# 它【不可以】接收或使用：
+#   椭圆安全区域特征、凸安全走廊特征、历史安全轨迹、约束违反信息、
+#   ALM 乘子与惩罚参数、推理期安全引导、末端硬投影
+#
+# 实现方式（代码侧，见 src/models/trajsafe/planner.py 的 safety_features 开关）：
+#   model.safety_features.enabled: false
+#     -> 不构建 EllipseGeometry / EllipseShapeHead / SafetyControlFusion，
+#        融合层从 3 路 (control, path, ellipse) 退化为 2 路 (control, path)。
+#        拓扑候选 (candidate_xy / geometry) 保留：它是 占据栅格+起终点 的确定性
+#        函数（骨架搜索的离线缓存），不含任何安全区域/走廊/违反信息，且保留它
+#        才能与 S/A-C48 保持相同的主干规模（指南要求"尽量保持相同的轨迹表示、
+#        主干规模"）。这一点在报告里显式声明。
+#   model.feedback.enabled: false
+#     -> 连 FeedbackEncoder / FeedbackFusion 都不建（历史安全反馈彻底不存在）
+#   train.feedback.rollout: false
+#     -> 训练侧不跑反馈 rollout
+#   loss.lambda_{shape,iou,safe,alm,feedback_safe,curve_smooth}: 0
+#     -> 没有任何安全区域 / 走廊 / 反馈监督项；只剩轨迹回归、拓扑、平滑、端点
+#
+# 推理期对 D-C48 一律使用 guidance=none|penalty|projection|primal_dual|alm_sdf，
+# 且 feedback_history=off、final_project=off（四种 SDF 基线与 Diffusion 行）。
+#
+# 预算：100 epoch（与 S-C48 一致；A-C48 为 200 epoch，见报告中的预算说明）。
+# ============================================================
+base: "configs/config_160k4p_c48_oneshot.yaml"
+
+model:
+  safety_features:
+    enabled: false
+  feedback:
+    enabled: false
+
+train:
+  epochs: 100
+  ckpt_dir: "outputs/oneshot_k4p_c48_d/ckpt"
+  feedback:
+    rollout: false
+
+loss:
+  # 安全相关监督全部关闭：D-C48 是"无安全特征"的标准条件扩散
+  lambda_shape: 0.0
+  lambda_iou: 0.0
+  lambda_safe: 0.0
+  lambda_alm: 0.0
+  lambda_feedback_safe: 0.0
+  lambda_curve_smooth: 0.0

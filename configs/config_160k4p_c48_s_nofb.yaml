@@ -1,0 +1,32 @@
+# ============================================================
+# config_160k4p_c48_s_nofb —— S-C48：保留椭圆/安全区域表示，但【不做历史安全反馈训练】
+#
+# 第4章实验用模型之一（见 paper/TrajSafe-Diffuser第4章实验执行指南.md 一.2）。
+#
+# 与 A-C48（config_160k4p_c48_oneshot.yaml -> outputs/oneshot_k4p_c48）唯一的
+# 差异是 train.feedback.rollout: true -> false：
+#   训练时不再跑「两步真实 rollout」（第一步前向 -> 真实 ALM -> 真实 DDIM ->
+#   反馈 -> 第二步前向），因此也没有 Lfbsafe / Lcurve 这两项反馈损失
+#   （train.py 在 rollout=false 时把 raw1["Lfbsafe"]=raw1["Lcurve"]=0）。
+#
+# model.feedback.enabled 仍保持 true：FeedbackEncoder / FeedbackFusion 模块照建。
+# rollout=false 时 feedback_valid 恒为 0、反馈输入恒为 0，而 FeedbackFusion 的门控
+# 是乘以 valid 的（src/models/trajsafe/feedback.py），所以这两个模块的梯度恒为 0，
+# 它们停在 zero_init 的恒等位 —— state_dict 结构与 A-C48 完全一致，同一套推理代码
+# 可以直接加载（这对 T0-T3 消融很重要）。
+#
+# ⚠ 预算差异（必须在报告里写清楚）：本模型训练 100 epoch。A-C48 是 200 epoch，
+#   但 A-C48 的 best_task 出现在 epoch 55（见 outputs/oneshot_k4p_c48/
+#   training_summary.json 的 best_task_epoch），即两个被选中的 checkpoint 都落在
+#   100 epoch 的horizon 内，选用准则（val task = curve_rmse_m + 80*collision_rate）
+#   完全相同。因此 T 表是「同选用准则、同有效 horizon」的比较，而不是
+#   「完全相同的 epoch 预算」的比较 —— 报告里如实标注。
+# ============================================================
+base: "configs/config_160k4p_c48_oneshot.yaml"
+
+train:
+  epochs: 100
+  ckpt_dir: "outputs/oneshot_k4p_c48_s/ckpt"
+  # 唯一的自变量：关掉历史安全反馈的训练侧 rollout
+  feedback:
+    rollout: false
