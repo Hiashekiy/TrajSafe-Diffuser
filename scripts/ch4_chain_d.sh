@@ -2,8 +2,12 @@
 # ch4_chain_d.sh —— 等 S-C48 训练结束，立刻接力训练 D-C48（100 epoch）。
 # 目的是让 GPU 不空转：S-C48 与 D-C48 串行（12 GB 显存放不下两个 batch-8 训练）。
 #
-# 判定「S-C48 结束」用 night_train 的收尾标记 "[supervisor] done"，并额外要求
-# best_task.pt 存在；两者都满足才接力。最多等 5 小时，超时就放弃并记录。
+# 判定「S-C48 结束」必须用 night_train **实际打印**的收尾标记。注意它打印的是
+#   [supervisor] exit code 0
+# 而不是 "[supervisor] done"（train.py 自己打印 "[done] epochs=..."，supervisor
+# 打印的是 exit code）。第一版哨兵写成了 "[supervisor] done"，结果永远不成立、
+# 白白空等 —— 所以这里同时接受两种形式，并要求 best_task.pt 存在。
+# 最多等 5 小时，超时就放弃并记录。
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -16,7 +20,7 @@ LOG="$LOGD/ch4_chain_d.log"
 echo "### chain started $(date '+%F %T'), waiting for S-C48 to finish" | tee -a "$LOG"
 waited=0
 while [ "$waited" -lt 18000 ]; do
-  if grep -q "supervisor\] done" "$S_LOG" 2>/dev/null && [ -f "$S_CKPT" ]; then
+  if grep -qE "supervisor\] (done|exit code)|^\[done\] epochs=" "$S_LOG" 2>/dev/null      && [ -f "$S_CKPT" ]; then
     echo "### S-C48 finished after ${waited}s  $(date '+%F %T')" | tee -a "$LOG"
     break
   fi
