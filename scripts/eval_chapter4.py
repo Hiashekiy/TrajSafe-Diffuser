@@ -270,6 +270,20 @@ def _step_values(step: dict, keys, n_expected: int):
     return None
 
 
+def _step_batch(step: dict):
+    """The batch size of ONE trace step (the last chunk of a split is ragged)."""
+    for key in ("q0_raw", "q0_safe", "guided", "raw_violation",
+                "guard_violation_before"):
+        value = step.get(key)
+        if value is None:
+            continue
+        if torch.is_tensor(value):
+            if value.dim() == 0:
+                return 1
+            return int(value.shape[0])
+    return None
+
+
 def _step_active(step: dict, n_samples: int) -> torch.Tensor:
     """Which samples were actually corrected at this reverse step."""
     guided = step.get("guided")
@@ -285,8 +299,14 @@ def _step_active(step: dict, n_samples: int) -> torch.Tensor:
     return active
 
 
-def aggregate_steps(traces, n_samples: int) -> dict:
-    """Mean / IQR per EXECUTED reverse step (index 1..len), the 4.4 curves."""
+def aggregate_steps(traces, n_samples: int | None = None) -> dict:
+    """Mean / IQR per EXECUTED reverse step (index 1..len), the 4.4 curves.
+
+    ``n_samples`` is only a hint; the authoritative batch size is taken from
+    EACH STEP, because the final chunk of a split is ragged (420 = 13x32 + 4).
+    Using one campaign-wide mask silently dropped that chunk and then crashed on
+    the corridor-ALM diagnostics.
+    """
     names = list(STEP_SERIES) + ["feasible_rate", "lambda_max", "inner_steps"]
     series = {name: {"mean": [], "p25": [], "p75": [], "n": []} for name in names}
     series["active_n"] = []
@@ -295,46 +315,54 @@ def aggregate_steps(traces, n_samples: int) -> dict:
         steps = [t[index] for t in traces if len(t) > index]
         if not steps:
             continue
-        active = torch.zeros(n_samples, dtype=torch.bool)
-        for step in steps:
-            active = active | _step_active(step, n_samples)
-        series["active_n"].append(int(active.sum()))
-        for name, keys in STEP_SERIES.items():
-            chunks = []
-            for step in steps:
-                value = _step_values(step, keys, n_samples)
-                if value is not None and bool(active.any()):
-                    chunks.append(value[active])
-            if not chunks:
-                series[name]["mean"].append(None)
-                series[name]["p25"].append(None)
-                series[name]["p75"].append(None)
-                series[name]["n"].append(0)
-                continue
-            merged = torch.cat(chunks)
-            series[name]["mean"].append(float(merged.mean()))
-            series[name]["p25"].append(float(merged.quantile(0.25)))
-            series[name]["p75"].append(float(merged.quantile(0.75)))
-            series[name]["n"].append(int(merged.numel()))
-        # corridor-ALM diagnostics + the guide's per-step feasible rate
+        active_total = 0
+        chunks = {name: [] for name in STEP_SERIES}
         lams, inners, feasible = [], [], []
         for step in steps:
+            n_step = _step_batch(step)
+            if not n_step:
+                continue
+            active = _step_active(step, n_step)
+            if not bool(active.any()):
+                continue
+            active_total += int(active.sum())
+            for name, keys in STEP_SERIES.items():
+                value = _step_values(step, keys, n_step)
+                if value is not None:
+                    chunks[name].append(value[active])
             alm = step.get("alm_stats")
-            if alm is not None and int(active.sum()):
-                lams.append(torch.as_tensor(alm["lambda_max"]).reshape(-1).float()[active])
-                inners.append(torch.as_tensor(
-                    alm["inner_steps_used"]).reshape(-1).float()[active])
-                after = torch.as_tensor(
-                    alm["max_violation_after"]).reshape(-1).float()
-                if after.numel() == n_samples:
+            if alm is not None:
+                for key, sink in (("lambda_max", lams),
+                                  ("inner_steps_used", inners)):
+                    value = torch.as_tensor(alm[key]).reshape(-1).float()
+                    if value.numel() == n_step:
+                        sink.append(value[active])
+                    elif value.numel():
+                        # a scalar diagnostic, not per-sample: keep it once
+                        sink.append(value.max().reshape(1))
+                after = torch.as_tensor(alm["max_violation_after"]).reshape(-1).float()
+                if after.numel() == n_step:
                     feasible.append((after[active] <= FEASIBLE_EPS)
                                     .to(torch.float32).mean().item())
             guard = step.get("guard_violation_after")
             if guard is not None:
                 guard = torch.as_tensor(guard).reshape(-1).float()
-                if guard.numel() == n_samples and bool(active.any()):
+                if guard.numel() == n_step:
                     feasible.append((guard[active] <= FEASIBLE_EPS)
                                     .to(torch.float32).mean().item())
+        series["active_n"].append(active_total)
+        for name in STEP_SERIES:
+            if not chunks[name]:
+                series[name]["mean"].append(None)
+                series[name]["p25"].append(None)
+                series[name]["p75"].append(None)
+                series[name]["n"].append(0)
+                continue
+            merged = torch.cat(chunks[name])
+            series[name]["mean"].append(float(merged.mean()))
+            series[name]["p25"].append(float(merged.quantile(0.25)))
+            series[name]["p75"].append(float(merged.quantile(0.75)))
+            series[name]["n"].append(int(merged.numel()))
         series["lambda_max"]["mean"].append(
             float(torch.cat(lams).mean()) if lams else None)
         series["lambda_max"]["p25"].append(None)

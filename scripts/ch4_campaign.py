@@ -31,6 +31,9 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+#: every run that failed, reported at the end (see run())
+FAILURES: list = []
+
 D_CKPT = "outputs/oneshot_k4p_c48_d/ckpt/best_task.pt"
 D_CFG = "configs/config_160k4p_c48_d_std.yaml"
 A_CKPT = "outputs/oneshot_k4p_c48/ckpt/best_task.pt"
@@ -86,8 +89,14 @@ def run(name: str, config: str, ckpt: str, guidance: str, seeds, split: str,
         started = time.time()
         proc = subprocess.run(cmd, cwd=ROOT)
         if proc.returncode != 0:
-            raise SystemExit("[campaign] %s seed=%d FAILED (rc=%d)"
-                             % (name, seed, proc.returncode))
+            # Do NOT abort the whole campaign: one broken method used to take the
+            # remaining methods (and every later seed) down with it, which cost a
+            # complete re-run.  Record it and keep going; the exit code at the
+            # end still reports the failure loudly.
+            print("[campaign] FAILED %s seed=%d (rc=%d) -- continuing"
+                  % (name, seed, proc.returncode), flush=True)
+            FAILURES.append("%s seed=%d (rc=%d)" % (name, seed, proc.returncode))
+            continue
         print("[campaign] done %s seed=%d in %.0fs"
               % (name, seed, time.time() - started), flush=True)
         made.append(out_json)
@@ -182,6 +191,12 @@ def main() -> int:
                 run(tag, config, ckpt, guidance, args.seeds, args.split,
                     args.samples, args.chunk, args.steps, extra, args.out_dir,
                     force=args.force)
+    if FAILURES:
+        print("[campaign] stage(s) %s finished WITH FAILURES:" % ",".join(stages),
+              flush=True)
+        for item in FAILURES:
+            print("   FAILED %s" % item, flush=True)
+        return 1
     print("[campaign] stage(s) %s finished" % ",".join(stages), flush=True)
     return 0
 
