@@ -41,6 +41,8 @@ for the whole guided phase, so it can be warm-started across reverse steps.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import torch
 
@@ -358,13 +360,14 @@ def bspline_hard_project(q_ref: torch.Tensor, pack, codec,
     feasible = (v_before <= 0.0)
     status = ["not_needed"] * B
 
-    for b in range(B):
-        if bool(feasible[b]):
-            continue
+    def _solve_sample(b: int):
+        """One sample's L1 projection LP.  Pure numpy/scipy -> thread-safe.
+
+        Returns ``(b, q_new_or_None, status)``; every input tensor is read only.
+        """
         P = int(pack.num_pieces[b].item())
         if P == 0:
-            status[b] = "no_pack"
-            continue
+            return b, None, "no_pack"
         E = pack.extraction[b, :P].detach().cpu().numpy().astype(np.float64)
         A = pack.piece_A[b, :P].detach().cpu().numpy().astype(np.float64)
         vb = pack.piece_b[b, :P].detach().cpu().numpy().astype(np.float64)
@@ -373,8 +376,7 @@ def bspline_hard_project(q_ref: torch.Tensor, pack, codec,
 
         pi, fi = np.nonzero(fm)                                     # [n]
         if len(pi) == 0:
-            status[b] = "no_pack"
-            continue
+            return b, None, "no_pack"
         # rows: (pair, r) -> one inequality per (piece, bezier control, face)
         coef = (A[pi, fi][:, None, :, None]
                 * E[pi][:, :, None, :]).reshape(len(pi) * 4, 2 * C)  # [4n, 2C]
@@ -382,10 +384,10 @@ def bspline_hard_project(q_ref: torch.Tensor, pack, codec,
         nrow = coef.shape[0]
         cols = np.tile(np.arange(2 * C), nrow)
         rows = np.repeat(np.arange(nrow), 2 * C)
-        M = coo_matrix((coef.ravel(), (rows, cols)), shape=(nrow, 2 * C)).tocsr()
+        M = coo_matrix((coef.ravel(), (rows, cols)),
+                       shape=(nrow, 2 * C)).tocsr()
 
         qflat0 = np.concatenate([q0[:, 0], q0[:, 1]])                # [2C]
-        nv = 6 * C
         A_ub = hstack([M, coo_matrix((nrow, 4 * C))]).tocsr()
         A_eq = hstack([speye(2 * C, format="csr"),
                        -speye(2 * C, format="csr"),
@@ -400,12 +402,28 @@ def bspline_hard_project(q_ref: torch.Tensor, pack, codec,
         res = linprog(c, A_ub=A_ub, b_ub=rhs, A_eq=A_eq, b_eq=qflat0,
                       bounds=bounds, method="highs")
         if not res.success or res.x is None:
-            status[b] = "lp_infeasible(%s)" % res.status
-            continue
+            return b, None, "lp_infeasible(%s)" % res.status
         z = np.asarray(res.x, dtype=np.float64)
-        qnew = np.stack([z[:C], z[C:2 * C]], axis=-1)                # [C,2]
+        return b, np.stack([z[:C], z[C:2 * C]], axis=-1), "lp_optimal"
+
+    todo = [b for b in range(B) if not bool(feasible[b])]
+    workers = int(cfg.get("projection_workers", 0) or 0)
+    if workers <= 0 and todo:
+        # HiGHS releases the GIL, so threads are a genuine speedup here; leave a
+        # couple of cores for the caller.
+        workers = max(1, min(len(todo), (os.cpu_count() or 4) - 2))
+    if len(todo) > 1 and workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_solve_sample, todo))
+    else:
+        results = [_solve_sample(b) for b in todo]
+
+    for b, qnew, why in results:
+        status[b] = why
+        if qnew is None:
+            continue
         q_out[b] = torch.as_tensor(qnew, dtype=dtype, device=device)
-        status[b] = "lp_optimal"
         applied[b] = True
 
     # ---- certificate: re-check the RETURNED polygon, and never regress -------

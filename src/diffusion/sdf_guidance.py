@@ -287,6 +287,15 @@ def _project_one(q0: np.ndarray, codec: BSplineCodec, sdf: OccupancySDF,
     lower = np.concatenate([np.full(sdf_rows.shape[0] + 4 * nsdf, -np.inf),
                             pin_value])
 
+    # A fresh setup per solve is DELIBERATELY kept: sharing one OSQP object and
+    # feeding it ``update(Ax=...)`` was measured to be a LOSS here (10.16 ->
+    # 8.02 ms in a synthetic micro-benchmark, i.e. only 1.27x, because OSQP
+    # re-factorises the KKT matrix whenever the values move), and 41 % SLOWER
+    # end to end (719 -> 1014 ms/trajectory) on the real workload: a warm start
+    # carried over from a different sample inflates the ADMM iteration count of
+    # the hard instances, and every failure then pays for a second setup.
+    # Threading does not help either -- OSQP's wrapper holds the GIL (measured
+    # 7.84 vs 7.28 ms with 8 threads), so the per-sample loop stays serial.
     prob = osqp.OSQP()
     prob.setup(P=P, q=qv, A=A, l=lower, u=upper, **osqp_cfg)
     res = prob.solve()
@@ -325,6 +334,11 @@ def sdf_projection_correct(q_ref: torch.Tensor, sdf: OccupancySDF,
         "eps_abs": float(cfg.get("osqp_eps_abs", 1e-7)),
         "eps_rel": float(cfg.get("osqp_eps_rel", 1e-7)),
         "max_iter": int(cfg.get("osqp_max_iter", 4000)),
+        # Keep OSQP's polishing ON (the default).  Disabling it was tried to
+        # silence its per-solve "Polishing not needed" line, but that line is
+        # cheap while polishing is a cheap ACCURACY refinement: without it the
+        # ADMM needs far more iterations to reach eps_abs=1e-7, and the guard
+        # went from 719 ms to 1403 ms per trajectory on the real workload.
         "polishing": bool(cfg.get("osqp_polish", True)),
         "verbose": False,
         "warm_starting": True,

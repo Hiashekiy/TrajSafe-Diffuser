@@ -66,14 +66,24 @@ def _to_numpy(value) -> np.ndarray:
 
 
 def polygon_area(polygon) -> float:
-    """Absolute area of a simple polygon given as ``[V,2]`` (shoelace)."""
+    """Absolute area of a simple polygon given as ``[V,2]`` (shoelace).
+
+    The shifted copies are built with slicing instead of ``np.roll``: this is
+    called ~16 k times per sample, and ``np.roll`` allocates twice per call.
+    """
     if polygon is None:
         return 0.0
     p = np.asarray(polygon, dtype=np.float64).reshape(-1, 2)
     if len(p) < 3:
         return 0.0
     x, y = p[:, 0], p[:, 1]
-    return 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+    x_next = np.empty_like(x)
+    y_next = np.empty_like(y)
+    x_next[:-1] = x[1:]
+    y_next[:-1] = y[1:]
+    x_next[-1] = x[0]
+    y_next[-1] = y[0]
+    return 0.5 * abs(float(np.dot(x, y_next) - np.dot(y, x_next)))
 
 
 def _inside(x: np.ndarray, a: np.ndarray, b: np.ndarray, tol: float) -> bool:
@@ -137,6 +147,32 @@ def overlap_ratio(poly_a, poly_b) -> float:
     if area_a <= _AREA_EPS or area_b <= _AREA_EPS:
         return 0.0
     inter = polygon_area(convex_polygon_intersection(poly_a, poly_b))
+    return float(inter / (min(area_a, area_b) + _AREA_EPS))
+
+
+def halfspace_overlap_ratio(A_a, b_a, A_b, b_b,
+                            area_a: float | None = None,
+                            area_b: float | None = None) -> float:
+    """Same quantity as :func:`overlap_ratio`, straight from the HALFSPACES.
+
+    The intersection of two convex sets that are each given as halfspaces is
+    the polytope defined by ALL of their faces, so ``Area(A n B)`` is just the
+    area of ``[A_a; A_b] x <= [b_a; b_b]`` -- no Sutherland-Hodgman clipping in
+    Python, and the per-cell areas can be passed in (the corridor builder
+    computes each cell's area ONCE instead of once per adjacent pair, which is
+    4032 clip calls + 8064 shoelace calls saved per sample).
+    """
+    if area_a is None:
+        area_a = polygon_area(halfspaces_to_vertices(A_a, b_a))
+    if area_b is None:
+        area_b = polygon_area(halfspaces_to_vertices(A_b, b_b))
+    if area_a <= _AREA_EPS or area_b <= _AREA_EPS:
+        return 0.0
+    A_cat = np.concatenate([np.asarray(A_a, dtype=np.float64).reshape(-1, 2),
+                            np.asarray(A_b, dtype=np.float64).reshape(-1, 2)])
+    b_cat = np.concatenate([np.asarray(b_a, dtype=np.float64).reshape(-1),
+                            np.asarray(b_b, dtype=np.float64).reshape(-1)])
+    inter = polygon_area(halfspaces_to_vertices(A_cat, b_cat))
     return float(inter / (min(area_a, area_b) + _AREA_EPS))
 
 
@@ -283,13 +319,19 @@ def _default_gamma_fn():
     return gather_dense_path_points
 
 
-def _base_cell(builder, A, b, mask, valid, centers, anchors, index):
-    face = mask[index]
-    A_i = A[index][face].detach().cpu().numpy().astype(np.float64)
-    b_i = b[index][face].detach().cpu().numpy().astype(np.float64)
+def _base_cell(A_np, b_np, mask_np, valid_np, centers, anchors, index):
+    """One base corridor cell, from arrays that are ALREADY on the CPU.
+
+    ``A_np``/``b_np``/``mask_np``/``valid_np`` are numpy (hoisted out of the
+    per-cell loop by the caller): this used to do two ``.detach().cpu().numpy()``
+    transfers per cell, i.e. 256 device->host copies per sample.
+    """
+    face = mask_np[index]
+    A_i = A_np[index][face]
+    b_i = b_np[index][face]
     center = np.asarray(centers[index], dtype=np.float64).reshape(2)
-    polygon = halfspaces_to_vertices(A_i, b_i, interior_point=center)
-    ok = bool(valid[index]) and polygon is not None \
+    polygon = halfspaces_to_vertices(A_i, b_i)
+    ok = bool(valid_np[index]) and polygon is not None \
         and polygon_area(polygon) > _AREA_EPS
     return CorridorCell(
         anchor_s=float(anchors[index]), center=center, A=A_i, b=b_i,
@@ -340,8 +382,14 @@ def build_safety_corridor(
         torch.as_tensor(centers, dtype=dt, device=dev)[None],
         torch.as_tensor(shape4, dtype=dt, device=dev)[None])
 
-    base = [_base_cell(builder, A[0], b[0], mask[0], valid[0], centers,
-                       anchors, i) for i in range(H)]
+    # hoist the device->host transfers out of the per-cell loop, and convert the
+    # small per-cell arrays to numpy ONCE (they are reused by the overlap test)
+    A_np = A[0].detach().cpu().numpy().astype(np.float64)
+    b_np = b[0].detach().cpu().numpy().astype(np.float64)
+    mask_np = mask[0].detach().cpu().numpy().astype(bool)
+    valid_np = valid[0].detach().cpu().numpy().astype(bool)
+    base = [_base_cell(A_np, b_np, mask_np, valid_np, centers, anchors, i)
+            for i in range(H)]
     for i, cell in enumerate(base):
         if not cell.valid:
             empty.failure_reason = "invalid_base_region:%d" % i
@@ -369,10 +417,18 @@ def build_safety_corridor(
     ratios: list[float] = []
     bridges: list[dict] = []
 
+    # one area per cell, reused by every adjacent pair (each cell is the "right"
+    # of one pair and the "left" of the next)
+    areas = [polygon_area(cell.polygon) for cell in base]
+
     for i in range(H - 1):
         left = cells[-1]
         right = base[i + 1]
-        rho = overlap_ratio(left.polygon, right.polygon)
+        rho = halfspace_overlap_ratio(
+            left.A, left.b, right.A, right.b,
+            area_a=polygon_area(left.polygon) if left.source == "bridge"
+            else areas[left.source_index],
+            area_b=areas[right.source_index])
         if rho + 1e-12 >= min_overlap:
             ratios.append(rho)
             cells.append(right)

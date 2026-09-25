@@ -461,58 +461,133 @@ def halfspaces_to_vertices(
     b: np.ndarray,
     interior_point: np.ndarray | None = None,
 ) -> np.ndarray | None:
-    """Convert A x <= b to counter-clockwise polygon vertices.
+    """Convert ``A x <= b`` into counter-clockwise polygon vertices.
 
-    Uses scipy.spatial.HalfspaceIntersection with interior_point as a
-    strictly-feasible point (the ellipse centre usually).  Returns None if the
-    polytope is empty, degenerate, or the intersection fails.
+    ``interior_point`` is accepted for backward compatibility and IGNORED: the
+    vectorised pairwise route below needs no strictly-feasible point (the old
+    qhull route did, which is why a cell whose faces were cut behind its centre
+    used to fall back to a different code path -- see the ``valid`` note in
+    ``build_from_metric``).  Returns None for an empty/degenerate polytope.
+
+    No qhull, and therefore no temporary files: see
+    :func:`_vertices_pairwise_vectorised`.
     """
     A = np.asarray(A, dtype=float).reshape(-1, 2)
     b = np.asarray(b, dtype=float).reshape(-1)
     if len(A) < 3:
         return None
-
-    # Drop redundant/num-degenerate rows.
-    norms = np.linalg.norm(A, axis=1)
-    keep = norms > 1e-8
+    # Drop redundant/num-degenerate rows (normals of length ~0 carry no face).
+    # Squared norm: ``np.linalg.norm`` on a 2-vector costs ~6 us of Python
+    # wrapper overhead and this runs once per cell.
+    keep = (A * A).sum(axis=1) > 1e-16
     if not np.any(keep):
         return None
     A = A[keep]
     b = b[keep]
     if len(A) < 3:
         return None
+    return _vertices_pairwise_vectorised(A, b)
 
+
+def _vertices_pairwise_vectorised(A: np.ndarray, b: np.ndarray,
+                                  tol: float = 1e-6,
+                                  dedup_tol: float = 1e-7) -> np.ndarray | None:
+    """Vertices of ``{x : A x <= b}``, CCW, no qhull, fully vectorised.
+
+    Every vertex of a 2-D polytope is the intersection of two of its faces, so
+    enumerating the face pairs and keeping the feasible intersections is EXACT
+    (a pair whose intersection lies outside the polytope is infeasible, and for
+    a convex polytope every feasible pairwise intersection IS a vertex).
+    Sorting the survivors by angle around their centroid yields the
+    counter-clockwise order that the shoelace area and the Sutherland-Hodgman
+    clipper both require.
+
+    WHY NOT scipy.spatial: ``HalfspaceIntersection`` + ``ConvexHull`` are two
+    qhull runs per call and EACH writes and deletes a temporary file.  With 128
+    cells per sample that was 256 filesystem round-trips per trajectory,
+    measured at 3.4 s (mkstemp) + 2.8 s (nt.open) of a 20 s corridor build --
+    ~30 % of it spent in the filesystem rather than in geometry.  The closed
+    form here has no I/O and is ~10x faster on these tiny polytopes (m <= ~19).
+
+    The vertex array may be rotated relative to the qhull output (a different
+    starting vertex); the cyclic order, the vertex SET and every area are
+    identical, and nothing downstream depends on where the cycle starts.
+    """
+    A = np.asarray(A, dtype=np.float64).reshape(-1, 2)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+    m = len(b)
+    if m < 3:
+        return None
+    i, j = np.triu_indices(m, k=1)
+    det = A[i, 0] * A[j, 1] - A[i, 1] * A[j, 0]
+    ok = np.abs(det) > 1e-12                       # drop parallel face pairs
+    if not np.any(ok):
+        return None
+    i, j, det = i[ok], j[ok], det[ok]
+    pts = np.empty((len(i), 2), dtype=np.float64)
+    pts[:, 0] = (b[i] * A[j, 1] - A[i, 1] * b[j]) / det
+    pts[:, 1] = (A[i, 0] * b[j] - b[i] * A[j, 0]) / det
+    pts = pts[(pts @ A.T - b).max(axis=1) <= tol]  # only vertices survive
+    if len(pts) < 3:
+        return None
+    # merge points where three or more faces meet (the feasible set is already
+    # small -- at most one point per vertex plus its duplicates)
+    keep = [pts[0]]
+    dedup_sq = dedup_tol * dedup_tol
+    for q in pts[1:]:
+        delta = np.asarray(keep) - q
+        if float((delta * delta).sum(axis=1).min()) > dedup_sq:
+            keep.append(q)
+    if len(keep) < 3:
+        return None
+    pts = np.asarray(keep, dtype=np.float64)
+    centre = pts.mean(axis=0)
+    angle = np.arctan2(pts[:, 1] - centre[1], pts[:, 0] - centre[0])
+    return pts[np.argsort(angle, kind="stable")]
+
+
+def _vertices_by_pair_enumeration(A: np.ndarray, b: np.ndarray,
+                                  tol: float = 1e-6):
+    """Backward-compatible alias of :func:`_vertices_pairwise_vectorised`."""
+    return _vertices_pairwise_vectorised(A, b, tol=tol)
+
+
+def _vertices_qhull_reference(A: np.ndarray, b: np.ndarray,
+                              interior_point: np.ndarray | None = None):
+    """The ORIGINAL qhull implementation, kept as a test reference only.
+
+    It is ~10x slower and creates two temporary files per call, but it is an
+    independent algorithm, so ``tests/test_corridor_speedup.py`` uses it to
+    assert that the fast path returns the same polygon on real cells.
+    """
+    A = np.asarray(A, dtype=float).reshape(-1, 2)
+    b = np.asarray(b, dtype=float).reshape(-1)
+    if len(A) < 3:
+        return None
+    keep = np.linalg.norm(A, axis=1) > 1e-8
+    if not np.any(keep):
+        return None
+    A, b = A[keep], b[keep]
+    if len(A) < 3:
+        return None
     if interior_point is None:
         interior_point = np.zeros(2, dtype=float)
     interior_point = np.asarray(interior_point, dtype=float).reshape(2)
-    # scipy REQUIRES a strictly feasible point.  The ellipse centre is not one
-    # any more for cells whose faces were cut behind it (see the ``valid`` note
-    # in ``build_from_metric``), so fall back to interior-point-free enumeration.
     if float((A @ interior_point - b).max()) > 1e-9:
-        return _vertices_by_pair_enumeration(A, b)
-
-    # scipy convention: [A, -b] represents A x - b <= 0  (i.e. A x <= b).
+        return _vertices_qhull_on_hull(A, b)
     halfspaces = np.hstack([A, -b.reshape(-1, 1)])
     try:
         hs = HalfspaceIntersection(halfspaces, interior_point)
         intersections = np.asarray(hs.intersections, dtype=float)
         if len(intersections) < 3:
-            return _vertices_by_pair_enumeration(A, b)
-        hull = ConvexHull(intersections)
-        return intersections[hull.vertices]
+            return _vertices_qhull_on_hull(A, b)
+        return intersections[ConvexHull(intersections).vertices]
     except Exception:
-        return _vertices_by_pair_enumeration(A, b)
+        return _vertices_qhull_on_hull(A, b)
 
 
-def _vertices_by_pair_enumeration(A: np.ndarray, b: np.ndarray,
-                                  tol: float = 1e-6):
-    """Vertices of a BOUNDED ``{x : A x <= b}`` with no interior point.
-
-    Every vertex of a bounded 2-D polytope is the intersection of two faces, so
-    enumerating the pairs and keeping the feasible ones is exact; the convex
-    hull of the result gives the polygon in counter-clockwise order.  Returns
-    None if fewer than three vertices survive (empty/degenerate polytope).
-    """
+def _vertices_qhull_on_hull(A: np.ndarray, b: np.ndarray, tol: float = 1e-6):
+    """The original fallback: pairwise enumeration + qhull ordering."""
     A = np.asarray(A, dtype=float).reshape(-1, 2)
     b = np.asarray(b, dtype=float).reshape(-1)
     pts = []
@@ -520,7 +595,7 @@ def _vertices_by_pair_enumeration(A: np.ndarray, b: np.ndarray,
         for j in range(i + 1, len(b)):
             det = A[i, 0] * A[j, 1] - A[i, 1] * A[j, 0]
             if abs(det) < 1e-12:
-                continue                       # parallel faces
+                continue
             p = np.array([(b[i] * A[j, 1] - A[i, 1] * b[j]) / det,
                           (A[i, 0] * b[j] - b[i] * A[j, 0]) / det])
             if (A @ p - b).max() <= tol:
@@ -528,7 +603,7 @@ def _vertices_by_pair_enumeration(A: np.ndarray, b: np.ndarray,
     if len(pts) < 3:
         return None
     keep = []
-    for q in pts:                              # merge repeat vertices
+    for q in pts:
         if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > 1e-7:
             keep.append(q)
     if len(keep) < 3:

@@ -411,6 +411,9 @@ def main() -> int:
     ap.add_argument("--md", default=None)
     ap.add_argument("--records", default=None)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--keep-assert-shapes", action="store_true",
+                    help="keep the per-forward shape/finiteness asserts "
+                         "(they cost ~18% of the wall clock at inference)")
     ap.add_argument("--allow-partial-load", action="store_true",
                     help="accept a checkpoint whose keys do not match the "
                          "configuration (default: refuse)")
@@ -451,6 +454,15 @@ def main() -> int:
         beta_end=float(dcfg.get("beta_end", 0.02)))
     model, _, load_report = load_model(cfg, args.ckpt, device=device,
                                        verbose=False)
+    if not args.keep_assert_shapes and getattr(model, "assert_shapes", False):
+        # ``model.assert_shapes: true`` re-checks every tensor shape/finiteness
+        # on EVERY forward, and each check forces a CUDA synchronisation:
+        # measured 0.50 s of a 2.8 s run (18 %).  It is a development-time
+        # invariant check, not part of the method -> off for the campaign run.
+        model.assert_shapes = False
+        print("[ch4] model.assert_shapes disabled for inference "
+              "(pass --keep-assert-shapes to keep the dev-time checks)",
+              flush=True)
     # A checkpoint silently loaded into a DIFFERENT architecture (e.g. the
     # D-C48 config with an A-C48 checkpoint: 2-stream vs 3-stream fusion) leaves
     # most weights at their random init and still "loads" fine, which would
