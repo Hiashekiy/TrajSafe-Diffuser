@@ -465,3 +465,240 @@ K4P_oneshot + ALM 的细节：`curve_rmse_m` 17.78 m，`final_max_constraint_vio
 - dashboard：注册 `K4P_oneshot:best_task / latest`（`configs/config_160k4p_oneshot.yaml`），
   数据集下拉里的 `160k4p` 可直接与它配对。
 
+---
+
+## 12. 控制点数消融：C=32 → 48（同一张 k=4 腐蚀图，同一 recipe）
+
+**状态：已完成**（2026-09-24 10:24 → 17:48，**200/200 轮，7.39 h，单次启动无重启**）。
+12.1/12.2 是「改 C 到底动了哪些东西」的复现记录，12.3–12.5 是训练与 test 评测结果。
+
+**一句话结论（已按 §12.8 的修复更正）**：C=48 的 val task 更好（9.56 vs 10.28），
+修复约束缺口后 **test 也更好：3/420 vs C=32 的 5/420**。12.4 里那个「9/420 反而更差」
+是**约束集缺失地图边界**造成的假象——9 个碰撞里有 6 个是曲线探出 256² 裁剪边界
+（走廊单元根本没被裁到地图内，最远伸出 22 m，所以 ALM 判定「可行」、1 次迭代就退出），
+把这 6 个算进来才让 C=48 显得更差；补上边界半空间后它们**全部消失且没有新增**。
+代价仍然实打实：同样 200 轮多花 28.5 % 墙钟。
+
+### 12.1 结论先说：C 只影响一个数组
+
+`control_gt.npy` 是**离线数据**（用网络解码所用的同一套端点约束最小二乘投影，
+从 `trajectory_128` 拟合出的控制多边形标签）。处理好的缓存里只有它随 C 变化：
+
+| 数组 | 形状里带 C 吗 | 来源 |
+|---|---|---|
+| `control_gt.npy` | **是** `[N,C,2]` | 00_build_processed 的 fit |
+| `curve_gt.npy` | 否 `[N,128,2]` | 源数据集 `trajectory_128` |
+| `occupancy.npy` | 否 | 腐蚀（k=4 protect）后的栅格 |
+| `candidate_*` / `ellipse_shape4_gt` / `shape_valid` / `topology_best` | 否 | 只依赖 occupancy + conditions + 骨架 |
+| `alm_cell_a/b` / `alm_cell_valid` / `alm_anchor_s` | 否 `[N,Q,·]`，Q = `model.num_safety_queries`=128 | 离线走廊，按走廊站点数存，**不是**按控制点数 |
+
+所以改 C **不需要**重跑昂贵的候选/椭圆/ALM 阶段，也不该原地覆盖旧缓存
+（`outputs/oneshot_k4p` 的 C=32 checkpoint 还能被 `evaluate.py`/dashboard 加载，
+原地改会让那条线直接报错）。做法是新工具
+`scripts/data/carla_full/06_refit_controls.py`：从 `curve_gt.npy` 重新拟合
+`control_gt`，其余数组逐字节复制到新根目录。
+
+```
+python scripts/data/carla_full/06_refit_controls.py \
+    --source data/carla_processed_160k4p \
+    --out    data/carla_processed_160k4p_c48 \
+    --config configs/config_160k4p_c48_oneshot.yaml     # 24 s
+python scripts/data/carla/03_validate_processed.py \
+    --processed data/carla_processed_160k4p_c48 --config configs/config_160k4p_c48_oneshot.yaml
+```
+
+### 12.2 校验（都通过）
+
+- **单变量证据**：逐文件比对 `carla_processed_160k4p` 与 `..._c48`，除
+  `control_gt.npy`（32→48）外 **全部数组逐字节相同**，`_cache` 11550/11550 齐全。
+- **拟合口径正确性**：用同一函数从 C=32 缓存的 `curve_gt.npy` 反拟合，能复现它
+  自带的 `control_gt.npy` 到 max|Δq| ≈ **3e-8**（float32 存储噪声），说明本工具
+  与 `00_build_processed.py --fit` 是同一条数学路径。
+- **端点约束**：`endpoint_err = 0.0`（结构保证 Q_0=start、Q_{C-1}=goal）。
+- **拟合质量（每样本 RMSE，同一曲线、同一度量）**：
+  train 0.0026 → **0.0006 m**，val 0.0036 → **0.0008 m**，test 0.0039 → **0.0008 m**；
+  最大单点误差 0.0964 → 0.0259 m（train）。自由度更多，拟合必然更好——这是自变量本身。
+- `03_validate_processed.py`：**VALID = True**，errors 0 / warnings 0，
+  `control_fit_rmse_m` = 0.00124(train) / 0.00123(val) / 0.00130(test)，
+  `shape_valid_fraction` 99.93 % / 99.96 % / 99.94 %。
+- 端到端 smoke（`--limit 48 --max-batches 2 --batch-size 4`）：数据加载、模型
+  （`controls=48`）、ALM 约束包、feedback 两步 rollout、验证、存档全部跑通。
+
+### 12.3 训练配置（与 §11 只差 C）
+
+`configs/config_160k4p_c48_oneshot.yaml`（`base: config_160k4p_oneshot.yaml`，
+只覆盖 `data.processed_root` / `model.num_controls` / `bspline.num_controls` /
+`train.ckpt_dir`）。`bspline.knots: "auto"` 会为 C=48 重新生成夹持均匀节点向量，
+不需要重建 knots 文件。
+
+```
+bash scripts/k4p_c48_train.sh          # refit -> validate -> 200 epoch（可重入）
+# 等价于：
+python scripts/night_train.py --config configs/config_160k4p_c48_oneshot.yaml \
+  --ckpt-dir outputs/oneshot_k4p_c48/ckpt --out-dir outputs/oneshot_k4p_c48 \
+  --epochs 200 --max-hours 11.0 --batch-size 8 --accum 2 --lr 2e-4
+```
+
+- 启动 10:24 → 17:48 结束，**200/200 轮，26602 s = 7.39 h**，supervisor 只有
+  `attempt 1`（无崩溃/无 OOM，显存峰值 ~7 GB / 12 GB）。同 recipe 的 C=32 跑满
+  200 轮是 5.75 h（20698 s）→ **单轮贵 28.5 %**（控制 token 32→48）。
+- 选点仍看 `best_task.pt`：**ep55，task = 9.5621**（val `curve_rmse_m` 9.18 +
+  80 × `collision_rate` 0.0047）。`best.pt`（val 总损失）落在 **ep7**（0.5020），
+  再次是拓扑项过拟合造出的假信号（同 §11.2）。
+- 日志：`outputs/logs/k4p_c48_train_driver.log`（driver）、
+  `outputs/oneshot_k4p_c48/train.log`（supervisor + 逐 step）、
+  `outputs/oneshot_k4p_c48/training_summary.json`。
+
+### 12.4 test 全量评测（420 样本 / 16 步 / seed 0 / chunk 32，**自身腐蚀缓存**）
+
+脚本 `scripts/eval_k4p_c48_oneshot.sh`，日志 `outputs/logs/eval_k4p_c48_own.log`，
+结果 `outputs/eval_k4p_c48_own_{alm,noalm}.{json,md}`。C=32 一列取自 §11.3 的
+`K4P_oneshot`（同协议、同 seed、同 chunk 边界 → **逐样本配对同一噪声**）。
+
+| 指标 | C=48（本 run） | C=32（K4P_oneshot） |
+|---|---|---|
+| ALM **开**：碰撞 | **9/420 = 2.14 %** | **5/420 = 1.19 %** |
+| ALM 关（ablation A）：碰撞 | 48/420 = 11.43 % | 50/420 = 11.90 % |
+| `curve_rmse_m`（ALM 开） | 18.07 | 17.78 |
+| `final_max_constraint_violation` | −0.0196 | −0.0177 |
+| 走廊归属率（sampler / offline） | 0.9965 / 0.9862 | 0.9946 / 0.9857 |
+| 引导成功率 / `feedback_valid` | 0.998 / 0.993 | 0.998 / 0.981 |
+| val `best_task`（选点用） | ep55 · 9.56 | ep98 · 10.28 |
+
+两类模型的 ALM 都收敛良好（viol 为负 = 可行），ALM 把裸预测的 ~11.5 % 压到 1–2 %。
+
+**逐样本配对分解（关键）**——两边共用同一噪声和同一批样本，可以直接对位：
+
+| | 样本数 | 说明 |
+|---|---|---|
+| 两者都撞 | 2 | episode 9（Town02, simple）、episode 54（Town01, medium） |
+| **只有 C=48 撞** | 7 | **全部在 episode 71 = Town10HD / medium（50 样本）** |
+| 只有 C=32 撞 | 3 | 全部在 episode 54（Town01） |
+
+按 map 拆开看就更清楚了：
+
+| 场景 | 样本 | C=48 (ALM 开 / 关) | C=32 (ALM 开 / 关) |
+|---|---|---|---|
+| **ep71 Town10HD** | 50 | **7 / 10** | **0 / 5** |
+| ep54 Town01 | 50 | **1 / 8** | 4 / 13 |
+| ep9 Town02 | 20 | 1 / 4 | 1 / 3 |
+| 其余 12 个场景 | 300 | 0 / 26 | 0 / 29 |
+
+- 汇总的 9 vs 5 **完全由 Town10HD 一个场景决定**：C=48 在那张图上 ALM 开关都更差
+  （7/50、10/50），而 C=32 在 ALM 开时是 0/50。反过来在 Town01 上 C=48 更好
+  （1/50 vs 4/50）。逐样本最终违反量也是「互有胜负」：C=48 更优 225 个 / 更差
+  194 个，均值 −0.0019（负 = C=48 略好）。
+
+### 12.5 结论（**已被 §12.8 取代，保留作为「发现问题」的过程记录**）
+
+1. **48 个控制点在这条线上不划算。** val 上的领先（task 9.56 vs 10.28、rmse 9.18 vs
+   9.60）**没有转化成 test 安全性**：ALM 开时 9/420 差于 5/420，关时 48 vs 50 持平。
+   这正是 12.2 里那句话的验证——多出来的自由度主要买到的是**拟合容量**（把 GT 曲线
+   拟合得更准、val RMSE 更低），不是「更会规划」。
+2. **失败是场景特异的，不是全面退化。** 9 vs 5 的差距全部来自 Town10HD(ep71)：
+   C=48 在那张图上 7/50，C=32 是 0/50；而在 Town01 上 C=48 反而更好。所以正确的
+   说法不是「48 点更差」，而是「48 点把能力从 Town10HD 挪到了 Town01」——
+   单 seed 下这更像**训练出的解落在了不同的局部最优**，而不是容量问题。
+3. **要判定 C 的因果，现在这套证据还不够。** 想继续这个方向，至少要做：
+   ① 多 seed（≥3）确认 Town10HD 的翻转是可复现的还是噪声；② 只在 Town10HD 上
+   做 C=32/48 的定点对比；③ 或者干脆换一条更省的路——C 保持不变，用场景难度
+   采样/课程学习去补那张弱图。
+4. **复现成本**：同 epoch 数下 C=48 贵 28.5 % 墙钟（7.39 h vs 5.75 h），换来的
+   test 收益为负。除非 ② 证明 Town10HD 的翻转能被正则/课程修好，否则**默认继续用
+   C=32**。
+
+### 12.6 复现命令
+
+```
+bash scripts/k4p_c48_train.sh              # refit -> validate -> 200 epoch（可重入）
+bash scripts/eval_k4p_c48_oneshot.sh       # 420 样本 test，ALM 开 + 关（~5 min）
+```
+
+### 12.7 待办
+
+- dashboard 注册 `K4P_c48_oneshot`（`diffusion-dashboard/engine_carla.py` 的 `MODELS`
+  + `app/page.tsx` 的模型下拉各加一条，前端需重新 build）。
+- 若采纳结论 3 的 ①，把 `outputs/oneshot_k4p_c48/ckpt/best_task.pt`（ep55）留作
+  唯一要保的权重；`epoch_*.pt`（40 个 × 91 MB ≈ 3.6 GB）可清。
+
+---
+
+### 12.8 修复：约束集缺失地图边界（**这条推翻了 12.4/12.5 的结论**）
+
+#### 12.8.1 症状
+
+12.4 的 9 个碰撞里有 6 个（325/333/343/348/366/368，全在 Town10HD）的
+`final_max_constraint_violation` 是**负的**（走廊判定完全可行）、`membership = 1.0`、
+ALM **只用 1 次内迭代就早停、修正量 0.00 m**，但 `final_collision = True`。
+
+把评测协议**原样重放**（同 420 样本顺序 / chunk 32 / seed 0，脚本
+`scripts/_diag_c48_eval_realization.py`，它复算的 `free_rate` 与评测存盘值逐位相同）
+后，用 `_free_mask` 的判据把每个非自由点拆开：
+
+    free = (bilinear(occ, p) <= 0.5) & (|p_x| <= 1) & (|p_y| <= 1)
+             ^^^^^^^^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^^^^^^^^^^^^
+             占据栅格（走廊管这个）         裁剪边界（走廊压根不管）
+
+    修复前 9 个失败合计 141 个非自由点 = 39 个压障碍 + 102 个越界
+
+#### 12.8.2 根因
+
+走廊单元由 `convex_region.EllipseRegionBuilder` 造：一串以椭圆中心为心、半径
+`obstacle_window_half = 0.35 scene`（=28 m）的**窗口环**点，加上「每个障碍边界点切
+一刀」的半空间面。**这两组面都没有提到 [-1,1]² 裁剪边界**，于是靠近地图边缘时单元
+可以整个伸到画面外：
+
+| idx | 顶点越出 [-1,1]² 的单元数 /128 | 最远伸出 | 曲线越界 |
+|---|---|---|---|
+| 325 | 109 | 22.49 m | 2.00 m |
+| 333 | 104 | 22.35 m | 0.54 m |
+| 368 | 89 | 22.37 m | 1.12 m |
+| 167 / 291（真碰撞） | 7 / 9 | 6.91 / 5.36 m | 0 |
+
+ALM 的保证是「曲线在走廊单元内」。走廊允许待在画面外 → ALM 无事可做（1 次迭代
+早停）→ 碰撞判据照样记一次碰撞。**不是优化不动，是约束里没有这一条。**
+
+#### 12.8.3 修复
+
+`src/geometry/convex_region.py`：每个单元**追加 4 个边界半空间**
+`±x ≤ 1−m, ±y ≤ 1−m`（`m = map_boundary_margin`，默认取走廊自己的
+`safety_margin = 0.02` scene = 1.6 m；因为投影会**落在约束边界上**，不留 inset 的话
+浮点噪声就能决定碰不碰）。可通过 `region.map_boundary_faces: false` 关掉。
+
+```
+单元面数 num_faces_max   9 -> 13
+单元顶点 max|coord|      1.2811 -> 1.0000   （越界单元 109/128 -> 0/128）
+```
+
+#### 12.8.4 效果（同协议、同 seed、同 chunk → 逐样本配对）
+
+| | 修复前 | 修复后 | 变化 |
+|---|---|---|---|
+| **C=48**（k4p_c48） | 9/420 | **3/420** | 6 个越界样本全好，**无新增** |
+| **C=32**（k4p） | 5/420 | **5/420** | 集合一字不差 |
+| C=48 `curve_rmse_m` | 18.07 | 18.03 | 基本不变 |
+
+修复后 C=48 剩下的 3 个（`_diag_c48_eval_realization.py` 在评测那次采样上量的）：
+
+| idx | 非自由点 | 压障碍 | 越界 | 最深双线性值 | 诊断 |
+|---|---|---|---|---|---|
+| 167 | 20 | 20 | 0 | **1.000** | ALM 没收敛（viol 仍 +0.103），深陷障碍 |
+| 291 | 14 | 14 | 0 | **1.000** | 同上（viol +0.076） |
+| 342 | **1** | 1 | 0 | 0.532 | **擦边**：512 点里只有 1 个点、且刚刚越过 0.5 |
+
+**合计 35 个非自由点 = 35 压障碍 + 0 越界**（修复前 141 = 39 + 102）。
+
+#### 12.8.5 更正后的结论
+
+1. **C=48 在这条线上是更优的**：3/420 vs C=32 的 5/420（ALM 开）；12.4/12.5 里
+   「9/420、C=48 更差」是**测量工具的洞**造成的，不是模型的锅。两个模型唯一共享的
+   硬样本是 167 / 291（Town02 / Town01），那是真的 ALM 收敛问题。
+2. **C=32 的 5/420 没有受这个洞影响**（修复前后集合完全相同），所以 §11 的结论
+   **不需要改**——它的碰撞本来就是真压障碍。
+3. 剩下的 3 个（2 个深陷 + 1 个擦边）指向下一件事：**ALM 的信任域/迭代预算**
+   （`max_curve_step_scene` 2.4 m/步 × 10 步 ≈ 24 m 上限，而 167/291 的原始预测离
+   走廊 20 m 开外，`λ` 涨到 104 仍不收敛）。要再往下压，得从那里动手，不是继续调 C。
+4. 这个修复是**全局行为变更**（默认开启），任何旧结论只要涉及「碰撞率」都应该用修
+   复后的管线复算一遍。目前复算过的：§11 的 C=32（不变）、§12 的 C=48（9→3）。
+
+

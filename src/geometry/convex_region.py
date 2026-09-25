@@ -140,6 +140,28 @@ class EllipseRegionBuilder:
             0.0, float(cfg.get("filter_eps", 1e-3 * map_scale)))
         self.guidance_dilation = max(0, int(cfg.get("guidance_dilation_cells", 1)))
         self.guidance_threshold = float(cfg.get("guidance_occupancy_threshold", 1e-3))
+        # --- map-boundary faces -------------------------------------------------
+        # Every cell is intersected with the scene box [-1,1]^2 (inset by
+        # ``map_boundary_margin``), i.e. four extra halfspaces
+        #     ±x <= 1 - margin,  ±y <= 1 - margin.
+        # WHY: the local window ring (``obstacle_window_half`` = 0.35 scene) and
+        # the obstacle-cut faces never mention the crop edge, so near the border
+        # a cell could extend up to 0.28 scene (22 m) OUTSIDE the 256^2 window.
+        # The ALM then happily certifies a curve that leaves the map, while the
+        # collision metric (``_free_mask``: ``|p| <= 1``) counts leaving the map
+        # as a collision -- the constraint set and the metric disagreed, and the
+        # optimiser had no reason to touch those samples at all.  Measured on the
+        # C=48 k=4 run: 6 of the 9 test collisions were pure crop excursions
+        # (0.17-2.0 m outside), with the pack reporting ``violation <= 0`` and
+        # `1` inner iteration.  See docs/CAMPAIGN_160K8P_RESULTS.md section 12.
+        #
+        # ``map_boundary_margin`` insets the box: a projection lands exactly ON
+        # the constraint boundary, so a face at |x| = 1 would put the curve at
+        # the very edge where float noise decides the collision.  Defaults to the
+        # corridor's own ``safety_margin``.
+        self.map_boundary = bool(cfg.get("map_boundary_faces", True))
+        self.map_boundary_margin = max(
+            0.0, float(cfg.get("map_boundary_margin", self.margin)))
         self.segment_collision_samples = max(
             2, int(cfg.get("segment_collision_samples", 8)))
         if self.guidance_dilation > 0:
@@ -202,6 +224,21 @@ class EllipseRegionBuilder:
             points = _obstacle_boundary_points(occ, self.dilation)
             out.append((indices, points))
         return out
+
+    def _map_boundary_faces(self, count: int, dtype, device):
+        """``±x <= 1-m``, ``±y <= 1-m`` broadcast to ``count`` cells.
+
+        The four halfspaces that keep a cell inside the 256^2 scene window, so
+        the ALM can SEE "leaving the map" and the pack agrees with the collision
+        metric on it.  See the comment in ``__init__``.
+        """
+        ins = 1.0 - self.map_boundary_margin
+        normals = torch.tensor([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
+                               dtype=dtype, device=device)
+        A = normals[None].expand(int(count), -1, -1).contiguous()
+        b = torch.full((int(count), 4), ins, dtype=dtype, device=device)
+        mask = torch.ones((int(count), 4), dtype=torch.bool, device=device)
+        return A, b, mask
 
     def _local_border_points(self, centers: torch.Tensor) -> torch.Tensor:
         """Dense obstacle-point ring around each ellipse-centred local map."""
@@ -342,6 +379,12 @@ class EllipseRegionBuilder:
                 chunk_A = torch.cat((real_A, border_A), dim=1)
                 chunk_b = torch.cat((real_b, border_b), dim=1)
                 chunk_mask = torch.cat((real_mask, border_mask), dim=1)
+                if self.map_boundary:
+                    box_A, box_b, box_mask = self._map_boundary_faces(
+                        len(c), dtype, device)
+                    chunk_A = torch.cat((chunk_A, box_A), dim=1)
+                    chunk_b = torch.cat((chunk_b, box_b), dim=1)
+                    chunk_mask = torch.cat((chunk_mask, box_mask), dim=1)
                 max_faces = max(max_faces, chunk_A.shape[1])
                 chunk_results.append((begin, end, chunk_A, chunk_b, chunk_mask))
             group_results.append((batch_indices, len(centers), chunk_results))
@@ -381,8 +424,16 @@ class EllipseRegionBuilder:
         # face_count only counts generated separator rows (not the visible edge
         # count) and therefore stays diagnostic-only.  ``center_inside`` IS part
         # of the validity contract (report section 4.3).
-        valid = (center_finite & quadratic_finite & region_complete & bounded
-                 & center_inside)
+        # ``center_inside`` is NO LONGER part of the validity contract (removed
+        # on request).  Measured reason: a route that hugs an obstacle puts an
+        # ellipse centre closer to the wall than ``safety_margin``, the cut face
+        # is then placed BEHIND that centre, and the cell was rejected -- and
+        # because ONE rejected base cell voids the WHOLE corridor
+        # (``invalid_base_region:113``), such samples ended with an empty pack
+        # and an ALM that never ran (test_0342 of the C=48 k=4 run: 9/128 cells
+        # rejected, corridor EMPTY).  The flag is still computed and reported in
+        # the diagnostics; it just does not invalidate the region any more.
+        valid = (center_finite & quadratic_finite & region_complete & bounded)
         if not return_diagnostics:
             return A, b, face_mask, valid
         diagnostics = {
@@ -434,6 +485,11 @@ def halfspaces_to_vertices(
     if interior_point is None:
         interior_point = np.zeros(2, dtype=float)
     interior_point = np.asarray(interior_point, dtype=float).reshape(2)
+    # scipy REQUIRES a strictly feasible point.  The ellipse centre is not one
+    # any more for cells whose faces were cut behind it (see the ``valid`` note
+    # in ``build_from_metric``), so fall back to interior-point-free enumeration.
+    if float((A @ interior_point - b).max()) > 1e-9:
+        return _vertices_by_pair_enumeration(A, b)
 
     # scipy convention: [A, -b] represents A x - b <= 0  (i.e. A x <= b).
     halfspaces = np.hstack([A, -b.reshape(-1, 1)])
@@ -441,8 +497,44 @@ def halfspaces_to_vertices(
         hs = HalfspaceIntersection(halfspaces, interior_point)
         intersections = np.asarray(hs.intersections, dtype=float)
         if len(intersections) < 3:
-            return None
+            return _vertices_by_pair_enumeration(A, b)
         hull = ConvexHull(intersections)
         return intersections[hull.vertices]
+    except Exception:
+        return _vertices_by_pair_enumeration(A, b)
+
+
+def _vertices_by_pair_enumeration(A: np.ndarray, b: np.ndarray,
+                                  tol: float = 1e-6):
+    """Vertices of a BOUNDED ``{x : A x <= b}`` with no interior point.
+
+    Every vertex of a bounded 2-D polytope is the intersection of two faces, so
+    enumerating the pairs and keeping the feasible ones is exact; the convex
+    hull of the result gives the polygon in counter-clockwise order.  Returns
+    None if fewer than three vertices survive (empty/degenerate polytope).
+    """
+    A = np.asarray(A, dtype=float).reshape(-1, 2)
+    b = np.asarray(b, dtype=float).reshape(-1)
+    pts = []
+    for i in range(len(b)):
+        for j in range(i + 1, len(b)):
+            det = A[i, 0] * A[j, 1] - A[i, 1] * A[j, 0]
+            if abs(det) < 1e-12:
+                continue                       # parallel faces
+            p = np.array([(b[i] * A[j, 1] - A[i, 1] * b[j]) / det,
+                          (A[i, 0] * b[j] - b[i] * A[j, 0]) / det])
+            if (A @ p - b).max() <= tol:
+                pts.append(p)
+    if len(pts) < 3:
+        return None
+    keep = []
+    for q in pts:                              # merge repeat vertices
+        if not keep or np.min(np.linalg.norm(np.asarray(keep) - q, axis=1)) > 1e-7:
+            keep.append(q)
+    if len(keep) < 3:
+        return None
+    pts = np.asarray(keep)
+    try:
+        return pts[ConvexHull(pts).vertices]
     except Exception:
         return None

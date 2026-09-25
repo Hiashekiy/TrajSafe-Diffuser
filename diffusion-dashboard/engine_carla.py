@@ -98,6 +98,23 @@ MODELS = {
         "ckpt_dir": "outputs/oneshot_k4p/ckpt",
         "label": "K4P · k=4 腐蚀数据集上重训的 OneShot（best_task ep98）",
     },
+    # C=32 -> 48 control points on the SAME k=4 cache and the SAME recipe (200
+    # epochs, batch 8 x accum 2); only model/bspline.num_controls differ.
+    # 200 epochs / 7.4 h (28.5 % slower per epoch), ``best_task`` at epoch 55.
+    # On its OWN cache, ALM on: 3/420 collisions (viol -0.019); 48/420 with ALM off.
+    # NOTE the history: it first measured 9/420, but 6 of those 9 were the
+    # trajectory leaving the 256^2 crop -- a hole in the CONSTRAINT SET (the
+    # corridor cells were never clipped to the map, so the ALM reported
+    # "feasible" and did nothing).  Fixed by the map-boundary halfspaces in
+    # src/geometry/convex_region.py (section 12.8); the same fix leaves the C=32
+    # model at 5/420, so C=48 is the better one here.
+    # MUST be paired with the ``160k4p_c48`` cache below (the panel draws the GT
+    # control polygon, and that cache is the one carrying C=48 control labels).
+    "K4P_c48_oneshot": {
+        "config": "configs/config_160k4p_c48_oneshot.yaml",
+        "ckpt_dir": "outputs/oneshot_k4p_c48/ckpt",
+        "label": "K4P_c48 · 48 控制点重训（best_task ep55）",
+    },
 }
 # ``best`` is deliberately NOT offered for the campaign arms: their val-total
 # best (epoch 7-26) is an overfit-topology artifact, ``best_task`` is the model
@@ -119,6 +136,9 @@ DEFAULT_CONFIG = os.path.join(ROOT, "configs", "config_160k8p.yaml")
 #          (the cache the campaign models were trained and evaluated on)
 #  160k4p  obstacles eroded by k=4 cells -> +5 m (free area 0.279); originally
 #          built test-only for §9, later completed to train/val/test for §11
+#  160k4p_c48  the SAME cache re-fitted for 48 B-spline controls (§12); only
+#          control_gt.npy differs, so it is the only correct pairing for the
+#          K4P_c48_oneshot checkpoint
 #
 # They are NOT nested near the crop border: ``--border-mode protect`` restores
 # the outer k cells from the source occupancy, so at k=8 the ring 0..7 keeps the
@@ -140,11 +160,67 @@ DATASETS = {
     "160k4p": {
         "root": "data/carla_processed_160k4p",
         "label": "160k4p · 紧走廊（障碍各让 2.5 m）",
-        "note": "更严格的地图 · 自由面积 0.279 · 仅 test",
+        "note": "更严格的地图 · 自由面积 0.279 · 三 split 齐全",
+    },
+    # Byte-identical to ``160k4p`` EXCEPT control_gt.npy, which is re-fitted for
+    # C=48 (scripts/data/carla_full/06_refit_controls.py copies every other array
+    # verbatim).  The panel draws the GT control polygon, so pairing the C=48
+    # model with the C=32 cache would show a C=48 prediction against C=32 GT --
+    # use THIS cache for K4P_c48_oneshot.  Map/corridor/GT curve are identical.
+    "160k4p_c48": {
+        "root": "data/carla_processed_160k4p_c48",
+        "label": "160k4p_c48 · 紧走廊 + C=48 控制点标签",
+        "note": "与 160k4p 逐字节相同（只有 control_gt 是 C=48）· 自由面积 0.279",
     },
 }
 DEFAULT_DATASET = "160k8p"
 SPLIT_ORDER = ("train", "val", "test")
+
+
+def _deep_update(base: dict, over: dict) -> dict:
+    """Recursive dict merge (the override wins at the leaves)."""
+    out = dict(base or {})
+    for key, value in (over or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_update(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _scalar(value):
+    """First element of a per-sample tensor/list -> plain Python scalar."""
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        value = value.detach().cpu()
+        if value.numel() == 1:
+            return value.reshape(-1)[0].item()
+        value = value.reshape(-1)
+        return value[0].item() if value.numel() else None
+    if isinstance(value, (list, tuple)):
+        return value[0] if value else None
+    if isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _final_projection_payload(out: dict):
+    """The final HARD-projection report for sample 0 (None when it did not run)."""
+    fp = out.get("final_projection")
+    if not fp:
+        return None
+    feasible = fp.get("hard_project_feasible")
+    feasible = bool(feasible.reshape(-1)[0]) if torch.is_tensor(feasible)         else bool(feasible)
+    return {
+        "status": _scalar(fp.get("hard_project_status")),
+        "applied": bool(_scalar(fp.get("hard_project_applied")) or False),
+        "feasible": feasible,
+        "violation_before": _scalar(fp.get("hard_project_violation_before")),
+        "violation_after": _scalar(fp.get("hard_project_violation")),
+        "correction_m": _scalar(fp.get("hard_project_correction_m")),
+        "correction_scene": _scalar(fp.get("hard_project_correction_scene")),
+    }
 
 
 def dataset_key(dataset_id=None) -> str:
@@ -489,7 +565,8 @@ class Engine:
     # -------------------------------------------------------------- generate
     def generate(self, sample_key, split, index, occupancy, condition, seed,
                  model_id="best_task", verify_regions=False, alm_enabled=True,
-                 ablation=None, steps=None, times=None, dataset=None):
+                 ablation=None, steps=None, times=None, dataset=None,
+                 final_project=None):
         model, epoch = self.get_model(model_id)
         dkey = dataset_key(dataset)
         condition = np.asarray(condition, dtype=np.float32).reshape(2, 2)
@@ -510,6 +587,20 @@ class Engine:
                               device=self.device)[None, None]
 
         alm_cfg, corridor_cfg = dict(self.alm_cfg), dict(self.corridor_cfg)
+        # The MODEL's own `alm` / `corridor` section WINS over the dashboard
+        # config: the panel must run the same guided-ALM settings the checkpoint
+        # was trained/evaluated with (e.g. `max_curve_step_scene` 0.2 for the
+        # C=48 k=4 run vs 0.03 in the shared 160k8p config, plus the final hard
+        # projection).  The dashboard config only supplies the defaults.
+        try:
+            _mcfg = model_config(model_id)
+            alm_cfg = _deep_update(alm_cfg, _mcfg.get("alm") or {})
+            corridor_cfg = _deep_update(corridor_cfg, _mcfg.get("corridor") or {})
+        except Exception as _exc:                       # noqa: BLE001
+            print("[engine] per-model alm config skipped: %s" % _exc, flush=True)
+        # per-request switch (the dashboard toggle): None keeps the config value
+        if final_project is not None:
+            alm_cfg["final_project"] = bool(final_project)
         if steps is not None:
             # Warm-up is counted in EXECUTED forwards, not in timesteps: with a
             # short schedule the configured 3 would swallow the guided phase
@@ -641,12 +732,25 @@ class Engine:
                 "constraint_tol": out["alm_settings"]["constraint_tol"],
                 "max_curve_step_scene":
                     out["alm_settings"]["max_curve_step_scene"],
+                # effective value of the final hard-projection switch
+                "final_project": bool(alm_cfg.get("final_project", True)),
                 "frames": alm_frames,
             },
             "corridor": out["corridors"][0],
             "activation": activation,
             "pack_summary": out["pack_summary"],
             "final_validation": out["final_validation"][0],
+            # EXACT projection of the returned polygon onto the frozen
+            # constraint pack (LP, HiGHS) -- status "not_needed" means the
+            # guided phase already ended inside the constraints
+            "final_projection": _final_projection_payload(out),
+            # the trajectory BEFORE that projection (guided-phase output), so the
+            # panel can draw what the hard map actually moved
+            "pre_projection": (self._rounded(out["p_pre_projection"][0])
+                               if out.get("p_pre_projection") is not None else None),
+            # the AUTHORITATIVE output curve: decoded from the returned polygon,
+            # i.e. AFTER the hard projection (the per-step frames stop before it)
+            "final_curve": self._rounded(out["p"][0]),
             "progress_alignment": out["progress_alignment"][0],
             "topology": {
                 "epoch": epoch,

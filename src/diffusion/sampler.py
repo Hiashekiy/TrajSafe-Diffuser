@@ -62,7 +62,7 @@ from ..geometry.bspline_constraints import build_constraint_pack
 from ..geometry.convex_region import EllipseRegionBuilder
 from ..geometry.safety_corridor import (SCENE_TO_METER, build_safety_corridor,
                                         progress_alignment_stats)
-from .bspline_alm import bspline_alm_correct
+from .bspline_alm import bspline_alm_correct, bspline_hard_project
 
 __all__ = ["sample", "pick_times", "ActivationResult", "try_activate_corridor",
            "dense_validation", "ablation_configs", "feedback_step"]
@@ -699,8 +699,36 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                               if step_alm_stats is not None else None),
             })
 
+    # ---- FINAL HARD PROJECTION ------------------------------------------
+    # The guided phase runs a fixed per-step budget and early-stops as soon as
+    # the batch is feasible, so the polygon that leaves the reverse loop can
+    # still violate the frozen corridor.  Project it once more, with a large
+    # budget, so the RETURNED controls are inside the constraint set (the
+    # per-step trust region stays on -- unbounded, the iteration diverges to
+    # NaN -- and a per-sample monotone guard keeps the input when the
+    # projection is not better).
+    final_projection = None
+    q_pre_projection = None
+    if (alm_enabled and pack is not None and bool(guided.any())
+            and bool(alm_cfg.get("final_project", True))):
+        # keep the polygon the guided phase produced, for the dashboard overlay
+        # ("what the trajectory was BEFORE the hard projection")
+        q_pre_projection = q.clone()
+        q, final_projection = bspline_hard_project(
+            q, pack, model.bspline, alm_cfg,
+            tol=float(alm_cfg.get("final_project_tol", 1e-9)))
+        q = model.hard_control_endpoints(q, cond)
+
     p = model.bspline.decode_controls(q)
     result = {"control": q, "p": p, "final": p, "has_candidate": has_cand}
+    if q_pre_projection is not None:
+        result["control_pre_projection"] = q_pre_projection
+        result["p_pre_projection"] = model.bspline.decode_controls(
+            q_pre_projection)
+    if final_projection is not None:
+        # raw per-sample tensors; the dashboard engine picks what it needs and
+        # converts to JSON (the eval reads it the same way)
+        result["final_projection"] = final_projection
     if last is not None:
         result["selected_idx"] = last["selected_idx"]
         result["topology_pi"] = last["topo"]["pi"]

@@ -31,7 +31,9 @@ used, but now on the 30-control interior system:
 
 The per-step correction limit is applied to the REAL curve displacement
 ``max_i ||B dQ_i||``, never to the control-space norm, and it is configured in
-scene units (``alm.max_curve_step_scene``).
+scene units (``alm.max_curve_step_scene``).  Do NOT remove it: it is part of the
+convergence of the accumulated/proximal scheme -- with no bound the displacement
+diverges and NaN-poisoned controls reach the next forward pass (measured).
 
 The dual ``lam`` is written in the same ordering as the pack, which is frozen
 for the whole guided phase, so it can be warm-started across reverse steps.
@@ -39,11 +41,12 @@ for the whole guided phase, so it can be warm-started across reverse steps.
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from ..geometry.safety_corridor import SCENE_TO_METER
 
-__all__ = ["bspline_alm_correct", "constraint_state"]
+__all__ = ["bspline_alm_correct", "constraint_state", "bspline_hard_project"]
 
 
 def _smooth_along_controls(x: torch.Tensor, half_width: int,
@@ -248,6 +251,12 @@ def bspline_alm_correct(
         step = target - delta
         if d_step > 0:
             # limit on the REAL curve displacement, not the control-space norm
+            # (temporarily disabled during the k4p_c48 investigation: with NO
+            # bound at all the accumulated displacement diverges -- measured 26
+            # samples of the 420-sample protocol ended up with NaN controls and
+            # rmse = nan.  The cap is part of the convergence of the scheme, not
+            # a safety extra: ``delta`` is an accumulator and the dual grows, so
+            # each step's increment must stay bounded.)
             curve_step = torch.einsum("hk,bkd->bhd", basis, step)
             d_max = curve_step.norm(dim=-1).max(dim=-1).values           # [B]
             scale = torch.where(d_max > d_step,
@@ -301,3 +310,120 @@ def bspline_alm_correct(
             "inner_steps_used": used.to(dtype),
         }
     return q, lam, stats
+
+
+@torch.no_grad()
+def bspline_hard_project(q_ref: torch.Tensor, pack, codec,
+                         config: dict | None = None,
+                         tol: float = 1e-9):
+    """HARD projection: put the final polygon inside the frozen constraint set.
+
+    NOT another ALM sweep.  The guided phase runs a fixed budget and early-stops,
+    so its output can still violate the pack (measured: 53/420 samples).  This
+    solves the projection EXACTLY, as a linear program:
+
+        min   sum(p) + sum(n)                       (L1 distance to q_ref)
+        s.t.  M q <= v                              (every piece x Bezier x face)
+              q - p + n = q_ref ,  p, n >= 0
+              q_0 = start ,  q_{C-1} = goal         (endpoints pinned)
+
+    with ``M`` the exact Bezier extraction stacked against the responsible cell
+    faces: for piece ``l``, Bezier control ``r`` and face ``f`` the row is
+        (A_lf . (E_lr @ q)) <= b_lf .
+    L1 keeps the correction SPARSE (few control points move) instead of smearing
+    it, and an LP is solved to optimality by HiGHS, so the result carries a
+    feasibility certificate instead of a tolerance: after the solve the residual
+    ``max(M q - v)`` is re-checked on the returned polygon.
+
+    Samples that already satisfy the pack are left untouched; if the LP is
+    infeasible (the pinned endpoints themselves violate their cells) the input is
+    kept and flagged (``hard_project_feasible = False``).
+
+    Returns ``(q_out, stats)``.
+    """
+    from scipy.optimize import linprog
+    from scipy.sparse import coo_matrix, hstack, eye as speye
+
+    cfg = dict(config or {})
+    scene_to_meter = float(cfg.get("scene_to_meter", SCENE_TO_METER))
+    dtype, device = q_ref.dtype, q_ref.device
+    B, C = int(q_ref.shape[0]), int(q_ref.shape[1])
+    mask = pack.piece_mask[:, :, None, None] & pack.face_mask[:, :, None, :]
+    _, g, _ = constraint_state(q_ref, pack)
+    v_before, _, _ = _violation_stats(g, mask)
+
+    q_out = q_ref.clone()
+    basis = codec.basis.to(dtype=q_ref.dtype, device=q_ref.device)
+    applied = torch.zeros(B, dtype=torch.bool, device=device)
+    feasible = (v_before <= 0.0)
+    status = ["not_needed"] * B
+
+    for b in range(B):
+        if bool(feasible[b]):
+            continue
+        P = int(pack.num_pieces[b].item())
+        if P == 0:
+            status[b] = "no_pack"
+            continue
+        E = pack.extraction[b, :P].detach().cpu().numpy().astype(np.float64)
+        A = pack.piece_A[b, :P].detach().cpu().numpy().astype(np.float64)
+        vb = pack.piece_b[b, :P].detach().cpu().numpy().astype(np.float64)
+        fm = pack.face_mask[b, :P].detach().cpu().numpy().astype(bool)
+        q0 = q_ref[b].detach().cpu().numpy().astype(np.float64)      # [C,2]
+
+        pi, fi = np.nonzero(fm)                                     # [n]
+        if len(pi) == 0:
+            status[b] = "no_pack"
+            continue
+        # rows: (pair, r) -> one inequality per (piece, bezier control, face)
+        coef = (A[pi, fi][:, None, :, None]
+                * E[pi][:, :, None, :]).reshape(len(pi) * 4, 2 * C)  # [4n, 2C]
+        rhs = np.repeat(vb[pi, fi], 4)                              # [4n]
+        nrow = coef.shape[0]
+        cols = np.tile(np.arange(2 * C), nrow)
+        rows = np.repeat(np.arange(nrow), 2 * C)
+        M = coo_matrix((coef.ravel(), (rows, cols)), shape=(nrow, 2 * C)).tocsr()
+
+        qflat0 = np.concatenate([q0[:, 0], q0[:, 1]])                # [2C]
+        nv = 6 * C
+        A_ub = hstack([M, coo_matrix((nrow, 4 * C))]).tocsr()
+        A_eq = hstack([speye(2 * C, format="csr"),
+                       -speye(2 * C, format="csr"),
+                       speye(2 * C, format="csr")]).tocsr()
+        c = np.concatenate([np.zeros(2 * C), np.ones(4 * C)])
+        bounds = [(None, None)] * (2 * C) + [(0, None)] * (4 * C)
+        # endpoints are the CONDITION: pin them hard
+        for ctrl in (0, C - 1):
+            for coord in (0, 1):
+                k = coord * C + ctrl
+                bounds[k] = (qflat0[k], qflat0[k])
+        res = linprog(c, A_ub=A_ub, b_ub=rhs, A_eq=A_eq, b_eq=qflat0,
+                      bounds=bounds, method="highs")
+        if not res.success or res.x is None:
+            status[b] = "lp_infeasible(%s)" % res.status
+            continue
+        z = np.asarray(res.x, dtype=np.float64)
+        qnew = np.stack([z[:C], z[C:2 * C]], axis=-1)                # [C,2]
+        q_out[b] = torch.as_tensor(qnew, dtype=dtype, device=device)
+        status[b] = "lp_optimal"
+        applied[b] = True
+
+    # ---- certificate: re-check the RETURNED polygon, and never regress -------
+    _, g_new, _ = constraint_state(q_out, pack)
+    v_after, _, _ = _violation_stats(g_new, mask)
+    worse = v_after > v_before
+    q_out = torch.where(worse[:, None, None], q_ref, q_out)
+    v_final = torch.where(worse, v_before, v_after)
+    applied &= ~worse
+    corr = torch.einsum("hk,bkd->bhd", basis, q_out - q_ref).norm(dim=-1)
+    stats = {
+        "hard_project_applied": applied,
+        "hard_project_status": status,
+        "hard_project_violation_before": v_before,
+        "hard_project_violation_after": v_after,
+        "hard_project_violation": v_final,
+        "hard_project_feasible": v_final <= float(tol),
+        "hard_project_correction_scene": corr.max(dim=-1).values,
+        "hard_project_correction_m": corr.max(dim=-1).values * scene_to_meter,
+    }
+    return q_out, stats

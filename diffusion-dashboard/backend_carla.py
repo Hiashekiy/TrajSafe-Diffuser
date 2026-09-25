@@ -235,7 +235,8 @@ def clear_generation_cache():
 @torch.no_grad()
 def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
              obstacles=None, alm_enabled: bool | None = None, split=None,
-             steps: int | None = None, times=None, dataset=None):
+             steps: int | None = None, times=None, dataset=None,
+             final_project: bool | None = None):
     dkey = normalize_dataset(dataset)
     split, index = resolve_sample(sample_key, split, dkey)
     eng = get_engine()
@@ -252,6 +253,7 @@ def generate(sample_key: str, model_id: str, seed: int, custom_condition=None,
                            seed, model_id=model_id,
                            verify_regions=False,
                            alm_enabled=alm_enabled is not False,
+                           final_project=final_project,
                            steps=steps, times=times, dataset=dkey)
     payload["split"] = split
     payload["dataset"] = dkey
@@ -361,6 +363,9 @@ class Handler(BaseHTTPRequestHandler):
             custom_condition = request.get("condition")
             obstacles = request.get("obstacles") or []
             alm_enabled = request.get("alm_enabled")
+            # per-request override of the final hard projection (the config key
+            # ``alm.final_project`` is the default; None = use that default)
+            final_project = request.get("final_project")
             steps = request.get("steps")
             if steps is not None:
                 steps = int(steps)
@@ -385,10 +390,12 @@ class Handler(BaseHTTPRequestHandler):
                  "dataset": dkey,
                  "model": model_id, "seed": seed, "condition": custom_condition,
                  "obstacles": obstacles,
-                 # WITHOUT these two every toggle of the ALM switch / step count
-                 # replayed the cached payload of the OTHER setting
+                 # WITHOUT these every toggle of the ALM switch / step count /
+                 # projection switch replayed the OTHER setting's payload
                  "alm_enabled": (None if alm_enabled is None
                                  else bool(alm_enabled)),
+                 "final_project": (None if final_project is None
+                                   else bool(final_project)),
                  "steps": steps},
                 sort_keys=True, separators=(",", ":"))
             cache_key = hashlib.sha1(cache_payload.encode()).hexdigest()[:12]
@@ -406,6 +413,7 @@ class Handler(BaseHTTPRequestHandler):
                     result = generate(sample_key, model_id, seed,
                                       custom_condition, obstacles,
                                       alm_enabled=alm_enabled,
+                                      final_project=final_project,
                                       split=resolved_split, steps=steps,
                                       dataset=dkey)
                     with open(cache_path, "w", encoding="utf-8") as handle:
