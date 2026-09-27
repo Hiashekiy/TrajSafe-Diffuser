@@ -72,3 +72,11 @@ alm:
   final_project: true
   # 精确性容差：LP 解出后重新校验返回的多边形，要求 max(M q - v) <= 该值。
   final_project_tol: 1.0e-9
+  # LP 求解必须【串行】。默认值 0 会走 auto = cpu-2 = 14 路并发，把同一个 chunk 内
+  # 多个 scipy/HiGHS LP 塞进一个进程：HiGHS 有时会在原生代码里长时间持有 GIL，于是
+  # 主线程卡死在 ThreadPoolExecutor.add_worker 的 Thread.start() 上（实测在完整
+  # 420 条测试集的第 9 个 chunk 永久卡死，单核 100% 空转、Python 帧一行不跑）。
+  # 而 linprog 既没有 maxiter 也没有超时，所以永远不会返回。
+  # 主表的 Full 行（3 个 seed × 420）是用【串行】路径跑出来的，这里显式钉死；
+  # 线程池的 1.60× 见报告 §2.6.2，那条已按“在完整测试集上不安全”撤回。
+  projection_workers: 1

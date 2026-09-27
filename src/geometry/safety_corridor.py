@@ -319,24 +319,26 @@ def _default_gamma_fn():
     return gather_dense_path_points
 
 
-def _base_cell(A_np, b_np, mask_np, valid_np, centers, anchors, index):
-    """One base corridor cell, from arrays that are ALREADY on the CPU.
+def _make_base_cell(anchors, centers, index, A_i, b_i, polygon, area, valid):
+    """One base corridor cell from ALREADY-COMPUTED numpy geometry.
 
-    ``A_np``/``b_np``/``mask_np``/``valid_np`` are numpy (hoisted out of the
-    per-cell loop by the caller): this used to do two ``.detach().cpu().numpy()``
-    transfers per cell, i.e. 256 device->host copies per sample.
+    The halfspaces and the polygon are produced by the caller (one
+    ``halfspaces_to_vertices`` call per cell); this only builds the object, so it
+    does no device transfer, no vertex extraction and no area computation.
     """
-    face = mask_np[index]
-    A_i = A_np[index][face]
-    b_i = b_np[index][face]
-    center = np.asarray(centers[index], dtype=np.float64).reshape(2)
-    polygon = halfspaces_to_vertices(A_i, b_i)
-    ok = bool(valid_np[index]) and polygon is not None \
-        and polygon_area(polygon) > _AREA_EPS
+    ok = bool(valid) and polygon is not None and area > _AREA_EPS
     return CorridorCell(
-        anchor_s=float(anchors[index]), center=center, A=A_i, b=b_i,
-        polygon=polygon, source="network", source_index=int(index),
-        valid=ok, face_count=int(face.sum()))
+        anchor_s=float(anchors[index]),
+        center=np.asarray(centers[index], dtype=np.float64).reshape(2),
+        A=A_i, b=b_i, polygon=polygon, source="network",
+        source_index=int(index), valid=ok, face_count=int(len(b_i)))
+
+
+def _overlap_from_areas(inter_area: float, area_a: float, area_b: float) -> float:
+    """``Area(A n B) / (min(Area(A), Area(B)) + eps)`` from precomputed areas."""
+    if area_a <= _AREA_EPS or area_b <= _AREA_EPS:
+        return 0.0
+    return float(inter_area / (min(area_a, area_b) + _AREA_EPS))
 
 
 def build_safety_corridor(
@@ -360,6 +362,8 @@ def build_safety_corridor(
     """
     cfg = dict(config or {})
     min_overlap = float(cfg.get("min_overlap_ratio", 0.10))
+    # how many query points share one convex cell (1 = the original behaviour)
+    stride = max(1, int(cfg.get("region_stride", 1)))
     bridge_cfg = dict(cfg.get("bridge") or {})
     bridge_enabled = bool(bridge_cfg.get("enabled", True))
     max_bridge = max(0, int(bridge_cfg.get("max_bridge_per_gap", 1)))
@@ -376,11 +380,24 @@ def build_safety_corridor(
         empty.failure_reason = "bad_corridor_input"
         return empty
 
+    # --- region sharing: only every ``stride``-th anchor gets its own cell ----
+    # The LAST anchor always keeps one, so the endpoint region is never shared.
+    if stride > 1 and H > 2:
+        keep_idx = list(range(0, H, stride))
+        if keep_idx[-1] != H - 1:
+            keep_idx.append(H - 1)
+    else:
+        keep_idx = list(range(H))
+    n_cells = len(keep_idx)
+    keep_centers = centers[keep_idx]
+    keep_shape4 = shape4[keep_idx]
+    keep_anchors = anchors[keep_idx]
+
     dev = builder.maps.device
     dt = builder.maps.dtype
     A, b, mask, valid = builder.build_from_ellipse(
-        torch.as_tensor(centers, dtype=dt, device=dev)[None],
-        torch.as_tensor(shape4, dtype=dt, device=dev)[None])
+        torch.as_tensor(keep_centers, dtype=dt, device=dev)[None],
+        torch.as_tensor(keep_shape4, dtype=dt, device=dev)[None])
 
     # hoist the device->host transfers out of the per-cell loop, and convert the
     # small per-cell arrays to numpy ONCE (they are reused by the overlap test)
@@ -388,12 +405,35 @@ def build_safety_corridor(
     b_np = b[0].detach().cpu().numpy().astype(np.float64)
     mask_np = mask[0].detach().cpu().numpy().astype(bool)
     valid_np = valid[0].detach().cpu().numpy().astype(bool)
-    base = [_base_cell(A_np, b_np, mask_np, valid_np, centers, anchors, i)
-            for i in range(H)]
+    faces = [A_np[i][mask_np[i]] for i in range(n_cells)]
+    face_b = [b_np[i][mask_np[i]] for i in range(n_cells)]
+    # One call per cell.  ``convex_region.vertices_pairwise_batch`` computes the
+    # same polygons in a single vectorised pass, but it pads every cell to the
+    # batch's LARGEST face count, so its cost is O(N * M_max**3) instead of
+    # sum(M_i**3).  Measured end-to-end it is 0.95x (i.e. no gain, and a latent
+    # blow-up on cluttered scenes), so the batch API is kept as a reference
+    # implementation only -- see the report section 3.2 "negative results".
+    polys = [halfspaces_to_vertices(faces[i], face_b[i]) for i in range(n_cells)]
+    areas = [polygon_area(poly) for poly in polys]
+    base = [_make_base_cell(keep_anchors, keep_centers, i, faces[i], face_b[i],
+                            polys[i], areas[i], valid_np[i])
+            for i in range(n_cells)]
+
+    # The intersection of two convex cells is the polytope of ALL their faces,
+    # so no clipping is needed; each cell's area is already known, which makes
+    # the pair test pure arithmetic.
+    if n_cells > 1:
+        inter_polys = [halfspaces_to_vertices(
+                           np.concatenate([faces[i], faces[i + 1]]),
+                           np.concatenate([face_b[i], face_b[i + 1]]))
+                       for i in range(n_cells - 1)]
+        inter_areas = [polygon_area(poly) for poly in inter_polys]
+    else:
+        inter_areas = []
     for i, cell in enumerate(base):
         if not cell.valid:
             empty.failure_reason = "invalid_base_region:%d" % i
-            empty.base_cell_count = H
+            empty.base_cell_count = n_cells
             return empty
 
     def _gamma(s_value: float) -> np.ndarray:
@@ -417,18 +457,19 @@ def build_safety_corridor(
     ratios: list[float] = []
     bridges: list[dict] = []
 
-    # one area per cell, reused by every adjacent pair (each cell is the "right"
-    # of one pair and the "left" of the next)
-    areas = [polygon_area(cell.polygon) for cell in base]
-
-    for i in range(H - 1):
+    for i in range(n_cells - 1):
         left = cells[-1]
         right = base[i + 1]
-        rho = halfspace_overlap_ratio(
-            left.A, left.b, right.A, right.b,
-            area_a=polygon_area(left.polygon) if left.source == "bridge"
-            else areas[left.source_index],
-            area_b=areas[right.source_index])
+        if left.source == "bridge":
+            # a bridge is built on demand and is not part of the batched arrays
+            rho = halfspace_overlap_ratio(
+                left.A, left.b, right.A, right.b,
+                area_a=polygon_area(left.polygon),
+                area_b=areas[right.source_index])
+        else:
+            rho = _overlap_from_areas(inter_areas[i],
+                                      areas[left.source_index],
+                                      areas[right.source_index])
         if rho + 1e-12 >= min_overlap:
             ratios.append(rho)
             cells.append(right)
@@ -436,21 +477,21 @@ def build_safety_corridor(
 
         if not bridge_enabled or max_bridge < 1:
             empty.failure_reason = "overlap_below_threshold:%d" % i
-            empty.base_cell_count = H
+            empty.base_cell_count = n_cells
             return empty
 
-        s_b = 0.5 * (float(anchors[i]) + float(anchors[i + 1]))
+        s_b = 0.5 * (float(keep_anchors[i]) + float(keep_anchors[i + 1]))
         try:
             c_b = _gamma(s_b)
         except Exception as error:                       # pragma: no cover
             empty.failure_reason = "bridge_gamma_failed:%d(%s)" % (i, error)
-            empty.base_cell_count = H
+            empty.base_cell_count = n_cells
             return empty
 
         bridge = build_bridge_region(builder, c_b)
         if not bridge["valid"]:
             empty.failure_reason = "bridge_region_invalid:%d" % i
-            empty.base_cell_count = H
+            empty.base_cell_count = n_cells
             return empty
 
         rho_l = overlap_ratio(left.polygon, bridge["polygon"])
@@ -458,7 +499,7 @@ def build_safety_corridor(
         if rho_l + 1e-12 < min_overlap or rho_r + 1e-12 < min_overlap:
             # V1: exactly one bridge per gap, no recursive refinement.
             empty.failure_reason = "bridge_failed:%d" % i
-            empty.base_cell_count = H
+            empty.base_cell_count = n_cells
             return empty
 
         bridge_cell = CorridorCell(
@@ -477,6 +518,6 @@ def build_safety_corridor(
         })
 
     return SafetyCorridor(
-        cells=cells, overlap_ratio=ratios, base_cell_count=H,
+        cells=cells, overlap_ratio=ratios, base_cell_count=n_cells,
         bridge_cell_count=len(bridges), valid=True, failure_reason=None,
         min_overlap=min_overlap, bridge_gaps=bridges)

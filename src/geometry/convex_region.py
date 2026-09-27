@@ -546,6 +546,83 @@ def _vertices_pairwise_vectorised(A: np.ndarray, b: np.ndarray,
     return pts[np.argsort(angle, kind="stable")]
 
 
+def vertices_pairwise_batch(A_list, b_list, tol: float = 1e-6,
+                            dedup_tol: float = 1e-7):
+    """Vertices of ``N`` independent 2-D polytopes ``{x : A_n x <= b_n}``.
+
+    Same exactness argument as :func:`_vertices_pairwise_vectorised` (every
+    vertex is the intersection of two faces), but the face pairs, the
+    intersections and the feasibility test are evaluated for ALL ``N`` sets in
+    one vectorised pass:
+
+        intersections   [N, P, 2]      P = M(M-1)/2 pairs of the padded faces
+        feasibility     [N, P, M]      one batched matmul + max over faces
+
+    Padding rows use ``A = 0, b = +inf``: their determinant with any other face
+    is 0 (skipped as parallel) and ``A.p - b = -inf <= tol`` (always feasible),
+    so padded faces can never create or destroy a vertex.
+
+    Returns a list of ``[V, 2]`` CCW arrays, ``None`` where the polytope is
+    empty/degenerate.
+    """
+    A_list = [np.asarray(a, dtype=np.float64).reshape(-1, 2) for a in A_list]
+    b_list = [np.asarray(bb, dtype=np.float64).reshape(-1) for bb in b_list]
+    n_sets = len(b_list)
+    if n_sets == 0:
+        return []
+    widths = [len(bb) for bb in b_list]
+    M = max(max(widths), 3)
+    A_pad = np.zeros((n_sets, M, 2), dtype=np.float64)
+    b_pad = np.full((n_sets, M), np.inf, dtype=np.float64)
+    mask = np.zeros((n_sets, M), dtype=bool)
+    for n, (a, bb) in enumerate(zip(A_list, b_list)):
+        k = len(bb)
+        if k:
+            A_pad[n, :k] = a
+            b_pad[n, :k] = bb
+            mask[n, :k] = True
+    i_idx, j_idx = np.triu_indices(M, k=1)
+    Ai, Aj = A_pad[:, i_idx, :], A_pad[:, j_idx, :]          # [N, P, 2]
+    bi, bj = b_pad[:, i_idx], b_pad[:, j_idx]                # [N, P]
+    det = Ai[:, :, 0] * Aj[:, :, 1] - Ai[:, :, 1] * Aj[:, :, 0]
+    keep = np.abs(det) > 1e-12
+    det_safe = np.where(keep, det, 1.0)
+    pts = np.empty((n_sets, len(i_idx), 2), dtype=np.float64)
+    # A padded face has ``A = 0`` and ``b = +inf``, so ``b * A`` is ``inf * 0``
+    # and yields NaN.  Every pair that involves a padded face has ``det == 0``
+    # and is therefore dropped by ``keep``, so the NaNs can never reach a
+    # vertex -- but they would still poison the ``value`` matmul below
+    # (``0 * NaN == NaN``), so they are zeroed instead of merely ignored.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        pts[:, :, 0] = (bi * Aj[:, :, 1] - Ai[:, :, 1] * bj) / det_safe
+        pts[:, :, 1] = (Ai[:, :, 0] * bj - bi * Aj[:, :, 0]) / det_safe
+    pts = np.where(keep[:, :, None], pts, 0.0)
+    # feasibility, batched: value[n, p, m] = A[n, m] . pts[n, p] - b[n, m]
+    value = np.einsum('nmk,npk->npm', A_pad, pts) - b_pad[:, None, :]
+    value = np.where(mask[:, None, :], value, -np.inf)
+    feasible = keep & (value.max(axis=2) <= tol)
+    out = []
+    for n in range(n_sets):
+        candidates = pts[n][feasible[n]]
+        if len(candidates) < 3:
+            out.append(None)
+            continue
+        keep_pts = [candidates[0]]
+        dedup_sq = dedup_tol * dedup_tol
+        for q in candidates[1:]:
+            delta = np.asarray(keep_pts) - q
+            if float((delta * delta).sum(axis=1).min()) > dedup_sq:
+                keep_pts.append(q)
+        if len(keep_pts) < 3:
+            out.append(None)
+            continue
+        poly = np.asarray(keep_pts, dtype=np.float64)
+        centre = poly.mean(axis=0)
+        angle = np.arctan2(poly[:, 1] - centre[1], poly[:, 0] - centre[0])
+        out.append(poly[np.argsort(angle, kind='stable')])
+    return out
+
+
 def _vertices_by_pair_enumeration(A: np.ndarray, b: np.ndarray,
                                   tol: float = 1e-6):
     """Backward-compatible alias of :func:`_vertices_pairwise_vectorised`."""
