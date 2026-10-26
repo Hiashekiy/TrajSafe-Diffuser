@@ -42,6 +42,9 @@ diffusion-dashboard/.*.tmpdir/
 # archive
 _archive/
 
+# git worktree of the pre-v4 commit, used only to re-run v3 numbers
+.v3-eval/
+
 # scene-normalized generated dataset (large)
 data/processed_scene/
 
