@@ -1,0 +1,5 @@
+configuration,ddim_steps,base_regions,time_ms,collisions,n,feasible_rate
+Standard configuration,16,128,82.26366429,0,420,1
+Fewer sampling steps only,4,128,51.4085481,0,420,1
+Shared convex regions only,16,17,56.4414231,0,420,1
+Combined acceleration,4,17,27.13813952,0,420,1

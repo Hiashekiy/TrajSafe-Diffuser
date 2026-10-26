@@ -85,13 +85,13 @@ def run_one(args, params: dict, out_json: str) -> dict:
            "--chunk", str(args.chunk), "--steps", str(args.steps),
            "--seed", str(args.seed), "--device", args.device,
            "--out", out_json, "--md", out_json[:-5] + ".md",
-           "--records", out_json[:-5] + ".jsonl"]
+           "--records", out_json[:-5] + ".jsonl", "--final-project", "off"]
     if args.processed:
         cmd += ["--processed", args.processed]
     for key, value in params.items():
         cmd += ["--sdf-set", "%s=%s" % (key, value)]
     started = time.time()
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         tail = "\n".join(proc.stdout.strip().splitlines()[-6:])
         print("[sweep] FAILED %s\n%s" % (params, tail), flush=True)
@@ -134,6 +134,7 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--processed", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--work-dir", default=None)
     ap.add_argument("--fix-inner-steps", type=int, default=10,
                     help="force a common inner-iteration budget for all four "
                          "baselines (guide 4.1.4 #6); 0 disables")
@@ -143,7 +144,7 @@ def main() -> int:
     out_path = args.out or os.path.join(ROOT, "outputs", "ch4",
                                         "sweep_%s.json" % args.guidance)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    work_dir = os.path.join(ROOT, "outputs", "ch4", "sweep_%s" % args.guidance)
+    work_dir = args.work_dir or os.path.join(ROOT, "outputs", "ch4", "sweep_%s" % args.guidance)
     os.makedirs(work_dir, exist_ok=True)
 
     entries = []

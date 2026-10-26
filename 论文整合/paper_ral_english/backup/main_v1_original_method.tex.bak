@@ -1,0 +1,592 @@
+%=====================================================================
+%  TrajSafe-Diffuser -- IEEE Robotics and Automation Letters (RA-L)
+%  Manuscript template: IEEEtran (journal mode), V1.8b
+%  Compile: pdflatex -> bibtex -> pdflatex -> pdflatex
+%=====================================================================
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}}
+
+% --- shorthands used throughout the manuscript -----------------------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Nabla}{\nabla}
+\newcommand{\Ada}{\operatorname{AdaLN}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\softmax}{\operatorname{softmax}}
+\newcommand{\MLP}{\operatorname{MLP}}
+\newcommand{\CA}{\operatorname{CA}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\PE}{\operatorname{PE}}
+\newcommand{\Head}{\operatorname{Head}}
+\newcommand{\Denoiser}{\operatorname{Denoiser}}
+\newcommand{\baralpha}{\bar{\alpha}}
+\newcommand{\vect}[1]{\boldsymbol{#1}}
+
+\begin{document}
+
+\title{TrajSafe-Diffuser: Diffusion-Based Motion Planning\\under Generative Safety Constraints}
+
+\author{First~A.~Author,~\IEEEmembership{Member,~IEEE,}
+        and~Second~B.~Author%
+\thanks{Manuscript received XXXX XX, XXXX; revised XXXX XX, XXXX. (Corresponding author: First A. Author.)}%
+\thanks{F. A. Author and S. B. Author are with the Department of XXXX, XXXX University, XXXX, China (e-mail: xxxx@xxxx.edu).}%
+\thanks{Author names, affiliations, funding information and the corresponding author were not present in the source manuscript and must be completed before submission.}}
+
+\markboth{IEEE Robotics and Automation Letters}%
+{Author \MakeLowercase{\textit{et al.}}: TrajSafe-Diffuser}
+
+\maketitle
+
+% The source manuscript numbers its reference list in a fixed thematic order.
+% \nocite here in exactly that order keeps the bibliography numbering identical
+% to the source, so that in-text citation numbers can be cross-checked 1:1.
+% (Entries still uncited in the body are listed as-is; see layout_report.md.)
+\nocite{lavalle2006planning,karaman2011sampling,zucker2013chomp,ho2020ddpm,%
+janner2022diffuser,huang2023scenediffuser,carvalho2025mpd,ames2017cbf,%
+xiao2025safediffuser,christopher2024projected,liang2025smd,deits2015iris,%
+wang2025firi,marcucci2023gcs,liang2026dgd,song2021ddim,chen2023analogbits,%
+piegl1997nurbs,peebles2023dit,vaswani2017attention,nocedal2006numerical,%
+dosovitskiy2017carla}
+
+\begin{abstract}
+Diffusion models provide a data-driven, multimodal way of generating trajectories for motion planning, yet their generative process cannot explicitly guarantee trajectory safety. Existing remedies usually rely on externally supplied safety constraints, and fixed constraint representations cannot adequately adapt to the spatial structure variations of complex non-convex environments, which limits the application of diffusion planning in such scenes.
+To address this problem, this paper proposes a diffusion-based motion planning method under generative safety constraints. The method first exploits environment structure information to automatically construct a safety constraint representation matched to the scene, and incorporates it into the diffusion denoising process to guide trajectory generation. A constrained optimization mechanism is then introduced into the reverse diffusion process to safely correct the generated result, and a safety feedback link injects historical correction information into subsequent denoising steps, thereby improving planning reliability in complex environments.
+Experiments are carried out on a two-dimensional static grid dataset built from CARLA road scenes. The results show that none of the 1260 generated trajectories collides, that the safety feasibility rate reaches 100\%, and that the trajectory root mean square error is 9.967~m, which is superior to the compared methods in both safety and trajectory quality. Ablation experiments verify the effectiveness of safety-conditioned generation, historical feedback and the constraint correction mechanism. In addition, by reducing the number of diffusion sampling steps and sharing convex regions, the method keeps zero collisions and comparable trajectory quality while lowering the average inference time per trajectory from 82.26~ms to 27.14~ms, an improvement in computational efficiency of about 3.03 times.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Diffusion-based motion planning, generative safety constraints, convex safe corridor, closed-loop safety feedback, augmented Lagrangian method.
+\end{IEEEkeywords}
+
+%=====================================================================
+\section{Introduction}
+%=====================================================================
+
+Motion planning is an important component for mobile robots, autonomous agents and embodied systems to achieve autonomous motion, and its goal is to generate trajectories that satisfy safety, continuity and motion constraints given environment information, an initial state and a task goal. Traditional motion planning methods are usually based on the geometric or topological information of the environment and generate feasible paths by search, sampling or optimization. In complex non-convex environments, however, the distribution of obstacles, the existence of multiple feasible routes and locally narrow spaces increase the difficulty of planning, so that planners face more involved trade-offs among search efficiency, trajectory quality and safety.
+
+In recent years, diffusion models have provided a data-driven way of generating trajectories for motion planning by virtue of their distribution modelling capability. By learning the distribution of trajectory data, diffusion models can generate motion trajectories with multimodal characteristics under given environment and task conditions, offering a new approach to motion planning in complex environments. Learning a trajectory distribution, however, is not equivalent to explicitly satisfying safety constraints. Even when the training data are largely feasible, the generated trajectories may still be affected by distribution shift, sampling error and changes in the environment structure, which leads to collisions or other constraint violations.
+
+To improve the safety of diffusion planning, existing studies have attempted to introduce safety constraint guidance, projection-based optimization and constraint correction into the reverse diffusion process, so that trajectory generation depends not only on a learned motion prior but is also subject to explicit safety conditions. Some of these methods, however, are built upon a predefined constraint function or a given feasible set, and their focus is mainly on how to satisfy these constraints during generation. For non-convex environments with complex obstacle distributions and multiple topological routes, the construction of the safety constraints is itself challenging. How to automatically build, from the environment structure and the planning task, a safety representation suitable for trajectory generation is an important problem for further improving the adaptability of diffusion planning.
+
+On the other hand, the effect of a safety constraint depends not only on its geometric expression but also, to a large extent, on the way it participates in trajectory generation. Gradient guidance or optimization-based correction can reduce the constraint violation of the currently predicted trajectory, but the corrected result is not necessarily fully exploited by the subsequent denoising network. In a multi-step reverse diffusion process in particular, if historical correction information is not used effectively, later predictions may again produce similar constraint violations and incur the computational cost of repeated correction. How to combine safety geometric constraints with the diffusion generative process, and how to let historical safety correction information participate in subsequent predictions, are therefore problems that require further study in order to achieve reliable trajectory generation.
+
+To address the above problems, this paper proposes TrajSafe-Diffuser, a diffusion-based motion planning method under generative safety constraints. Unlike methods that only perform trajectory correction under given constraints, this work starts from the free-space structure of the environment, constructs an explicit convex safe corridor along task-relevant routes, and uses the corresponding local safety features to guide trajectory generation. On this basis, the safety requirement on the continuous curve is converted into constraints on control points, the reverse diffusion prediction is corrected by an augmented Lagrangian method, and the safety correction result is used both for the subsequent sampling state update and for historical condition feedback, so that learning-driven trajectory generation and explicit geometric constraints cooperate with each other within the reverse diffusion process.
+
+The main contributions of this paper are as follows.
+
+\begin{itemize}
+\item[(1)] A generative safety constraint construction method for diffusion-based motion planning is proposed. By combining candidate route matching with local safety geometry prediction, a convex safe corridor matched to the environment structure and the planning task is automatically constructed, which provides local safety features and explicit geometric constraints for trajectory generation in complex non-convex environments.
+
+\item[(2)] A trajectory generation mechanism that combines safety-conditioned denoising with continuous-curve constraints is designed. Local safety features are introduced into the diffusion denoising network, and the convex hull property of piecewise B\'ezier curves is used to convert the corridor constraint on the continuous trajectory into linear inequalities on the B-spline control points, so that safety guidance and continuous-curve constraint correction are achieved during generation.
+
+\item[(3)] A closed-loop safety correction mechanism based on constrained optimization and historical feedback is established. In the reverse diffusion process, the augmented Lagrangian method is used to correct the predicted control points, and the correction information is transferred to subsequent denoising steps through the sampling state update and gated historical feedback, so that the safety correction acts continuously on the trajectory generation process.
+\end{itemize}
+
+%=====================================================================
+\section{Related Work}
+%=====================================================================
+
+Diffusion models have recently been widely used for trajectory generation and motion planning. Diffuser~\cite{janner2022diffuser} models a trajectory as the object of diffusion generation and achieves goal-directed trajectory planning through task conditioning and cost-gradient guidance; SceneDiffuser~\cite{huang2023scenediffuser} combines scene conditioning with physical optimization to improve the environmental adaptability of generated trajectories; MPD~\cite{carvalho2025mpd} performs joint planning with a learned trajectory prior and cost gradients and further explores a low-dimensional B-spline trajectory representation. To address the lack of explicit safety guarantees in the diffusion generative process, SafeDiffuser~\cite{xiao2025safediffuser} introduces control barrier functions into the diffusion process and restricts the feasible range of generated trajectories through safety constraints; Projected Diffusion Models~\cite{christopher2024projected} combine diffusion sampling with constrained optimization and improve the degree of constraint satisfaction of the generated result through projection correction; SMD~\cite{liang2025smd} extends constrained optimization to multi-robot trajectory generation in order to handle motion conflicts between robots. These studies have advanced diffusion models from unconstrained trajectory generation towards safety-constrained planning. Existing research, however, pays more attention to trajectory guidance and correction under given safety constraints, and there is still room for further study on the automatic construction of task-relevant safety constraints in complex non-convex environments and on the use of historical correction information in subsequent denoising steps.
+
+Regarding the construction of safety geometry, IRIS~\cite{deits2015iris} builds local obstacle-free convex regions by iterative obstacle separation and inscribed-ellipsoid optimization, and FIRI~\cite{wang2025firi} further addresses the efficiency of region construction and the quality of the convex regions on this basis, providing effective methods for representing safe space in complex environments. GCS~\cite{marcucci2023gcs} organizes convex regions into a graph structure and combines it with B\'ezier curve optimization to achieve continuous obstacle-avoiding trajectory planning, so that planning problems in complex non-convex spaces can be solved by local convex optimization. More recently, DGD~\cite{liang2026dgd} combines discrete route guidance with convex optimization and performs constraint correction during diffusion sampling, which shows that environment topology information and explicit safety constraints can act jointly on trajectory generation. How to make environment-related safety geometry serve both diffusion-conditioned generation and continuous-trajectory constraints, and how to further combine it with cross-step safety feedback, is still worth investigating. On this basis, this paper combines task-relevant local safety geometry generation, continuous-curve constraints and historical safety feedback, so that safety information is not only used for the constraint correction of the current trajectory but can also participate in subsequent denoising predictions.
+
+%=====================================================================
+\section{Method}
+%=====================================================================
+
+\subsection{Overall Framework}
+
+Given a two-dimensional occupancy grid $O\in\{0,1\}^{H\times W}$, a start point $S\in\R^2$ and a goal point $G\in\R^2$, this paper aims to generate a continuous motion trajectory that connects the start and the goal and satisfies the environment safety constraints. To reduce the representation dimensionality of diffusion generation, a clamped cubic B-spline is used to describe the trajectory, whose control point set is $Q=[q_0,\ldots,q_{C-1}]\in\R^{C\times2}$; the continuous trajectory is expressed as
+\begin{equation}
+\tau(u)=\sum_{j=0}^{C-1}B_{j,3}(u)\,q_j,
+\qquad u\in[0,1],
+\end{equation}
+where $B_{j,3}(u)$ is the cubic B-spline basis function and the number of control points is set to $C=48$. Since a clamped B-spline interpolates its end points, the start and goal position constraints are satisfied by fixing $q_0=S$ and $q_{C-1}=G$. The diffusion generation process is carried out directly in control point space.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{fig1_framework.png}
+\caption{Overall framework of TrajSafe-Diffuser.}
+\label{fig:framework}
+\end{figure*}
+
+As shown in Fig.~\ref{fig:framework}, TrajSafe-Diffuser mainly consists of three modules: feature encoding and fusion, safety feature and constraint generation, and trajectory denoising and safety correction. First, the occupancy grid, the current noisy control points and the valid historical correction information are encoded and fused to obtain control features that contain environment information and motion state. Subsequently, the task-relevant route is selected according to the matching relation between the control features and the candidate routes, and the local safety geometry is predicted along the route, which yields the safety latent features used for conditioned denoising and the convex safe corridor used for explicit correction. Finally, the denoising network predicts clean control points; after endpoint compensation, the augmented Lagrangian method is used for safety correction, and the correction result acts on the subsequent denoising process through the DDIM state update and the historical feedback.
+
+A standard Gaussian diffusion process is used to construct the noisy control points. For a reference control point set $Q_0$, Gaussian perturbation is applied only to the internal control points:
+\begin{equation}
+q_{t,j}=\sqrt{\baralpha_t}\,q_{0,j}
++\sqrt{1-\baralpha_t}\,\epsilon_j,
+\qquad
+\epsilon_j\sim\mathcal N(0,I),
+\end{equation}
+where $j=1,\ldots,C-2$, $t$ is the diffusion time step and $\baralpha_t$ is the cumulative signal coefficient. The first and last control points always remain at the given start and goal. During inference, the internal control points are initialized from Gaussian noise, and the network obtains the final control point set through stepwise prediction and safety correction, which is then decoded into a continuous trajectory.
+
+\subsection{Feature Encoding and Fusion}
+\label{sec:feature}
+
+To extract the spatial structure of the environment, the current trajectory state and the historical safety correction information, the occupancy grid, the noisy control points and the historical feedback are encoded separately, and feature interaction and fusion are performed through conditional attention and a gating mechanism.
+
+\subsubsection{Map and Control Point Feature Encoding}
+
+The map encoder adopts a convolutional network to extract multi-scale environment features, forming a global map memory $C_G\in\R^{256\times128}$ and a local map memory $C_E\in\R^{1024\times128}$, respectively. $C_G$ is used for the global interaction between control points and environment information, whereas $C_E$ is used for local spatial queries in the subsequent safety geometry prediction. The two map features correspond to spatial resolutions of $16\times16$ and $32\times32$, respectively, and spatial positional encodings are added to preserve the grid position information.
+
+For the current noisy control points $Q_t$, a two-dimensional coordinate encoding and a multilayer perceptron are first used to map them to a unified feature dimension, and the positional encoding of the control point index is then added:
+\begin{equation}
+X_j^{(0)}
+=\MLP_T\bigl(\Phi_{xy}(q_{t,j})\bigr)
++\PE_{1D}(j),
+\end{equation}
+where $\Phi_{xy}$ is the coordinate encoding function and $\PE_{1D}$ denotes the control point index encoding. The former provides spatial position information, while the latter preserves the ordering of the control points along the trajectory.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{fig2_feature_fusion.png}
+\caption{Conditional attention and historical-feedback gated fusion. (a) The conditional attention block consists of control point self-attention, global-map cross-attention and a feed-forward network, and extracts control features through time-condition modulation and residual connections. (b) Historical safety correction features are fused into the current control features through a feedback validity flag and channel-wise gating.}
+\label{fig:fusion}
+\end{figure*}
+
+As shown in Fig.~\ref{fig:fusion}(a), the initial control features pass through eight conditional attention blocks; each block successively performs control point self-attention, global-map cross-attention and a feed-forward transformation, and residual connections preserve the input information. Self-attention models the correlations among different control points, whereas map cross-attention takes the control features as queries and $C_G$ as keys and values in order to introduce environment structure information. Every block uses four-head attention with a unified feature dimension of $D=128$.
+
+To enable the network to adapt to different diffusion time steps, the time step $t$ is mapped to a time feature $h_t$ through sinusoidal positional encoding and an MLP, and adaptive layer normalization (AdaLN) is used to modulate the attention blocks:
+\begin{equation}
+\Ada(X,h_t)
+=\bigl(1+\gamma(h_t)\bigr)\odot\LN(X)
++\beta(h_t),
+\end{equation}
+where $\gamma$ and $\beta$ are the channel-wise scaling and shifting parameters generated from the time condition, and $\odot$ denotes element-wise multiplication. After conditional attention encoding, the control features $H_{\mathrm{ctrl}}\in\R^{48\times128}$ are obtained.
+
+\subsubsection{Historical Safety Feedback Fusion}
+
+In the reverse diffusion process, using only the current noisy control points makes it difficult to explicitly express the position and direction of the previous safety corrections. For this reason, a historical safety feedback encoder is introduced, which takes as additional inputs the most recent corrected control points $Q_{\mathrm{hist}}$ that passed the acceptance check, the corresponding correction $\Delta Q_{\mathrm{hist}}$ and a validity flag $v\in\{0,1\}$.
+
+For each control point, the two-dimensional corrected position, the two-dimensional correction and the validity flag form a five-dimensional vector, which is mapped by a $5\!\rightarrow\!64\!\rightarrow\!128$ MLP to the historical feedback feature $H_{\mathrm{fb}}\in\R^{48\times128}$. As shown in Fig.~\ref{fig:fusion}(b), in order to regulate the influence of the historical correction information on the current control features, adaptive fusion is realized through channel-wise gating:
+\begin{equation}
+\begin{aligned}
+g&=\sigma\bigl(W_g[H_{\mathrm{ctrl}};H_{\mathrm{fb}}]+b_g\bigr),\\
+\widetilde H_{\mathrm{ctrl}}
+&=H_{\mathrm{ctrl}}+v\,g\odot H_{\mathrm{fb}},
+\end{aligned}
+\end{equation}
+where $[\cdot;\cdot]$ denotes concatenation along the channel dimension, $\sigma$ is the sigmoid function and $g\in\R^{48\times128}$ is the gate weight. This mechanism allows the network to regulate the contribution of the historical correction information separately for different control points and feature channels. When $v=0$, the fused result degenerates strictly to the original control features; when $v=1$, the network can adaptively exploit the historical correction information that has passed the acceptance check to assist the current prediction.
+
+The resulting fused features $\widetilde H_{\mathrm{ctrl}}$ are used for the subsequent route matching and safety-conditioned denoising. The generation, acceptance and cross-step update mechanisms of the historical feedback are further described in Section~\ref{sec:denoise}.
+
+\subsection{Safety Feature and Constraint Generation}
+
+In complex non-convex environments there are usually multiple feasible routes connecting the start and the goal, and different routes correspond to different local obstacle distributions and free spaces. In order to construct safety constraints matched to the current planning task, this paper combines route matching with local safety geometry prediction: a task-relevant spatial structure is selected from the candidate routes, and the safety features used for conditioned denoising together with the explicit convex safe corridor used for trajectory correction are generated. Route matching and local geometry prediction are illustrated in Fig.~\ref{fig:safety}(a) and Fig.~\ref{fig:safety}(b), respectively.
+
+\subsubsection{Route Matching and Selection}
+
+Given the occupancy grid, the start point $S$ and the goal point $G$, a set of candidate routes $\{\Gamma_m\}_{m=1}^{M}$ with $M\leq4$ is first extracted from the free space. Each candidate route is processed by equal-arclength resampling, positional encoding and a route encoder to obtain the route feature $H_{S,m}\in\R^{128\times128}$.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{fig3a_route_selection.png}\\[2pt]
+\includegraphics[width=\textwidth]{fig3b_safety_geometry.png}
+\caption{Safety feature and constraint generation. (a) Candidate route matching and selection: the fused control features serve as queries and the candidate route features as keys and values; a time-modulated cross-attention block together with a feed-forward residual module forms the matching features, and average pooling, a scoring head and a masked softmax select the task-relevant route. (b) Local safety feature and ellipse geometry prediction: safety centers are sampled at fixed positions along the selected route, and a spatial distance bias between the centers and the map positions is added to the cross-attention; the resulting safety latent features are passed through an ellipse shape head that outputs the local semi-axes and orientation, which are used for the subsequent convex safe region construction.}
+\label{fig:safety}
+\end{figure*}
+
+As shown in Fig.~\ref{fig:safety}(a), to measure the degree of matching between the current control point state and the different candidate routes, time-conditioned multi-head cross-attention is performed with the fused control features $\widetilde H_{\mathrm{ctrl}}$ as queries and the candidate route features $H_{S,m}$ as keys and values, and the matching features are obtained through a feed-forward network and residual connections:
+\begin{equation}
+\begin{aligned}
+U_m &= \widetilde H_{\mathrm{ctrl}}
++\CA\bigl(\Ada(\widetilde H_{\mathrm{ctrl}},h_t),H_{S,m}\bigr),\\
+R_m &= U_m+\FFN_{\mathrm{match}}\bigl(\LN(U_m)\bigr),
+\end{aligned}
+\end{equation}
+where $R_m\in\R^{48\times128}$ denotes the interaction feature between the current control state and the $m$-th candidate route. After average pooling over the control point dimension, a scoring network produces the route score $\ell_m$, and a masked softmax is used to compute the selection probability of the valid candidates:
+\begin{equation}
+\pi_m=\frac{\exp(\ell_m)}{\sum_{k\in\mathcal V}\exp(\ell_k)},
+\qquad m\in\mathcal V,
+\end{equation}
+where $\mathcal V$ is the set of valid candidates. The route with the highest score is selected first, and if the corresponding safe corridor fails to be constructed, the remaining candidates are tried in turn. Once a corridor is successfully built, the selected route $\Gamma^*$ and its encoded feature $H_S^*$ are fixed, so that the subsequent trajectory denoising and geometric constraints remain consistent.
+
+\subsubsection{Local Safety Geometry Prediction}
+
+After the route has been selected, $N_q=128$ safety centers are uniformly sampled along its normalized arclength:
+\begin{equation}
+c_i=\Gamma^*\!\left(\frac{i}{N_q-1}\right),
+\qquad i=0,\ldots,N_q-1.
+\end{equation}
+The safety centers are sampled at fixed positions along the selected route, and the network predicts only the scale and orientation of the local safety ellipse associated with each center. This avoids the obstacle intrusion that may arise when the center positions are predicted directly, and thereby reduces the risk of failure in the subsequent convex safe region construction.
+
+As shown in Fig.~\ref{fig:safety}(b), the selected route feature passes through a safety query network to yield $H_\Gamma\in\R^{128\times128}$, which is used as queries to perform cross-attention with the local map features $C_E\in\R^{1024\times128}$ as keys and values. To make the queries of different safety centers pay more attention to their neighbouring obstacle structures, a bias based on spatial distance is introduced into the attention scores:
+\begin{equation}
+\mathcal B_{ij}^{\mathrm{geo}}
+=\clip\!\left(
+-\frac{\baralpha_t\|c_i-z_j\|_2^2}{2\sigma_{\mathrm{geo}}^2},
+-b_{\mathrm{clip}},0
+\right),
+\end{equation}
+where $c_i$ is the $i$-th safety center, $z_j$ is the spatial position corresponding to the $j$-th map feature, $\baralpha_t$ is the cumulative signal coefficient of the diffusion process, $\sigma_{\mathrm{geo}}$ controls the decay range of the spatial bias and $b_{\mathrm{clip}}$ is the bias clipping threshold. Adding the spatial bias directly to the pre-normalization score of the scaled dot-product attention gives
+\begin{equation}
+w_{ij}
+=\softmax_j\!\left(
+\frac{q_i^{\top}k_j}{\sqrt{d_h}}
++\mathcal B_{ij}^{\mathrm{geo}}
+\right),
+\end{equation}
+where $q_i$ and $k_j$ are the query and key vectors obtained by linear projection of the safety query features and the map features, respectively, and $d_h$ is the feature dimension of a single attention head. By imposing a larger negative offset on distant positions, the spatial bias makes the attention prioritize environment information near a safety center while still taking feature similarity into account. As the reverse diffusion proceeds, $\baralpha_t$ gradually increases, the modulating effect of the distance bias on the attention distribution is strengthened, and the geometric queries gradually emphasize the local spatial structure.
+
+After cross-attention and residual fusion, the local safety latent features are obtained:
+\begin{equation}
+H_{\mathrm{ell}}
+=H_\Gamma+
+\CA_{\mathcal B^{\mathrm{geo}}}
+\bigl(\Ada(H_\Gamma,h_t),C_E\bigr).
+\end{equation}
+The safety latent features $H_{\mathrm{ell}}\in\R^{128\times128}$ are passed through an ellipse shape prediction network that outputs the semi-axes $a_i$, $b_i$ and the orientation $\theta_i$ of each center. To accommodate the positivity requirement on the semi-axes and the periodicity of the orientation, a log-semi-axis and double-angle parameterization is adopted:
+\begin{equation}
+e_i=(\log a_i,\log b_i,\cos2\theta_i,\sin2\theta_i).
+\end{equation}
+The local safety ellipse $\mathcal E_i$ is determined by the fixed center $c_i$ and the predicted parameters. It should be pointed out that the predicted ellipse provides local scale and orientation information and does not directly constitute an obstacle-free constraint. The obstacle distribution of the environment is further combined to construct explicit convex safe regions by geometric separation:
+\begin{equation}
+\mathcal R_i=
+\{x\in\R^2\mid A_ix\leq b_i\},
+\end{equation}
+where $A_i$ and $b_i$ denote the half-space normal vectors and the boundary offsets of the convex region, respectively. In the region construction process, obstacle grid cells are treated as complete squares, and regions intersecting obstacles are excluded by combining a safety margin, obstacle separation and map boundary checks. The overlap between adjacent regions is then checked in the spatial order of the selected route, and bridging regions are added when necessary to form an ordered convex safe corridor $\mathcal C$.
+
+The safety geometry generation module therefore provides two interrelated representations: the local safety latent features $H_{\mathrm{ell}}$, which guide the diffusion network in predicting the control points, and the explicit convex safe corridor $\mathcal C$, which constrains the feasible space of the continuous trajectory. Both are built from the same task route, so that the learned safety condition and the subsequent geometric correction share a consistent spatial basis.
+
+\subsection{Trajectory Denoising and Safety Correction}
+\label{sec:denoise}
+
+Once the local safety features and the convex safe corridor have been obtained, the safety condition is incorporated into the diffusion denoising network and an explicit continuous-curve constraint is imposed on the generated trajectory. The overall procedure comprises safety-conditioned denoising, endpoint compensation, augmented Lagrangian correction and cross-step safety feedback; the denoising backbone and its internal condition module are shown in Fig.~\ref{fig:denoise}(a) and Fig.~\ref{fig:denoise}(b), respectively.
+
+\subsubsection{Safety-Conditioned Denoising and Endpoint Compensation}
+
+As shown in Fig.~\ref{fig:denoise}(a), multi-head cross-attention is performed with the fused control features $\widetilde H_{\mathrm{ctrl}}$ as queries and the local safety features $H_{\mathrm{ell}}$ as keys and values, so as to obtain the safety information corresponding to the current control points:
+\begin{equation}
+\begin{aligned}
+U &= \widetilde H_{\mathrm{ctrl}}
++\CA\bigl(\Ada(\widetilde H_{\mathrm{ctrl}},h_t),H_{\mathrm{ell}}\bigr),\\
+F &= \MLP_{\mathrm{fuse}}(U),
+\end{aligned}
+\end{equation}
+where $F\in\R^{48\times128}$ is the control feature after fusing the safety condition. This feature passes through three conditional denoising blocks, each of which consists of control point self-attention, global-map cross-attention and a feed-forward network, with the diffusion time condition injected through adaptive layer normalization; the single-block structure is shown in Fig.~\ref{fig:denoise}(b).
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth]{fig4a_safety_denoising.png}\\[2pt]
+\includegraphics[width=\textwidth]{fig4b_denoising_block.png}
+\caption{Safety-conditioned denoising and control point prediction. (a) The control features read the local safety latent features through cross-attention, and the fused features pass through three conditional denoising blocks, a coordinate prediction head and endpoint compensation to yield control points that satisfy the start and goal position constraints. (b) Single conditional denoising block: the diffusion time condition is injected through AdaLN, followed by control point self-attention, global-map cross-attention and a feed-forward transformation, with residual connections applied to all three sublayers.}
+\label{fig:denoise}
+\end{figure*}
+
+Clean control points are finally output by a linear prediction head:
+\begin{equation}
+\widehat Q_{0,\mathrm{raw}}^{(t)}
+=\Head\bigl(\Denoiser(F,C_G,h_t)\bigr).
+\end{equation}
+Unlike parameterizations that predict the noise directly, this work predicts the clean trajectory representation directly in control point space.
+
+To satisfy the given start and goal constraints, boundary compensation is applied to the predicted control points. Considering that directly replacing the first and last control points may cause large local shape changes in the neighbouring control points, the endpoint errors are distributed to the neighbouring control points with fixed weights:
+\begin{equation}
+\widehat q_{0,\mathrm{bdry},j}^{(t)}
+=\widehat q_{0,\mathrm{raw},j}^{(t)}
++w_j^S\bigl(S-\widehat q_{0,\mathrm{raw},0}^{(t)}\bigr)
++w_j^G\bigl(G-\widehat q_{0,\mathrm{raw},C-1}^{(t)}\bigr),
+\end{equation}
+where $w_j^S$ and $w_j^G$ are fixed compensation weights in the neighbourhoods of the start and the goal, which guarantee that the compensated first and last control points equal $S$ and $G$, respectively. The compensated result $\widehat Q_{0,\mathrm{bdry}}^{(t)}$ serves as the reference trajectory for the subsequent safety correction.
+
+\subsubsection{Continuous-Trajectory Safety Constraints and Augmented Lagrangian Correction}
+
+Although the safety condition can improve the denoising prediction, the network output may still exhibit local constraint violations. In order to apply the convex safe corridor to the whole continuous trajectory, this paper uses the convex hull property of cubic B\'ezier curves to convert the continuous-curve constraint of the B-spline into linear inequalities on the control points.
+
+According to the responsibility intervals of the safe regions and the B-spline knot positions, the curve parameter domain is subdivided so that each subinterval corresponds to one convex safe region. For the $\ell$-th subinterval, its four B\'ezier control points can be expressed linearly in terms of the original B-spline control points $Q$:
+\begin{equation}
+\beta_\ell=E_\ell Q,
+\qquad E_\ell\in\R^{4\times48}.
+\end{equation}
+Since a B\'ezier curve lies within the convex hull formed by its control points, when all four control points lie in the corresponding convex region $\mathcal R_{j(\ell)}$, the continuous curve segment also lies in that region. The continuous safety constraint can therefore be expressed as
+\begin{equation}
+g_{\ell,r,f}(Q)=
+a_{j(\ell),f}^{\mathsf T}(E_\ell Q)_r
+-b_{j(\ell),f}\leq0,
+\end{equation}
+where $r=0,1,2,3$ indexes the B\'ezier control points and $f$ indexes the half-space constraint of the corresponding convex region. Collecting the constraints of all subintervals yields the linear inequality $g(Q)\leq0$ on the original B-spline control points. This construction does not require expanding the 48 original control points into independent optimization variables, and it provides a sufficient condition for the continuous curve to lie inside the safe corridor.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.95\textwidth]{fig5_alm_constraint.jpg}
+\caption{Illustration of the continuous-curve safety constraint and the augmented Lagrangian control point correction. Right: change of the predicted trajectory and of the B-spline control points after the ALM correction under fixed start and goal; left: zoom of a local B\'ezier curve and its control points, illustrating the relation between the control point constraints and the membership of the convex region.}
+\label{fig:alm}
+\end{figure*}
+
+As shown in Fig.~\ref{fig:alm}, taking the endpoint-compensated predicted control points $Q^{\mathrm{ref}}=\widehat Q_{0,\mathrm{bdry}}^{(t)}$ as a reference, the augmented Lagrangian method (ALM) is used to perform the safety correction:
+\begin{equation}
+\begin{aligned}
+\min_{Q}\quad
+&\frac{\lambda_p}{2}\bigl\|B(Q-Q^{\mathrm{ref}})\bigr\|_F^2
++\frac{\lambda_s}{2}\bigl\|D_2B(Q-Q^{\mathrm{ref}})\bigr\|_F^2\\
+\mathrm{s.t.}\quad
+&g(Q)\leq0,\\
+&q_0=S,\qquad q_{C-1}=G,
+\end{aligned}
+\end{equation}
+where $B$ is the B-spline basis matrix at the trajectory evaluation points and $D_2$ is the second-order difference operator. The objective terms constrain the trajectory offset and the local shape change caused by the correction, respectively, so that the original generated trajectory is preserved as far as possible while the safety constraints are satisfied.
+
+For the inequality constraints, non-negative Lagrange multipliers $\lambda$ and a penalty coefficient $\rho$ are introduced to construct the augmented Lagrangian function:
+\begin{equation}
+\begin{aligned}
+\mathcal L_\rho(Q,\lambda)
+={}&J(Q-Q^{\mathrm{ref}})\\
+&+\frac{\bigl\|[\lambda+\rho g(Q)]_+\bigr\|_2^2-\|\lambda\|_2^2}{2\rho},
+\end{aligned}
+\end{equation}
+where $[\cdot]_+$ denotes the element-wise positive part. During the optimization, the internal control points and the constraint multipliers are updated alternately while the start and the goal are kept fixed. A finite number of iterations yields the corrected control points $Q_{0,\mathrm{ALM}}^{(t)}$, and the constraint residual is then checked. It should be noted that the B\'ezier convex hull constraint provides a sufficient condition for continuous safety, whereas whether the output of a finite-iteration ALM satisfies this condition still depends on the actual constraint residual.
+
+\subsubsection{Safety State Update and Historical Feedback}
+
+In order to avoid the safety correction acting only on the current prediction result, the corrected control points are further used in the subsequent reverse diffusion process. Specifically, the safety correction result influences the next generation step through two paths: it participates directly in the DDIM state update, and it serves as a historical condition for the subsequent denoising network.
+
+For the current diffusion time step $t$ and the next sampling time step $s<t$, a deterministic DDIM update is adopted and the noise component is recomputed from the corrected clean control points:
+\begin{equation}
+\begin{aligned}
+\widehat\epsilon_t &=
+\frac{Q_t-\sqrt{\baralpha_t}\,Q_{0,\mathrm{ALM}}^{(t)}}{\sqrt{1-\baralpha_t}},\\
+Q_s &=
+\sqrt{\baralpha_s}\,Q_{0,\mathrm{ALM}}^{(t)}
++\sqrt{1-\baralpha_s}\,\widehat\epsilon_t.
+\end{aligned}
+\end{equation}
+Meanwhile, the corrected control points that pass the safety acceptance check and their correction relative to the original prediction are used as the historical feedback:
+\begin{equation}
+\begin{aligned}
+Q_{\mathrm{hist}}&=Q_{0,\mathrm{ALM}}^{(t)},\\
+\Delta Q_{\mathrm{hist}}
+&=Q_{0,\mathrm{ALM}}^{(t)}-\widehat Q_{0,\mathrm{bdry}}^{(t)}.
+\end{aligned}
+\end{equation}
+The historical feedback and the validity flag pass through the feedback encoder together and are fused into the subsequent control features according to the gating mechanism of Section~\ref{sec:feature}. When the correction result fails the acceptance check, the valid historical record is not updated, which prevents correction results that do not meet the acceptance condition from being introduced as new safety feedback.
+
+Through the above mechanism, the DDIM state update directly changes the next diffusion input, while the historical feedback provides the network with the previous correction position and direction, so that the subsequent denoising can exploit the safety correction information already obtained. Local safety features, continuous-curve constraints and cross-step correction thus jointly form a closed-loop safety mechanism for diffusion trajectory generation.
+
+\subsection{Loss Function and Training Strategy}
+\label{sec:loss}
+
+In order to enable the network to simultaneously learn the trajectory distribution, the task-relevant safety geometry and the way in which historical correction information is used, this paper adopts a multi-task loss together with a two-forward training strategy with shared parameters. Training supervises not only the clean control point prediction at the current time step, but also constructs, through the safety correction and the diffusion state update, the condition of a subsequent prediction that carries historical feedback.
+
+\subsubsection{Loss Function Design}
+
+Network training involves supervision of trajectory prediction, local safety geometry and safety constraints. For the reference control points $Q_0$ and the network prediction $\widehat Q_{0,\mathrm{raw}}$, the control point reconstruction loss is defined as
+\begin{equation}
+\mathcal L_{\mathrm{ctrl}}
+=\frac{1}{2(C-2)}
+\sum_{j=1}^{C-2}
+\bigl\|\widehat q_{0,\mathrm{raw},j}-q_{0,j}\bigr\|_2^2.
+\end{equation}
+This loss acts only on the internal control points, while the start, the goal and their neighbourhoods are supervised by a separate boundary loss. In addition, an auxiliary coarse control point prediction loss and a control point smoothness loss are used to improve the trajectory prediction accuracy and the local continuity.
+
+For the safety geometry generation module, a route classification loss $\mathcal L_{\mathrm{route}}$ supervises candidate route selection, and an ellipse shape regression loss $\mathcal L_{\mathrm{shape}}$, a region overlap loss $\mathcal L_{\mathrm{IoU}}$ and an obstacle overlap penalty $\mathcal L_{\mathrm{occ}}$ constrain the local safety geometry prediction. A corridor deviation penalty $\mathcal L_{\mathrm{corr}}$ is also imposed on the endpoint-compensated trajectory in order to guide the base prediction towards valid safe regions.
+
+The above losses constitute the base training objective:
+\begin{equation}
+\begin{aligned}
+\mathcal L_{\mathrm{base}}={}&
+w_c\mathcal L_{\mathrm{ctrl}}
++w_a\mathcal L_{\mathrm{coarse}}
++w_b\mathcal L_{\mathrm{boundary}}\\
+&+w_s\mathcal L_{\mathrm{smooth}}
++w_r\mathcal L_{\mathrm{route}}
++w_e\mathcal L_{\mathrm{shape}}\\
+&+w_i\mathcal L_{\mathrm{IoU}}
++w_o\mathcal L_{\mathrm{occ}}
++w_g\mathcal L_{\mathrm{corr}},
+\end{aligned}
+\end{equation}
+in which the weights are used to balance the different supervision objectives.
+
+In order to enable the network to learn to exploit the historical safety correction information, additional continuous safety constraints and curve smoothness supervision are imposed on the second prediction that receives the historical feedback. The continuous safety loss acts directly on the predicted control points before the ALM correction:
+\begin{equation}
+\mathcal L_{\mathrm{fb,safe}}
+=\max_{\ell,r,f}
+\Bigl[
+g_{\ell,r,f}\bigl(\widehat Q_{0,\mathrm{bdry}}^{(2)}\bigr)
+\Bigr]_+.
+\end{equation}
+This loss is computed only for samples with valid constraints, and it encourages the network to actively reduce the continuous-curve constraint violation after receiving the historical feedback, rather than relying entirely on the subsequent ALM correction. Combining it with the control point reconstruction, auxiliary prediction, boundary and curve smoothness losses of the second prediction gives
+\begin{equation}
+\begin{aligned}
+\mathcal L_{\mathrm{fb}}={}&
+w_c\mathcal L_{\mathrm{ctrl}}^{(2)}
++w_a\mathcal L_{\mathrm{coarse}}^{(2)}\\
+&+w_b\mathcal L_{\mathrm{boundary}}^{(2)}
++w_f\mathcal L_{\mathrm{fb,safe}}
++w_p\mathcal L_{\mathrm{curve}}.
+\end{aligned}
+\end{equation}
+
+\subsubsection{Two-Forward Training with Shared Parameters}
+
+Conventional single-time-step diffusion training learns clean trajectory prediction by randomly sampling the noise level, but it cannot directly provide the historical feedback produced by the previous prediction and the safety correction. In order to align the training procedure with the cross-step correction mechanism at inference time, this paper adopts two network forward passes with shared parameters and links them through the actual safety correction and the DDIM update.
+
+First, a diffusion time step $t$ is randomly sampled, noise is added to the reference control points to obtain $Q_t$, and a first network forward pass is executed without historical feedback in order to predict the clean control points and compute the base loss $\mathcal L_{\mathrm{base}}$. The endpoint-compensated prediction is then sent to the ALM, which performs constraint correction using the offline safe corridor corresponding to the reference route, and the historical control points, the correction and the feedback validity flag are constructed from the correction result.
+
+On this basis, one DDIM update is performed with the corrected control points to obtain the noisy state $Q_s$ at the adjacent time step $s=t-1$. The second network forward pass receives $Q_s$ and the constructed historical feedback, predicts the clean control points again, and computes the feedback loss $\mathcal L_{\mathrm{fb}}$. The two forward passes use the same network parameters, which enables the model to learn the relation between the current prediction and the historical safety correction.
+
+During training, the ALM solve, the constraint check, the construction of the historical feedback and the DDIM state update all stop gradient propagation, and the second loss updates the shared network parameters only through the second network forward pass. The final training objective is
+\begin{equation}
+\mathcal L
+=\mathcal L_{\mathrm{base}}
++\omega_{\mathrm{fb}}\mathcal L_{\mathrm{fb}},
+\qquad \omega_{\mathrm{fb}}=0.5.
+\end{equation}
+To accommodate the situation in which valid historical feedback is unavailable in the initial inference stage, the historical input of the second forward pass is masked with a certain probability during training, and random time step sampling is used to cover different noise levels. This strategy enables the network to learn the effect of the historical safety correction on the subsequent trajectory prediction without unrolling the complete reverse diffusion process in every iteration.
+
+%=====================================================================
+\section{Experiments and Analysis}
+%=====================================================================
+
+\subsection{Experimental Setup}
+
+\subsubsection{Dataset and Implementation Details}
+
+The experiments use a two-dimensional static occupancy grid trajectory dataset built from CARLA road scenes~\cite{dosovitskiy2017carla}. Each scene covers $160\,\mathrm{m}\times160\,\mathrm{m}$, the map size is $256\times256$ and the spatial resolution is $0.625\,\mathrm{m/grid}$; obstacles are dilated by $4$ grid cells and the map boundary is treated as an impassable region. The training set consists of 3850 samples from Town03 and Town04, the validation set contains 1550 samples from Town05, and the test set contains 420 samples from Town01, Town02 and Town10HD, with the test towns excluded from training. Quality evaluation for the main comparison, the ablation and the acceleration configurations all uses the same test set and random seeds 0, 1 and 2, and 1260 trajectories are generated for each configuration.
+
+All models use a cubic B-spline representation with 48 control points and are trained for 200 epochs on an NVIDIA GeForce RTX 4070 with a learning rate of $2\times10^{-4}$ and a batch size of 16. In order to distinguish the safety condition from the feedback mechanism, three generators are used: D is the base diffusion model, which does not contain the safety condition or the historical feedback; S additionally introduces the safety condition and geometric supervision but does not use feedback training; A adopts the two-forward feedback training of Section~\ref{sec:loss} on top of the safety condition. All three select the model weights according to the task score on the validation set, and the test set does not participate in model selection.
+
+Standard inference uses 16 DDIM steps, the first 3 forward passes serve as warm-up, after which the safe corridor is activated and the ALM correction is performed; the first correction runs at most 8 inner iterations and the subsequent ones at most 10. The 4-step configuration shortens the warm-up to 2 passes while keeping the remaining optimization settings unchanged. Trajectory collisions and corridor responsibility-region residuals are both evaluated by sampling 512 equally spaced points along the continuous curve. It should be noted that this discrete check cannot replace a continuous safety verification of the inequalities of all B\'ezier control points.
+
+\subsubsection{Comparison Methods and Evaluation Metrics}
+
+In order to examine the effect of explicit safety constraints, four baselines are set up: unconstrained diffusion, fixed-penalty guidance, primal-dual guidance and SDF augmented Lagrangian guidance. Unconstrained diffusion outputs the generated trajectory directly; fixed-penalty guidance corrects the control points along the gradient of the collision cost of the signed distance field (SDF); primal-dual guidance alternately updates the control variables and the constraint multipliers; and SDF augmented Lagrangian guidance further introduces a quadratic violation penalty term. All four baselines use generator D and the same initial noise, the parameters of the three SDF-based guidance variants are selected on the validation set, and the inner iteration limit is 10 for all of them. The complete TrajSafe-Diffuser uses generator A together with the convex safe corridor, the ALM correction and the historical feedback. Because the complete method and the comparison methods use different generators, the overall comparison reflects a difference in system performance and the whole benefit cannot be attributed to a single correction module.
+
+Safety is measured by the collision rate, the SDF feasibility rate, the SDF violation and the average minimum safety distance; trajectory quality is measured by the root mean square error (RMSE) relative to the reference trajectory and by a smoothness measure defined by the second-order variation. The collision rate and the SDF feasibility rate use different criteria, and the two are not simply complementary. Computational efficiency is evaluated by the average time per trajectory converted from batch inference, excluding data reading and metric computation time.
+
+\subsection{Comparison of Different Safety Constraint Methods}
+
+\subsubsection{Safety and Trajectory Quality}
+
+The comparison is carried out on the same 420 test samples and three random seeds; each method generates 1260 trajectories, and the results are shown in Table~\ref{tab:compare}.
+
+\begin{table*}[!t]
+\centering
+\caption{Comparison of Safety and Trajectory Quality of Different Safety Constraint Methods}
+\label{tab:compare}
+\footnotesize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lccccccc}
+\toprule
+\multirow{2}{*}{Method} & Collision & SDF feas. & Mean viol. & P95 viol. & Mean min. & RMSE & Smooth.\\
+ & rate (\%) $\downarrow$ & (\%) $\uparrow$ & (m) $\downarrow$ & (m) $\downarrow$ & safety dist. (m) $\uparrow$ & (m) $\downarrow$ & (m) $\downarrow$\\
+\midrule
+Unconstrained diffusion        & 61.19 &  39.21 & 8.0012 & 30.2254 & $-6.876$ & 17.697 & 0.02644\\
+Fixed-penalty guidance         & 19.05 &  84.52 & 3.3504 & 26.4287 & $-1.966$ & 16.732 & 0.19480\\
+Primal-dual guidance           & 23.10 &  76.98 & 4.8299 & 28.4630 & $-3.466$ & 16.465 & 0.09972\\
+SDF augmented Lagrangian       & 23.89 &  76.35 & 5.0500 & 30.2154 & $-3.708$ & 16.396 & 0.05864\\[2pt]
+\textbf{TrajSafe-Diffuser}     & \textbf{0.00} & \textbf{100.00} & \textbf{0.0000} & \textbf{0.0000} & \textbf{3.255} & \textbf{9.967} & \textbf{0.03146}\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Unconstrained diffusion reaches a collision rate of 61.19\%, which shows that learning the trajectory distribution alone is not sufficient to guarantee the safety of the generated result. After the introduction of SDF guidance, the collision rates of the three correction methods drop to 19.05\%--23.89\%, but constraint violations of different degrees remain; among them, fixed-penalty guidance achieves the lowest collision rate among the comparison methods but is accompanied by a relatively high smoothness metric, which reflects the influence of its correction on the local trajectory shape.
+
+By contrast, no collision is observed for TrajSafe-Diffuser among the 1260 trajectories, its SDF feasibility rate reaches 100\%, its average minimum safety distance is 3.255~m and its RMSE is 9.967~m. The results indicate that the complete system, which consists of safety-conditioned generation, explicit corridor correction and historical feedback, can balance safety and trajectory quality on the current test set. Zero collisions is an experimental observation over a finite sample and is not equivalent to a strict continuous safety guarantee.
+
+\subsubsection{Computational Efficiency}
+
+In order to analyse the influence of the number of sampling steps and the scale of the convex regions on inference efficiency, combination experiments are set up with DDIM steps $\{16,4\}$ and region sharing strides $\{1,8\}$. With a sharing stride of 8, base regions are selected along the route while the end and junction checks are retained, which reduces the number of base regions from 128 to 17. All configurations use the same network weights and ALM iteration budget and are timed interleaved by batch on the same hardware with a batch size of 32. The timings are the batch inference values converted for seed 0, and the quality metrics are computed over all 1260 trajectories of the three seeds. The results are reported in Table~\ref{tab:efficiency}.
+
+\begin{table*}[!t]
+\centering
+\caption{Efficiency Comparison of Different Sampling Step and Region Sharing Configurations}
+\label{tab:efficiency}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lccccccc}
+\toprule
+Configuration & DDIM steps & Base regions & Time (ms) $\downarrow$ & Collisions & SDF feas. (\%) $\uparrow$ & RMSE (m) $\downarrow$ & Smooth. (m) $\downarrow$\\
+\midrule
+Standard configuration       & 16 & 128 & 82.26 & 0/1260 & 100.00 & 9.967 & 0.03146\\
+Fewer sampling steps only    &  4 & 128 & 51.41 & 0/1260 & 100.00 & 9.881 & 0.03135\\
+Convex region sharing only   & 16 &  17 & 56.44 & 0/1260 & 100.00 & 9.927 & 0.03133\\[2pt]
+\textbf{Combined acceleration} & \textbf{4} & \textbf{17} & \textbf{27.14} & \textbf{0/1260} & \textbf{100.00} & \textbf{9.846} & \textbf{0.03142}\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Reducing the number of DDIM sampling steps from 16 to 4 lowers the average time per trajectory from 82.26~ms to 51.41~ms; using convex region sharing alone lowers it to 56.44~ms. Combining the two further reduces it to 27.14~ms, which is a speed-up of about 3.03 times with respect to the standard configuration. No collision is observed in any of the four configurations, and the differences in RMSE and smoothness are small, which indicates that under the current test setting, reducing the sampling steps and sharing convex regions can effectively lower the computational cost while maintaining comparable planning quality. The above times are batch inference values and do not represent the actual response latency of a single request.
+
+\subsection{Ablation of Key Components}
+
+In order to verify the effectiveness of the safety geometry condition, the historical safety feedback and the ALM safety correction mechanism, four progressive ablation settings are designed. \textbf{Baseline} is the base diffusion model without the safety condition or the feedback mechanism; \textbf{+ Safety} introduces the safety geometry condition but does not perform the inference-time ALM correction; \textbf{+ Feedback} further uses the ALM correction result to construct historical feedback that assists the subsequent trajectory prediction, but the correction result does not participate in the DDIM state update or in the final output; \textbf{Full Model} uses the ALM correction result simultaneously for the historical feedback, the DDIM state update and the final trajectory generation. All configurations use the same 420 test samples, three random seeds and 16 DDIM steps, and each generates 1260 trajectories. Baseline and + Safety use the independently trained base generator D and safety-conditioned generator S, respectively, whereas the latter two settings share the same weights of the feedback-trained generator A, so as to further analyse the effect of safety correction participating in the diffusion update.
+
+\begin{table*}[!t]
+\centering
+\caption{Progressive Ablation Results of the Key Components}
+\label{tab:ablation}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccccc}
+\toprule
+\multirow{2}{*}{Configuration} & Safety geom. & Hist. & Safety corr. & Collision & SDF feas. & Mean viol. & RMSE & Smooth.\\
+ & condition & feedback & update & rate (\%) $\downarrow$ & (\%) $\uparrow$ & (m) $\downarrow$ & (m) $\downarrow$ & (m) $\downarrow$\\
+\midrule
+Baseline            & $\times$ & $\times$ & $\times$ & 61.19 &  39.21 & 8.0012 & 17.697 & 0.02644\\
++ Safety            & \checkmark & $\times$ & $\times$ & 25.16 &  75.48 & 1.0405 &  9.651 & 0.03414\\
++ Feedback          & \checkmark & \checkmark & $\times$ &  3.33 &  96.98 & 0.0858 &  9.938 & 0.02981\\[2pt]
+\textbf{Full Model} & \checkmark & \checkmark & \checkmark & \textbf{0.00} & \textbf{100.00} & \textbf{0.0000} & 9.967 & 0.03146\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Note: the safety correction update means that the ALM correction result is used for the DDIM state update and the final trajectory output.
+
+As can be seen from Table~\ref{tab:ablation}, after the introduction of the safety geometry condition the collision rate drops from 61.19\% to 25.16\% and the RMSE drops from 17.697~m to 9.651~m, which indicates that the safety geometry condition can effectively improve the safety and the accuracy of trajectory generation. After feedback training is further adopted and the historical safety feedback is introduced, the collision rate falls to 3.33\% and the average violation to 0.0858~m, which shows that the historical correction information helps to reduce the constraint violations of subsequent predictions. It should be pointed out that the feedback training strategy is introduced at the same time in this stage, so the result reflects the overall effect of the feedback mechanism.
+
+With the same generator weights, after the ALM correction result is further used for the DDIM state update and the final trajectory output, the number of collisions drops from 42 to zero and the SDF feasibility rate rises to 100\%, while the RMSE changes only from 9.938~m to 9.967~m. The results show that the historical safety feedback can improve the trajectory prediction of the network, whereas directly introducing the safety correction result into the reverse diffusion process can further eliminate the remaining collisions and improve the safety of the generated result while maintaining the trajectory accuracy.
+
+\subsection{Visualization of Trajectory Generation}
+
+\subsubsection{Trajectory Correction during Reverse Diffusion}
+
+Fig.~\ref{fig:steps} shows a case in the test map with re-specified start and goal, for which the trajectory prediction and the correction result at the 1st, 4th, 8th, 12th and 16th forward passes are given. Because the start and the goal have been re-specified, the original reference trajectory no longer corresponds to the current task and no RMSE is computed for this case.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.95\textwidth]{fig6_diffusion_step_correction.png}
+\caption{Trajectory prediction and safety correction during reverse diffusion. The orange dashed line is the prediction before the ALM correction at the current step, the blue curve is the output of that step, and the light blue region is the safe corridor that is subsequently activated and frozen; the 1st step is the warm-up stage and the overlaid corridor is used only for visual comparison.}
+\label{fig:steps}
+\end{figure*}
+
+It can be observed that the uncorrected predicted trajectory tends to intrude into obstacles at local corners, whereas the ALM is able to adjust the trajectory into or close to the corresponding corridor. The violation diagnostic values at the 4th, 8th, 12th and 16th steps decrease from 13.16, 7.44, 8.11 and 8.90~m before the correction to 0.79, 0.19, 0.20 and 0.08~m, respectively, which reflects the continuous effect of the safety correction on the different denoising steps and also shows that the violation of the uncorrected prediction does not decrease monotonically. In the end, no collision is found for this case in the 512-point collision check, and the corridor residual of the dense curve points is below the preset tolerance, but this is not a proof that all B\'ezier constraints hold.
+
+\subsubsection{Planning Results under Different Scenes and Start-Goal Distances}
+
+In order to further examine the adaptability of the model to different task conditions, 4 maps with relatively complex structure are selected from the test set, and three distance levels (near, medium and far) are set in each map, with 6 start-goal tasks constructed per level, giving 72 tasks in total. Fig.~\ref{fig:multitask} shows 24 representative cases among them; the distance levels are defined by the shortest path length in free space rather than by the length of the generated trajectory.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.95\textwidth]{fig7_multitask_generation.png}
+\caption{Trajectory generation results under different maps and start-goal distances. The four rows correspond to the four test maps, and each row shows two cases at each of the near, medium and far distances; the light blue region is the safe corridor, the orange dashed line is the prediction before the ALM correction at the last step, and the blue curve is the final trajectory.}
+\label{fig:multitask}
+\end{figure*}
+
+Among the 72 tasks above, the near, medium and far levels each contain 24 tasks; trajectories are successfully generated for all of them and no collision is observed under the 512-point check, and all trajectories also pass the dense corridor residual check within the prescribed numerical tolerance. The shortest free-space path lengths of the corresponding tasks cover 26.88--356.25~m. The results indicate that, on the selected complex maps, the method can adapt to different start-goal positions and planning distances. These conclusions are limited to four maps and a single generation seed, and the dense-sampling check does not constitute a strict safety certificate for the continuous curve.
+
+%=====================================================================
+\section{Conclusion}
+%=====================================================================
+
+This paper proposes TrajSafe-Diffuser, a diffusion-based motion planning method under generative safety constraints. The method guides local safety geometry prediction by task-relevant routes and combines it with a deterministic geometric construction to generate a convex safe corridor, thereby realizing the automatic construction of safety constraints. By incorporating safety latent features into the conditioned denoising network and by using the B\'ezier convex hull property together with the augmented Lagrangian method to enforce constraints on the continuous trajectory, the generated trajectory can take both motion planning accuracy and safety feasibility into account. In addition, the safety correction result is used both for the diffusion state update and for the historical feedback, so that the subsequent denoising process can continuously exploit the available safety correction information.
+
+Experimental results show that the proposed method can effectively reduce trajectory collisions and constraint violations and, while maintaining the trajectory quality, lower the computational cost by reducing the number of sampling steps and sharing convex safe regions. Future work will further study the generation of safety constraints in dynamic environments and incorporate robot kinematics, dynamics and control execution errors in order to improve the applicability of the method in real robotic systems.
+
+%=====================================================================
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

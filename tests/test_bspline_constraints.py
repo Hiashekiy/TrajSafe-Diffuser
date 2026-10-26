@@ -24,7 +24,7 @@ from src.geometry.bspline_constraints import (bezier_eval, bezier_extraction,
                                               exact_subdivision,
                                               responsibility_intervals)
 
-KNOTS = os.path.join(ROOT, "data", "carla_v1", "bspline_knots.npy")
+KNOTS = os.path.join(ROOT, "data", "raw", "80m", "bspline_knots.npy")
 
 
 def _codec():

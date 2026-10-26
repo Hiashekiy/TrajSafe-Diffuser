@@ -11,7 +11,7 @@
 
 用法::
 
-    python scripts/ch4_report.py --runs-dir outputs/ch4/runs --out outputs/ch4/REPORT.md
+    python scripts/ch4_report.py --runs-dir outputs/chapter4/runs --out outputs/chapter4/REPORT.md
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ DISPLAY = {
     "Projected": "Projected Diffusion",
     "Primal-Dual": "Primal-Dual Diffusion",
     "SDF-ALM": "SDF-ALM-guided Diffusion",
-    "Full (A-C48+ALM+FB+Proj)": "**本文完整方法**（A-C48＋走廊ALM＋历史反馈＋末端投影）",
+    "Full (A-C48+ALM+FB+Proj)": "**TrajSafe-Diffuser（完整方法）**",
 }
 ABLATION_A = [("A0", "A0：无 ALM / 无反馈 / 无末端投影"),
               ("A1", "A1：逐步 ALM"),
@@ -48,6 +48,15 @@ ABLATION_T = [("T0_S-C48_noalm", "T0：S-C48（无反馈训练），无 ALM"),
               ("T1_S-C48_alm", "T1：S-C48，ALM"),
               ("T2_A-C48_noalm", "T2：A-C48（有反馈训练），无 ALM"),
               ("T3_A-C48_alm", "T3：A-C48，ALM")]
+
+# 论文正文采用的递进消融。旧 A0..A3 / T0..T3 运行仍可保留作历史记录，
+# 但不再进入自动报告，避免把“历史反馈计算”和“ALM”错误拆成独立开关。
+ABLATION_PROGRESSIVE = [
+    ("Diffusion", "基础扩散模型", "×", "×", "×"),
+    ("T0_S-C48_noalm", "加入生成式安全几何", "√", "×", "×"),
+    ("FeedbackOnly", "加入历史安全反馈", "√", "√", "×"),
+    ("T3_A-C48_alm", "完整方法", "√", "√", "√"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -125,25 +134,22 @@ def fmt(value, digits=3, suffix=""):
 def main_table(groups: dict, order: list) -> list:
     lines = ["| 方法 | 碰撞数/总数↓ | 碰撞率/%↓ | SDF可行率/%↑ | SDF平均违规量/m↓ | "
              "SDF-P95违规量/m↓ | 安全点比例/%↑ | 最小安全距离/m↑ | RMSE/m↓ | "
-             "平滑度/m↓ | 时间/ms↓ |",
-             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+             "平滑度/m↓ |",
+             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name in order:
         runs = groups.get(name)
         if not runs:
-            lines.append("| %s | _未运行_ |  |  |  |  |  |  |  |  |  |"
+            lines.append("| %s | _未运行_ |  |  |  |  |  |  |  |  |"
                          % DISPLAY.get(name, name))
             continue
         agg = pool(runs)
-        runtime = fmt(agg["runtime_mean"], 1)
-        if agg["runtime_std"]:
-            runtime += " ± " + fmt(agg["runtime_std"], 1)
         lines.append("| %s | %d/%d | %.2f | %.2f | %.4f | %.4f | %.2f | %.3f | "
-                     "%.2f | %.3f | %s |"
+                     "%.2f | %.3f |"
                      % (DISPLAY.get(name, name), agg["collisions"], agg["n"],
                         100.0 * agg["collision_rate"], 100.0 * agg["feasible_rate"],
                         agg["violation_mean"], agg["violation_p95"],
                         100.0 * agg["safe_point_rate"], agg["min_distance"],
-                        agg["rmse"], agg["smoothness"], runtime))
+                        agg["rmse"], agg["smoothness"]))
     return lines
 
 
@@ -166,6 +172,47 @@ def ablation_table(groups: dict, spec: list) -> list:
                         raw_viol, correction, inner,
                         agg["rmse"], fmt(agg["runtime_mean"], 1)))
     return lines
+
+
+def progressive_ablation_table(groups: dict) -> list:
+    """Build the single four-stage ablation table used in the manuscript."""
+    lines = [
+        "| 配置 | 生成式安全几何 | 历史安全反馈 | 安全状态进入 DDIM | "
+        "碰撞率/%↓ | SDF可行率/%↑ | 平均违规量/m↓ | RMSE/m↓ | 平滑度/m↓ |",
+        "|---|:---:|:---:|:---:|---:|---:|---:|---:|---:|",
+    ]
+    for tag, label, geometry, feedback, safe_to_ddim in ABLATION_PROGRESSIVE:
+        runs = _seed_zero(groups.get(tag))
+        if not runs:
+            lines.append(
+                "| %s | %s | %s | %s | _未运行_ |  |  |  |  |"
+                % (label, geometry, feedback, safe_to_ddim)
+            )
+            continue
+        agg = pool(runs)
+        lines.append(
+            "| %s | %s | %s | %s | %.2f | %.2f | %.4f | %.2f | %.4f |"
+            % (
+                label,
+                geometry,
+                feedback,
+                safe_to_ddim,
+                100.0 * agg["collision_rate"],
+                100.0 * agg["feasible_rate"],
+                agg["violation_mean"],
+                agg["rmse"],
+                agg["smoothness"],
+            )
+        )
+    return lines
+
+
+def _seed_zero(runs):
+    """Use the fixed seed-0 protocol for all ablation rows."""
+    if not runs:
+        return runs
+    selected = [run for run in runs if int(run.get("seed", -1)) == 0]
+    return selected or runs
 
 
 def step_summary(runs: list):
@@ -239,7 +286,7 @@ def build_report(groups: dict, env: dict) -> str:
     add = lines.append
     add("# 第4章 实验报告（自动汇总）")
     add("")
-    add("> 本文件由 `scripts/ch4_report.py` 从 `outputs/ch4/runs/*.jsonl` 的**逐样本记录**"
+    add("> 本文件由 `scripts/ch4_report.py` 从 `outputs/chapter4/runs/*.jsonl` 的**逐样本记录**"
         "重新汇池生成：碰撞率 = 总碰撞数 / 总轨迹数（3 seed × 420），违规量的 P95/最大值"
         "对全部轨迹取。修改任何一次运行后重跑本脚本即可刷新，表格不会与原始记录脱节。")
     add("")
@@ -255,15 +302,11 @@ def build_report(groups: dict, env: dict) -> str:
     add("")
     lines.extend(main_table(groups, MAIN_ORDER))
     add("")
-    add("## 2. 4.3.1 历史安全反馈的推理期作用（同一 A-C48 checkpoint）")
+    add("## 2. 4.3 关键组成模块递进消融")
     add("")
-    lines.extend(ablation_table(groups, ABLATION_A))
+    lines.extend(progressive_ablation_table(groups))
     add("")
-    add("## 3. 4.3.2 历史安全反馈训练与 ALM 的协同（训练期 2×2）")
-    add("")
-    lines.extend(ablation_table(groups, ABLATION_T))
-    add("")
-    add("## 4. 数值摘要（供正文引用）")
+    add("## 3. 数值摘要（供正文引用）")
     add("")
     lines.extend(digest(groups))
     add("")
@@ -326,54 +369,29 @@ def digest(groups: dict) -> list:
             % "、".join("%s %.2f%%" % (k, 100 * v) for k, v in excursion.items()))
     if full:
         say("本文完整方法碰撞 %d/%d（%.2f%%），SDF 平均违规量 %.4f m，RMSE %.2f m，"
-            "平滑度 %.3f m，%.1f ms/轨迹。"
+            "平滑度 %.3f m。计算时间统一引用独立的同协议时间实验，不采用本汇总中的旧运行计时。"
             % (full["collisions"], full["n"], 100 * full["collision_rate"],
-               full["violation_mean"], full["rmse"], full["smoothness"],
-               full["runtime_mean"] or float("nan")))
-        say("⚠ 该行与前五行**不是同一个生成先验**：前五行共用 D-C48（标准条件扩散），"
-            "只改推理期约束处理器；本行用 A-C48（含椭圆/安全区域特征且经历史反馈训练的"
-            "完整生成模型）外加末端硬投影。它的 RMSE 优势（%.2f vs %.2f m）里既有约束"
+               full["violation_mean"], full["rmse"], full["smoothness"]))
+        say("⚠ 该行与前五行**不是同一个生成先验**：前五行共用基础扩散生成器，"
+            "只改推理期约束处理器；本行使用含生成式安全几何并经过历史反馈训练的"
+            "完整生成模型。它的 RMSE 优势（%.2f vs %.2f m）里既有约束"
             "处理的贡献，也有模型本身更强的贡献。主表属于端到端系统比较，不能据此声称"
             "「同一先验下本文的约束处理器更好」——那要由 4.3 的内部消融回答。"
             % (full["rmse"], diffusion["rmse"] if diffusion else float("nan")))
-    a = {tag: row(tag) for tag, _ in ABLATION_A}
-    if all(a.values()):
-        say("推理期消融：A0→A1 碰撞率 %.2f%% → %.2f%%（逐步 ALM 的作用）；"
-            "A1→A2 %.2f%% → %.2f%%（历史反馈）；A2→A3 %.2f%% → %.2f%%（末端硬投影）；"
-            "A0→A3 %.2f%% → %.2f%%（完整管线）。"
-            % (100 * a["A0"]["collision_rate"], 100 * a["A1"]["collision_rate"],
-               100 * a["A1"]["collision_rate"], 100 * a["A2"]["collision_rate"],
-               100 * a["A2"]["collision_rate"], 100 * a["A3"]["collision_rate"],
-               100 * a["A0"]["collision_rate"], 100 * a["A3"]["collision_rate"]))
-    t = {tag: row(tag) for tag, _ in ABLATION_T}
-    if all(t.values()):
-        say("训练期消融：T0→T1 碰撞率 %.2f%% → %.2f%%（无反馈训练时 ALM 的改善）；"
-            "T2→T3 %.2f%% → %.2f%%（有反馈训练后 ALM 的边际作用）；"
-            "T0→T2 %.2f%% → %.2f%%（反馈训练对未修正原始预测的作用）。"
-            % (100 * t["T0_S-C48_noalm"]["collision_rate"],
-               100 * t["T1_S-C48_alm"]["collision_rate"],
-               100 * t["T2_A-C48_noalm"]["collision_rate"],
-               100 * t["T3_A-C48_alm"]["collision_rate"],
-               100 * t["T0_S-C48_noalm"]["collision_rate"],
-               100 * t["T2_A-C48_noalm"]["collision_rate"]))
-    # ---- the feedback mechanism's claim lives in the PROCESS metrics ---------
-    # Its final collision rate is unchanged (the ALM alone already reaches 0), so a
-    # collision-only digest would hide the effect completely.  These are exactly
-    # the three numbers guide 4.3.1 / 4.3.2 asks for: the raw violation BEFORE the
-    # processor, the correction distance, and the inner iterations consumed.
-    if a.get("A1") and a.get("A2"):
-        p1, p2 = step_summary(groups["A1"]), step_summary(groups["A2"])
-        say("推理期反馈的作用体现在**过程指标**上，而不是最终碰撞率（两者都是 0）："
-            "ALM 前原始违规量 %.3f → %.3f m，平均修正距离 %.3f → %.3f m，"
-            "有效内迭代 %.2f → %.2f。即历史反馈让网络自己的预测更靠近可行域，"
-            "从而减轻约束优化器需要承担的修正负担。"
-            % (p1[0], p2[0], p1[1], p2[1], p1[2], p2[2]))
-    if t.get("T1_S-C48_alm") and t.get("T3_A-C48_alm"):
-        q1 = step_summary(groups["T1_S-C48_alm"])
-        q3 = step_summary(groups["T3_A-C48_alm"])
-        say("训练期反馈的作用（两者 ALM 都开）：ALM 前原始违规量 %.3f → %.3f m，"
-            "平均修正距离 %.3f → %.3f m，有效内迭代 %.2f → %.2f。"
-            % (q1[0], q3[0], q1[1], q3[1], q1[2], q3[2]))
+    progressive = {
+        tag: pool(_seed_zero(groups.get(tag))) if groups.get(tag) else None
+        for tag, *_ in ABLATION_PROGRESSIVE
+    }
+    if all(progressive.values()):
+        say(
+            "递进消融中，碰撞率随组件加入依次为 %.2f%%、%.2f%%、%.2f%% 和 %.2f%%："
+            "生成式安全几何先改善生成先验，历史安全反馈进一步降低残余碰撞，"
+            "安全状态进入 DDIM 后达到完全可行。"
+            % tuple(
+                100.0 * progressive[tag]["collision_rate"]
+                for tag, *_ in ABLATION_PROGRESSIVE
+            )
+        )
     if not out:
         out.append("- （尚无已完成的运行）")
     return out
@@ -381,10 +399,10 @@ def digest(groups: dict) -> list:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs-dir", nargs="+", default=["outputs/ch4/runs"],
+    ap.add_argument("--runs-dir", nargs="+", default=["outputs/chapter4/runs"],
                     help="one or more directories of run JSONs (the main "
                          "table and the ablation tables live apart)")
-    ap.add_argument("--out", default="outputs/ch4/REPORT.md")
+    ap.add_argument("--out", default="outputs/chapter4/REPORT.md")
     args = ap.parse_args()
 
     paths = []

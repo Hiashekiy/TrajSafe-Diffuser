@@ -153,7 +153,7 @@ class EllipseRegionBuilder:
         # optimiser had no reason to touch those samples at all.  Measured on the
         # C=48 k=4 run: 6 of the 9 test collisions were pure crop excursions
         # (0.17-2.0 m outside), with the pack reporting ``violation <= 0`` and
-        # `1` inner iteration.  See docs/CAMPAIGN_160K8P_RESULTS.md section 12.
+        # `1` inner iteration.  See docs/历史实验记录_160k8p.md section 12.
         #
         # ``map_boundary_margin`` insets the box: a projection lands exactly ON
         # the constraint boundary, so a face at |x| = 1 would put the curve at
@@ -263,7 +263,8 @@ class EllipseRegionBuilder:
         return centers[:, None, :] + offsets[None, :, :]
 
     def _greedy_faces(self, centers: torch.Tensor, quadratics: torch.Tensor,
-                      points: torch.Tensor, initial_active: torch.Tensor):
+                      points: torch.Tensor, initial_active: torch.Tensor,
+                      point_half_extent: tuple[float, float] | None = None):
         """Neural-IRIS one-time metric sort followed by active-point filtering."""
         size = len(centers)
         if points.shape[1] == 0 or not bool(initial_active.any()):
@@ -288,7 +289,18 @@ class EllipseRegionBuilder:
             norm = normal.norm(dim=-1)
             has_face = has_point & torch.isfinite(norm) & (norm > 1e-7)
             normal = normal / norm.clamp_min(1e-7)[:, None]
-            rhs = (normal * obs).sum(dim=-1) - self.margin
+            if point_half_extent is None:
+                support = normal.new_zeros(size)
+            else:
+                # Minimum projection of an occupied pixel square is
+                # n.p - (|nx| hx + |ny| hy). Separate the whole square,
+                # including when the configured margin is very small.
+                half_extent = normal.new_tensor(point_half_extent)
+                support = (normal.abs() * half_extent).sum(dim=-1)
+            clearance = torch.maximum(
+                support + self.filter_eps, support.new_full((size,), self.margin)
+            ) if point_half_extent is not None else support.new_full((size,), self.margin)
+            rhs = (normal * obs).sum(dim=-1) - clearance
             generated_A.append(torch.where(
                 has_face[:, None], normal, torch.zeros_like(normal)))
             generated_b.append(torch.where(
@@ -297,7 +309,7 @@ class EllipseRegionBuilder:
 
             projection = torch.einsum("sd,snd->sn", normal, points)
             keep = torch.gather(
-                projection <= rhs[:, None] + self.filter_eps, 1, order)
+                projection - support[:, None] <= rhs[:, None] + self.filter_eps, 1, order)
             active &= keep | ~has_face[:, None]
             active[rows[has_point], first[has_point]] = False
 
@@ -364,9 +376,17 @@ class EllipseRegionBuilder:
                 if obstacle_points.numel() != 0:
                     real_points = obstacle_points[None].expand(len(c), -1, -1)
                     real_diff = real_points - c[:, None]
-                    in_local_map = (real_diff.abs() <= self.window_half).all(dim=-1)
+                    pixel_half_extent = real_diff.new_tensor(
+                        (1.0 / self.maps.shape[-1], 1.0 / self.maps.shape[-2]))
+                    # Include pixels whose square intersects the local window,
+                    # even when their centre lies just beyond its edge.
+                    in_local_map = (
+                        real_diff.abs() <= self.window_half + pixel_half_extent
+                    ).all(dim=-1)
                     real_A, real_b, real_mask = self._greedy_faces(
-                        c, quadratic, real_points, in_local_map)
+                        c, quadratic, real_points, in_local_map,
+                        point_half_extent=(1.0 / self.maps.shape[-1],
+                                           1.0 / self.maps.shape[-2]))
                 else:
                     real_A = c.new_zeros((len(c), 0, 2))
                     real_b = c.new_zeros((len(c), 0))

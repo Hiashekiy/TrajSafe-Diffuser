@@ -1,0 +1,333 @@
+[
+  {
+    "key": "lavalle",
+    "reference": "LAVALLE S M. Planning Algorithms[M]. Cambridge: Cambridge University Press, 2006. [作者提供的书籍页面](https://lavalle.pl/planning/).",
+    "sources": [
+      "https://lavalle.pl/planning/"
+    ],
+    "locator": "作者书籍页面；第 4—6 章几何、采样与组合规划",
+    "supports": "运动规划问题与搜索、采样和几何表示的背景",
+    "number": 1,
+    "evidence_id": "E001",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "rrtstar",
+    "reference": "KARAMAN S, FRAZZOLI E. Sampling-based algorithms for optimal motion planning[J]. The International Journal of Robotics Research, 2011, 30(7): 846–894. [作者机构存档](https://dspace.mit.edu/entities/publication/77dff1d1-ffd6-42f3-a3a5-fef87a964959).",
+    "sources": [
+      "https://arxiv.org/abs/1105.1186",
+      "https://dspace.mit.edu/entities/publication/77dff1d1-ffd6-42f3-a3a5-fef87a964959"
+    ],
+    "locator": "摘要；MIT 存档的 Citation 字段",
+    "supports": "采样式运动规划及其渐近最优算法背景",
+    "number": 2,
+    "evidence_id": "E002",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "chomp",
+    "reference": "ZUCKER M, RATLIFF N, DRAGAN A, et al. CHOMP: Covariant Hamiltonian optimization for motion planning[J]. The International Journal of Robotics Research, 2013, 32(9): 1164–1193. [作者机构记录](https://publications.ri.cmu.edu/chomp-covariant-hamiltonian-optimization-for-motion-planning).",
+    "sources": [
+      "https://publications.ri.cmu.edu/chomp-covariant-hamiltonian-optimization-for-motion-planning"
+    ],
+    "locator": "摘要及机构提供的 BibTeX",
+    "supports": "障碍代价与光滑性目标联合用于轨迹优化",
+    "number": 3,
+    "evidence_id": "E003",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "ddpm",
+    "reference": "HO J, JAIN A N, ABBEEL P. Denoising diffusion probabilistic models[C]//Advances in Neural Information Processing Systems. 2020, 33. [会议正式记录](https://proceedings.neurips.cc/paper/2020/hash/4c5bcfec8584af0d967f1ab10179ca4b-Abstract.html).",
+    "sources": [
+      "https://proceedings.neurips.cc/paper/2020/hash/4c5bcfec8584af0d967f1ab10179ca4b-Abstract.html",
+      "https://arxiv.org/abs/2006.11239"
+    ],
+    "locator": "摘要；论文第 2 节前向与逆向扩散定义",
+    "supports": "高斯加噪和逐步去噪生成的基础形式",
+    "number": 4,
+    "evidence_id": "E004",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "diffuser",
+    "reference": "JANNER M, DU Y, TENENBAUM J, et al. Planning with diffusion for flexible behavior synthesis[C]//Proceedings of the 39th International Conference on Machine Learning. PMLR, 2022, 162: 9902–9915. [会议正式记录](https://proceedings.mlr.press/v162/janner22a.html).",
+    "sources": [
+      "https://proceedings.mlr.press/v162/janner22a.html"
+    ],
+    "locator": "摘要及正式 BibTeX",
+    "supports": "轨迹去噪、条件补全与代价引导用于规划",
+    "number": 5,
+    "evidence_id": "E005",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "scene",
+    "reference": "HUANG S, WANG Z, LI P, et al. Diffusion-based generation, optimization, and planning in 3D scenes[C]//Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2023: 16750–16761. [会议正式记录](https://openaccess.thecvf.com/content/CVPR2023/html/Huang_Diffusion-Based_Generation_Optimization_and_Planning_in_3D_Scenes_CVPR_2023_paper.html).",
+    "sources": [
+      "https://openaccess.thecvf.com/content/CVPR2023/html/Huang_Diffusion-Based_Generation_Optimization_and_Planning_in_3D_Scenes_CVPR_2023_paper.html",
+      "https://arxiv.org/abs/2301.06015"
+    ],
+    "locator": "CVF 检索返回的正式 BibTeX 与摘要；打开的 arXiv 摘要",
+    "supports": "场景条件生成、物理优化与目标规划的联合框架",
+    "access_note": "CVF 直接打开返回 403，元数据由其索引记录与 arXiv 作者记录交叉核对。",
+    "number": 6,
+    "evidence_id": "E006",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "mpd",
+    "reference": "CARVALHO J, LE A T, KICKI P, et al. Motion planning diffusion: Learning and adapting robot motion planning with diffusion models[J]. IEEE Transactions on Robotics, 2025, 41: 4881–4901. [DOI: 10.1109/TRO.2025.3593109](https://doi.org/10.1109/TRO.2025.3593109).",
+    "sources": [
+      "https://www.dfki.de/web/forschung/projekte-publikationen/publikation/16337",
+      "https://arxiv.org/html/2412.19948v3"
+    ],
+    "locator": "DFKI 正式出版记录和 BibTeX；作者全文摘要、贡献及 III-E 轨迹参数化",
+    "supports": "扩散轨迹先验与代价梯度联合使用；扩展版采用 B 样条表示",
+    "access_note": "采用 2025 年正式期刊信息，不把 2024 年预印本日期写成期刊年份。",
+    "number": 7,
+    "evidence_id": "E007",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "cbf",
+    "reference": "AMES A D, XU X, GRIZZLE J W, et al. Control barrier function based quadratic programs for safety critical systems[J]. IEEE Transactions on Automatic Control, 2017, 62(8): 3861–3876. [DOI: 10.1109/TAC.2016.2638961](https://doi.org/10.1109/TAC.2016.2638961).",
+    "sources": [
+      "https://arxiv.org/abs/1609.06408",
+      "https://doi.org/10.1109/TAC.2016.2638961"
+    ],
+    "locator": "作者摘要；IEEE 索引记录中的卷、期、页码",
+    "supports": "屏障函数约束与安全集合不变性，不用于证明本文的动态执行安全",
+    "number": 8,
+    "evidence_id": "E008",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "safediffuser",
+    "reference": "XIAO W, WANG T H, GAN C, et al. SafeDiffuser: Safe planning with diffusion probabilistic models[C]//International Conference on Learning Representations. 2025. [会议记录](https://openreview.net/forum?id=ig2wk7kK9J).",
+    "sources": [
+      "https://safediffuser.github.io/safediffuser/",
+      "https://github.com/Weixy21/SafeDiffuser",
+      "https://arxiv.org/abs/2306.00148"
+    ],
+    "locator": "作者项目页及仓库 Reference 中最终 6 名作者、2025 年与 ICLR；作者预印本摘要",
+    "supports": "将屏障函数和有限时间扩散不变性融入去噪",
+    "access_note": "OpenReview 需浏览器验证。正式作者顺序为 Wei Xiao、Tsun-Hsuan Wang、Chuang Gan、Ramin Hasani、Mathias Lechner、Daniela Rus；未混用早期 4 作者版本。",
+    "number": 9,
+    "evidence_id": "E009",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "pdm",
+    "reference": "CHRISTOPHER J K, BAEK S, FIORETTO F. Constrained synthesis with projected diffusion models[C]//Advances in Neural Information Processing Systems. 2024, 37. [DOI: 10.52202/079017-2834](https://doi.org/10.52202/079017-2834).",
+    "sources": [
+      "https://proceedings.neurips.cc/paper_files/paper/2024/hash/a28af221f2f70be183afc16797a56b91-Abstract-Conference.html"
+    ],
+    "locator": "正式会议摘要、作者和 DOI",
+    "supports": "投影/受约束优化用于扩散生成，覆盖凸与非凸约束",
+    "number": 10,
+    "evidence_id": "E010",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "smd",
+    "reference": "LIANG J, CHRISTOPHER J K, KOENIG S, et al. Simultaneous multi-robot motion planning with projected diffusion models[C]//Proceedings of the 42nd International Conference on Machine Learning. PMLR, 2025, 267: 37162–37180. [会议正式记录](https://proceedings.mlr.press/v267/liang25e.html).",
+    "sources": [
+      "https://proceedings.mlr.press/v267/liang25e.html"
+    ],
+    "locator": "会议摘要及正式 BibTeX",
+    "supports": "多机器人扩散采样结合约束优化，不能视为本文单轨迹基线复现",
+    "number": 11,
+    "evidence_id": "E011",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "iris",
+    "reference": "DEITS R, TEDRAKE R. Computing large convex regions of obstacle-free space through semidefinite programming[C]//Algorithmic Foundations of Robotics XI. Springer, 2015: 109–124. [DOI: 10.1007/978-3-319-16595-0_7](https://doi.org/10.1007/978-3-319-16595-0_7).",
+    "sources": [
+      "https://link.springer.com/chapter/10.1007/978-3-319-16595-0_7",
+      "https://groups.csail.mit.edu/robotics-center/public_papers/Deits14.pdf"
+    ],
+    "locator": "Springer 章节摘要、作者、出版日期和页码",
+    "supports": "交替障碍分离与内接椭球优化构造无障碍凸区域",
+    "access_note": "采用 2015 年正式章节出版年份，区别于 WAFR 2014 会议年份。",
+    "number": 12,
+    "evidence_id": "E012",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "firi",
+    "reference": "WANG Q, WANG Z, WANG M, et al. Fast iterative region inflation for computing large 2-D/3-D convex regions of obstacle-free space[J]. IEEE Transactions on Robotics, 2025, 41: 3223–3243. [DOI: 10.1109/TRO.2025.3562482](https://doi.org/10.1109/TRO.2025.3562482).",
+    "sources": [
+      "https://doi.org/10.1109%2FTRO.2025.3562482",
+      "https://arxiv.org/abs/2403.02977"
+    ],
+    "locator": "IEEE 索引记录的摘要及出版字段；作者 arXiv 摘要",
+    "supports": "凸区域构造中的质量、效率和种子集合包含要求",
+    "access_note": "IEEE 索引正文可读取，直接页面需要 JavaScript 验证；采用正式期刊信息。",
+    "number": 13,
+    "evidence_id": "E013",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "gcs",
+    "reference": "MARCUCCI T, PETERSEN M, VON WRANGEL D, et al. Motion planning around obstacles with convex optimization[J]. Science Robotics, 2023, 8(84): eadf7843. [DOI: 10.1126/scirobotics.adf7843](https://doi.org/10.1126/scirobotics.adf7843).",
+    "sources": [
+      "https://github.com/RobotLocomotion/gcs-science-robotics",
+      "https://arxiv.org/abs/2205.04422",
+      "https://pubmed.ncbi.nlm.nih.gov/37967206/"
+    ],
+    "locator": "作者预印本摘要；PubMed 37967206 的正式卷、期、文章号、DOI 和作者摘要",
+    "supports": "凸集图与 Bézier 曲线结合实现连续轨迹优化",
+    "access_note": "出版商页面不可读取，正式书目信息由 PubMed 原始收录记录核对，方法内容由作者公开版本核对。",
+    "number": 14,
+    "evidence_id": "E014",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "dgd",
+    "reference": "LIANG J, KOENIG S, FIORETTO F. Discrete-guided diffusion for scalable and safe multi-robot motion planning[C]//Proceedings of the AAAI Conference on Artificial Intelligence. 2026, 40(28): 23417–23424. [DOI: 10.1609/aaai.v40i28.39512](https://doi.org/10.1609/aaai.v40i28.39512).",
+    "sources": [
+      "https://ojs.aaai.org/index.php/AAAI/article/view/39512"
+    ],
+    "locator": "正式摘要与 How to Cite",
+    "supports": "离散 MAPF、凸子问题、扩散引导与约束修复的结合",
+    "access_note": "正式发表日期为 2026-03-14，早于本次核验日期。",
+    "number": 15,
+    "evidence_id": "E015",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "ddim",
+    "reference": "SONG J, MENG C, ERMON S. Denoising diffusion implicit models[C]//International Conference on Learning Representations. 2021. [作者公开版本](https://arxiv.org/abs/2010.02502).",
+    "sources": [
+      "https://arxiv.org/abs/2010.02502"
+    ],
+    "locator": "作者摘要及 ICLR 2021 发表说明；第 4 节采样形式",
+    "supports": "DDIM 采样基础；本文将修正后的干净预测代入状态更新",
+    "number": 16,
+    "evidence_id": "E016",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "selfcond",
+    "reference": "CHEN T, ZHANG R, HINTON G. Analog bits: Generating discrete data using diffusion models with self-conditioning[C]//International Conference on Learning Representations. 2023. [作者公开版本](https://arxiv.org/abs/2208.04202).",
+    "sources": [
+      "https://arxiv.org/abs/2208.04202"
+    ],
+    "locator": "作者摘要、ICLR 2023 说明及自条件方法",
+    "supports": "此前的干净样本预测可作为后续去噪条件；不用于声称本文安全反馈与其相同",
+    "number": 17,
+    "evidence_id": "E017",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "spline",
+    "reference": "PIEGL L, TILLER W. The NURBS Book[M]. 2nd ed. Berlin, Heidelberg: Springer, 1997. [DOI: 10.1007/978-3-642-59223-2](https://doi.org/10.1007/978-3-642-59223-2).",
+    "sources": [
+      "https://link.springer.com/book/10.1007/978-3-642-59223-2"
+    ],
+    "locator": "正式书籍记录；第 1—3 章曲线基础、B 样条基函数与曲线",
+    "supports": "B 样条表示、端点性质与 Bézier 凸包性质",
+    "access_note": "书目和目录已核验；正文推导由稿件公式独立检查，书籍全文需作者有权访问后复核。",
+    "number": 18,
+    "evidence_id": "E018",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "dit",
+    "reference": "PEEBLES W, XIE S. Scalable diffusion models with transformers[C]//Proceedings of the IEEE/CVF International Conference on Computer Vision. 2023: 4195–4205. [会议正式记录](https://openaccess.thecvf.com/content/ICCV2023/html/Peebles_Scalable_Diffusion_Models_with_Transformers_ICCV_2023_paper.html).",
+    "sources": [
+      "https://openaccess.thecvf.com/content/ICCV2023/html/Peebles_Scalable_Diffusion_Models_with_Transformers_ICCV_2023_paper.html",
+      "https://arxiv.org/abs/2212.09748",
+      "https://openaccess.thecvf.com/content/ICCV2023/papers/Peebles_Scalable_Diffusion_Models_with_Transformers_ICCV_2023_paper.pdf"
+    ],
+    "locator": "CVF 正式 BibTeX；论文第 3 节条件调制中的 adaptive layer norm",
+    "supports": "扩散 Transformer 的条件层归一化调制；不声称本文使用 adaLN-Zero",
+    "access_note": "CVF 直接打开返回 403，正式索引内容与作者 arXiv 记录交叉核对。",
+    "number": 19,
+    "evidence_id": "E019",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "attention",
+    "reference": "VASWANI A, SHAZEER N, PARMAR N, et al. Attention is all you need[C]//Advances in Neural Information Processing Systems. 2017, 30. [会议正式记录](https://proceedings.neurips.cc/paper_files/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html).",
+    "sources": [
+      "https://proceedings.neurips.cc/paper_files/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html"
+    ],
+    "locator": "正式作者、摘要及第 3 节注意力定义",
+    "supports": "多头自注意力与交叉注意力基础运算",
+    "number": 20,
+    "evidence_id": "E020",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "optimization",
+    "reference": "NOCEDAL J, WRIGHT S J. Numerical Optimization[M]. 2nd ed. New York: Springer, 2006. [DOI: 10.1007/978-0-387-40065-5](https://doi.org/10.1007/978-0-387-40065-5).",
+    "sources": [
+      "https://link.springer.com/book/10.1007/978-0-387-40065-5"
+    ],
+    "locator": "正式书籍记录；第 17 章 Penalty and Augmented Lagrangian Methods，497–528 页",
+    "supports": "罚函数和增广拉格朗日方法的标准数学背景；不用于声称有限次迭代必然可行",
+    "access_note": "书目和目录已核验；原书全文中的具体公式需作者有权访问后复核。",
+    "number": 21,
+    "evidence_id": "E021",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  },
+  {
+    "key": "carla",
+    "reference": "DOSOVITSKIY A, ROS G, CODEVILLA F, et al. CARLA: An open urban driving simulator[C]//Proceedings of the 1st Annual Conference on Robot Learning. PMLR, 2017, 78: 1–16. [会议正式记录](https://proceedings.mlr.press/v78/dosovitskiy17a.html).",
+    "sources": [
+      "https://proceedings.mlr.press/v78/dosovitskiy17a.html"
+    ],
+    "locator": "正式摘要及 BibTeX",
+    "supports": "CARLA 仿真平台来源；不用于支持本文数据集划分、处理参数及实验数值",
+    "number": 22,
+    "evidence_id": "E022",
+    "checked_by": "Codex",
+    "checked_on": "2026-10-07",
+    "verification_state": "agent_checked_author_review_pending"
+  }
+]

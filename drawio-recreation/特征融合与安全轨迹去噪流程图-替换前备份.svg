@@ -1,0 +1,240 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1024" viewBox="0 0 1536 1024"><defs><marker id="arr709dce" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#709dce"/></marker><marker id="arrdc921b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#dc921b"/></marker><marker id="arr4ba174" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#4ba174"/></marker><marker id="arr687086" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#687086"/></marker><marker id="arr7397c0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#7397c0"/></marker><marker id="arrad906b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#ad906b"/></marker><marker id="arr658d9b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#658d9b"/></marker><marker id="arr2663a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#2663a9"/></marker><marker id="arr4f6d88" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#4f6d88"/></marker><marker id="arrcc7f35" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#cc7f35"/></marker><marker id="arra58d7c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#a58d7c"/></marker><marker id="arr155aaf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#155aaf"/></marker><marker id="arr1458a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#1458a7"/></marker><marker id="arr90b3d2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#90b3d2"/></marker><marker id="arrcaad91" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#caad91"/></marker><marker id="arr329b65" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#329b65"/></marker><marker id="arr536676" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#536676"/></marker><marker id="arr79b596" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#79b596"/></marker><marker id="arr465360" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#465360"/></marker><marker id="arr8d9e9d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#8d9e9d"/></marker><marker id="arrb6d6c4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#b6d6c4"/></marker><marker id="arr65b486" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#65b486"/></marker><marker id="arr75bf94" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#75bf94"/></marker><marker id="arrc0dec9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10L2 5Z" fill="#c0dec9"/></marker></defs><rect width="1536" height="1024" fill="white"/><rect x="5" y="13" width="845" height="590" rx="17" fill="#f5faff" stroke="#a8cefc" stroke-width="1.6"/>
+<rect x="868" y="13" width="664" height="590" rx="17" fill="#fffcf7" stroke="#ffad58" stroke-width="1.6"/>
+<rect x="5" y="624" width="1527" height="393" rx="17" fill="#f4faf4" stroke="#95cda3" stroke-width="1.6"/>
+<rect x="7" y="15" width="841" height="58" rx="0" fill="#e5f0fd" stroke="none" stroke-width="1.6"/>
+<rect x="870" y="15" width="660" height="58" rx="0" fill="#fff0df" stroke="none" stroke-width="1.6"/>
+<rect x="7" y="626" width="1523" height="57" rx="0" fill="#e6f3e7" stroke="none" stroke-width="1.6"/>
+<text x="25" y="55.74" text-anchor="start" font-family="Times New Roman,serif" font-size="36" fill="#064391" font-weight="bold"><tspan x="25" dy="0">1. Feature Encoding &amp; Fusion</tspan></text>
+<text x="889" y="55.74" text-anchor="start" font-family="Times New Roman,serif" font-size="36" fill="#d84a09" font-weight="bold"><tspan x="889" dy="0">2. Safety Geometry Generation</tspan></text>
+<text x="25" y="667.06" text-anchor="start" font-family="Times New Roman,serif" font-size="34" fill="#126b33" font-weight="bold"><tspan x="25" dy="0">3. Trajectory Denoising &amp; Refinement</tspan></text>
+<rect x="33" y="100" width="167" height="95" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 38.01 170.3 Q 74.75 166.5 90.61500000000001 171.25 Q 106.48 176 117.33500000000001 173.625 Q 128.19 171.25 141.55 164.6 Q 154.91 157.95 157.41500000000002 147.975 Q 159.92000000000002 138 156.58 129.45 Q 153.24 120.9 163.26 112.825 L 173.28 104.75" fill="none" stroke="#f8f8f5" stroke-width="23.380000000000003" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 46.36 100 Q 84.77000000000001 120.9 102.305 122.325 Q 119.84 123.75 136.54000000000002 122.325 Q 153.24 120.9 175.78500000000003 112.35 L 198.33 103.8" fill="none" stroke="#f8f8f5" stroke-width="21.71" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 56.38 194.05 Q 86.44 178.85 90.615 169.35 Q 94.78999999999999 159.85 89.78 148.925 Q 84.77000000000001 138 84.77000000000001 129.45 L 84.77000000000001 120.9" fill="none" stroke="#f8f8f5" stroke-width="18.37" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 156.57999999999998 141.8 Q 183.3 147.5 191.65 147.975 L 200 148.45" fill="none" stroke="#f8f8f5" stroke-width="20.04" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 34.67 113.3 Q 66.4 114.25 75.58500000000001 117.575 L 84.77000000000001 120.9" fill="none" stroke="#f8f8f5" stroke-width="13.36" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="114.17" y="167.05" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="115.87" y="170.05" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 116.17 179.05 L 120.17 179.05" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<text x="118" y="221.48" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#101010"><tspan x="118" dy="0">Occupancy Map O</tspan></text>
+<rect x="33" y="243" width="167" height="87" rx="12" fill="#ffffff" stroke="#b7c8d4" stroke-width="1.6"/>
+<path d="M 49.7 298.68 Q 69.74000000000001 274.32 79.76 283.455 Q 89.78 292.59 100.63499999999999 286.93499999999995 Q 111.49 281.28 121.50999999999999 295.635 Q 131.53 309.99 144.89 302.595 Q 158.25 295.2 170.775 283.02 L 183.3 270.84" fill="none" stroke="#1e579a" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<path d="M 59.72 302.16 Q 79.76 297.81 95.625 299.115 Q 111.49 300.42 114.83 286.935 Q 118.17 273.45 130.695 277.79999999999995 Q 143.22 282.15 149.065 293.895 Q 154.91 305.64 167.435 296.07 L 179.96 286.5" fill="none" stroke="#29227b" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<path d="M 48.03 299.55 Q 81.43 272.58 90.61500000000001 288.67499999999995 Q 99.8 304.77 114.83000000000001 309.99 Q 129.86 315.21 138.21 309.55499999999995 Q 146.56 303.9 155.745 298.245 Q 164.93 292.59 174.95 284.76 L 184.97 276.93" fill="none" stroke="#349950" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<circle cx="48.03" cy="296.07" r="3" fill="#41a45d" stroke="white" stroke-width=".6"/>
+<circle cx="176.62" cy="263.88" r="2.2" fill="#e4aa8b" stroke="white" stroke-width=".6"/>
+<text x="119" y="358.14" text-anchor="middle" font-family="Times New Roman,serif" font-size="21" fill="#101010"><tspan x="119" dy="0">Noisy Control Points Qt</tspan></text>
+<rect x="33" y="380" width="167" height="87" rx="12" fill="#ffffff" stroke="#b7c8d4" stroke-width="1.6"/>
+<path d="M 63.06 440.9 Q 79.76 400.88 108.15 402.185 Q 136.54000000000002 403.49 140.715 418.71500000000003 Q 144.89 433.94 155.745 425.67499999999995 L 166.6 417.40999999999997" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 63.06 431.33 Q 79.76 398.705 108.15 400.01 Q 136.54000000000002 401.315 140.715 416.105 Q 144.89 430.895 155.745 423.2825 L 166.6 415.67" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 63.06 421.76 Q 79.76 396.53 108.15 397.835 Q 136.54000000000002 399.14 140.715 413.495 Q 144.89 427.85 155.745 420.89 L 166.6 413.93" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 63.06 412.19 Q 79.76 394.355 108.15 395.65999999999997 Q 136.54000000000002 396.965 140.715 410.885 Q 144.89 424.805 155.745 418.4975 L 166.6 412.19" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 48.03 433.07 Q 69.74000000000001 415.67 84.77000000000001 416.975 Q 99.8 418.28 113.995 433.505 Q 128.19 448.73 144.89 443.51 Q 161.59 438.29 168.26999999999998 426.11 L 174.95 413.93" fill="none" stroke="#1e579a" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<path d="M 48.03 433.07 Q 71.41 423.5 88.945 423.065 Q 106.48 422.63 119.005 432.2 Q 131.53 441.77 144.89 439.15999999999997 Q 158.25 436.55 165.765 426.545 L 173.28 416.54" fill="none" stroke="#29227b" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<path d="M 48.03 433.07 Q 73.08 428.72 88.945 424.805 Q 104.81 420.89 118.17 426.98 Q 131.53 433.07 145.72500000000002 433.505 Q 159.92000000000002 433.94 166.60000000000002 425.24 L 173.28 416.54" fill="none" stroke="#349950" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<circle cx="48.03" cy="433.07" r="3" fill="#41a45d" stroke="white" stroke-width=".6"/>
+<circle cx="176.62" cy="400.88" r="2.2" fill="#e4aa8b" stroke="white" stroke-width=".6"/>
+<text x="123" y="496.14" text-anchor="middle" font-family="Times New Roman,serif" font-size="21" fill="#101010"><tspan x="123" dy="0">Refinement History H</tspan></text>
+<text x="178.5" y="424.98" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#101010"><tspan x="178.5" dy="0">....</tspan></text>
+<rect x="33" y="523" width="46" height="50" rx="11" fill="#f2f4f5" stroke="#9aa7b6" stroke-width="1.6"/>
+<text x="56" y="554.84" text-anchor="middle" font-family="Times New Roman,serif" font-size="26" fill="#101010"><tspan x="56" dy="0">t</tspan></text>
+<text x="86" y="566.14" text-anchor="start" font-family="Times New Roman,serif" font-size="21" fill="#111111"><tspan x="86" dy="0">Diffusion Step t</tspan></text>
+<path d="M256 100 L401 120 L401 184 L256 204 Z" fill="#dfedfc" stroke="#6e9fda" stroke-width="1.6"/>
+<text text-anchor="middle" font-family="Times New Roman,serif" font-size="22" font-weight="bold"><tspan x="328.5" y="160">Map Encoder</tspan></text>
+<path d="M256 234 L401 254 L401 318 L256 338 Z" fill="#fff1c7" stroke="#e5a221" stroke-width="1.6"/>
+<text text-anchor="middle" font-family="Times New Roman,serif" font-size="22" font-weight="bold"><tspan x="328.5" y="281.5">Control-Point</tspan><tspan x="328.5" y="306.5">Encoder</tspan></text>
+<path d="M256 367 L401 387 L401 449 L256 469 Z" fill="#d8efdc" stroke="#41a361" stroke-width="1.6"/>
+<text text-anchor="middle" font-family="Times New Roman,serif" font-size="22" font-weight="bold"><tspan x="328.5" y="413.5">Feedback</tspan><tspan x="328.5" y="438.5">Encoder</tspan></text>
+<path d="M256 490 L401 510 L401 565 L256 585 Z" fill="#e9e9f4" stroke="#626581" stroke-width="1.6"/>
+<text text-anchor="middle" font-family="Times New Roman,serif" font-size="22" font-weight="bold"><tspan x="328.5" y="533">Timestep</tspan><tspan x="328.5" y="558">Embedding</tspan></text>
+<path d="M 207 151 L 252 151" fill="none" stroke="#709dce" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr709dce)"/>
+<path d="M 402 151 L 452 151" fill="none" stroke="#709dce" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr709dce)"/>
+<path d="M 207 286 L 252 286" fill="none" stroke="#dc921b" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arrdc921b)"/>
+<path d="M 402 286 L 452 286" fill="none" stroke="#dc921b" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arrdc921b)"/>
+<path d="M 207 419 L 252 419" fill="none" stroke="#4ba174" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr4ba174)"/>
+<path d="M 402 419 L 452 419" fill="none" stroke="#4ba174" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr4ba174)"/>
+<path d="M 207 537 L 252 537" fill="none" stroke="#687086" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="0.2" marker-end="url(#arr687086)"/>
+<path d="M 402 537 L 452 537" fill="none" stroke="#687086" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr687086)"/>
+<rect x="458" y="116" width="14" height="69" rx="5" fill="#73c0fa" stroke="#73c0fa" stroke-width="1.6"/>
+<rect x="477" y="116" width="14" height="69" rx="5" fill="#1762b2" stroke="#1762b2" stroke-width="1.6"/>
+<rect x="496" y="116" width="14" height="69" rx="5" fill="#78afd9" stroke="#78afd9" stroke-width="1.6"/>
+<rect x="515" y="116" width="14" height="69" rx="5" fill="#9ac8ac" stroke="#9ac8ac" stroke-width="1.6"/>
+<rect x="458" y="249" width="14" height="62" rx="5" fill="#ffc25d" stroke="#ffc25d" stroke-width="1.6"/>
+<rect x="477" y="249" width="14" height="62" rx="5" fill="#f6a025" stroke="#f6a025" stroke-width="1.6"/>
+<rect x="496" y="249" width="14" height="62" rx="5" fill="#ffbd53" stroke="#ffbd53" stroke-width="1.6"/>
+<rect x="515" y="249" width="14" height="62" rx="5" fill="#ffde98" stroke="#ffde98" stroke-width="1.6"/>
+<rect x="458" y="383" width="14" height="60" rx="5" fill="#8bcba0" stroke="#8bcba0" stroke-width="1.6"/>
+<rect x="477" y="383" width="14" height="60" rx="5" fill="#2b9658" stroke="#2b9658" stroke-width="1.6"/>
+<rect x="496" y="383" width="14" height="60" rx="5" fill="#73bc90" stroke="#73bc90" stroke-width="1.6"/>
+<rect x="515" y="383" width="14" height="60" rx="5" fill="#badbb9" stroke="#badbb9" stroke-width="1.6"/>
+<rect x="465" y="505" width="15" height="60" rx="5" fill="#b29bd7" stroke="#b29bd7" stroke-width="1.6"/>
+<rect x="486" y="505" width="15" height="60" rx="5" fill="#a88bd3" stroke="#a88bd3" stroke-width="1.6"/>
+<rect x="507" y="505" width="15" height="60" rx="5" fill="#c4b0e5" stroke="#c4b0e5" stroke-width="1.6"/>
+<text x="498" y="212.82" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="498" dy="0">Fmap</tspan></text>
+<text x="498" y="340.82" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="498" dy="0">Fctrl</tspan></text>
+<text x="498" y="473.82" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="498" dy="0">Ffb</tspan></text>
+<text x="549" y="544.82" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="549" dy="0">Ft</tspan></text>
+<rect x="592" y="141" width="109" height="386" rx="13" fill="#e2effc" stroke="#1256b6" stroke-width="1.6"/>
+<text x="646.5" y="326.17" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="646.5" dy="0">Feature</tspan><tspan x="646.5" dy="25.3">Fusion</tspan></text>
+<path d="M 537 151 L 586 151" fill="none" stroke="#7397c0" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5" marker-end="url(#arr7397c0)"/>
+<path d="M 537 286 L 586 286" fill="none" stroke="#ad906b" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5" marker-end="url(#arrad906b)"/>
+<path d="M 537 419 L 586 419" fill="none" stroke="#658d9b" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5" marker-end="url(#arr658d9b)"/>
+<path d="M 702 331 L 742 331" fill="none" stroke="#2663a9" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr2663a9)"/>
+<rect x="745" y="281" width="15" height="98" rx="5" fill="#7dc2fc" stroke="#7dc2fc" stroke-width="1.6"/>
+<rect x="765" y="281" width="15" height="98" rx="5" fill="#1264b3" stroke="#1264b3" stroke-width="1.6"/>
+<rect x="785" y="281" width="15" height="98" rx="5" fill="#efb958" stroke="#efb958" stroke-width="1.6"/>
+<rect x="805" y="281" width="15" height="98" rx="5" fill="#e7cf80" stroke="#e7cf80" stroke-width="1.6"/>
+<text x="784" y="409.32" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="784" dy="0">F</tspan></text>
+<rect x="893" y="85" width="424" height="187" rx="15" fill="none" stroke="#ffa047" stroke-width="1.6" stroke-dasharray="9 5"/>
+<text x="1106" y="112.14" text-anchor="middle" font-family="Times New Roman,serif" font-size="21" fill="#111111" font-weight="bold"><tspan x="1106" dy="0">Skeleton Candidates  {Γ₁, Γ₂, …, Γₘ}</tspan></text>
+<path d="M 945 122 L 1265 122" fill="none" stroke="#6c6c6c" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="914" y="136" width="110" height="117" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 917.3 222.57999999999998 Q 941.5 217.89999999999998 951.95 223.75 Q 962.4 229.60000000000002 969.55 226.675 Q 976.7 223.75 985.5 215.56 Q 994.3 207.37 995.95 195.085 Q 997.6 182.8 995.4000000000001 172.27 Q 993.2 161.74 999.8 151.79500000000002 L 1006.4 141.85" fill="none" stroke="#f8f8f5" stroke-width="15.400000000000002" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 922.8 136 Q 948.1 161.74 959.6500000000001 163.495 Q 971.2 165.25 982.2 163.495 Q 993.2 161.74 1008.05 151.21 L 1022.9 140.68" fill="none" stroke="#f8f8f5" stroke-width="14.3" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 929.4 251.82999999999998 Q 949.2 233.11 951.95 221.41 Q 954.7 209.70999999999998 951.4000000000001 196.255 Q 948.1 182.8 948.1 172.27 L 948.1 161.74" fill="none" stroke="#f8f8f5" stroke-width="12.1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 995.4 187.48 Q 1013 194.5 1018.5 195.085 L 1024 195.67000000000002" fill="none" stroke="#f8f8f5" stroke-width="13.2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 915.1 152.38 Q 936 153.55 942.05 157.645 L 948.1 161.74" fill="none" stroke="#f8f8f5" stroke-width="8.8" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 918.4 141.85 Q 951.4 166.42000000000002 961.3 175.78 Q 971.2 185.14 976.7 201.51999999999998 Q 982.2 217.89999999999998 977.25 234.27999999999997 L 972.3 250.66" fill="none" stroke="#f8f8f5" stroke-width="12.1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 919.5 147.7 Q 952.5 169.93 962.95 178.70499999999998 Q 973.4 187.48 976.7 202.105 Q 980 216.73 975.05 233.695 L 970.1 250.66" fill="none" stroke="#ed3f3f" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="929.8" y="212.24" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="931.5" y="215.24" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 931.8 224.24 L 935.8 224.24" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<circle cx="924.45" cy="222.57999999999998" r="3" fill="#e43838" stroke="white" stroke-width=".6"/>
+<rect x="1052" y="136" width="102" height="117" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 1055.06 222.57999999999998 Q 1077.5 217.89999999999998 1087.19 223.75 Q 1096.88 229.60000000000002 1103.5100000000002 226.675 Q 1110.14 223.75 1118.3000000000002 215.56 Q 1126.46 207.37 1127.99 195.085 Q 1129.52 182.8 1127.48 172.27 Q 1125.44 161.74 1131.56 151.79500000000002 L 1137.68 141.85" fill="none" stroke="#f8f8f5" stroke-width="14.280000000000001" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1060.16 136 Q 1083.62 161.74 1094.33 163.495 Q 1105.04 165.25 1115.24 163.495 Q 1125.44 161.74 1139.21 151.21 L 1152.98 140.68" fill="none" stroke="#f8f8f5" stroke-width="13.26" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1066.28 251.82999999999998 Q 1084.64 233.11 1087.19 221.41 Q 1089.74 209.70999999999998 1086.6799999999998 196.255 Q 1083.62 182.8 1083.62 172.27 L 1083.62 161.74" fill="none" stroke="#f8f8f5" stroke-width="11.22" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1127.48 187.48 Q 1143.8 194.5 1148.9 195.085 L 1154 195.67000000000002" fill="none" stroke="#f8f8f5" stroke-width="12.24" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1053.02 152.38 Q 1072.4 153.55 1078.01 157.645 L 1083.62 161.74" fill="none" stroke="#f8f8f5" stroke-width="8.16" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1056.08 141.85 Q 1086.68 166.42000000000002 1095.8600000000001 175.78 Q 1105.04 185.14 1110.1399999999999 201.51999999999998 Q 1115.24 217.89999999999998 1110.65 234.27999999999997 L 1106.06 250.66" fill="none" stroke="#f8f8f5" stroke-width="11.22" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1057.1 147.7 Q 1087.7 169.93 1097.3899999999999 178.70499999999998 Q 1107.08 187.48 1110.1399999999999 202.105 Q 1113.2 216.73 1108.6100000000001 233.695 L 1104.02 250.66" fill="none" stroke="#ed3f3f" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="1066.36" y="212.24" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="1068.06" y="215.24" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 1068.36 224.24 L 1072.36 224.24" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<circle cx="1061.69" cy="222.57999999999998" r="3" fill="#e43838" stroke="white" stroke-width=".6"/>
+<rect x="1196" y="136" width="100" height="117" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 1199 222.57999999999998 Q 1221 217.89999999999998 1230.5 223.75 Q 1240 229.60000000000002 1246.5 226.675 Q 1253 223.75 1261 215.56 Q 1269 207.37 1270.5 195.085 Q 1272 182.8 1270 172.27 Q 1268 161.74 1274 151.79500000000002 L 1280 141.85" fill="none" stroke="#f8f8f5" stroke-width="14.000000000000002" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1204 136 Q 1227 161.74 1237.5 163.495 Q 1248 165.25 1258 163.495 Q 1268 161.74 1281.5 151.21 L 1295 140.68" fill="none" stroke="#f8f8f5" stroke-width="13" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1210 251.82999999999998 Q 1228 233.11 1230.5 221.41 Q 1233 209.70999999999998 1230 196.255 Q 1227 182.8 1227 172.27 L 1227 161.74" fill="none" stroke="#f8f8f5" stroke-width="11" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1270 187.48 Q 1286 194.5 1291 195.085 L 1296 195.67000000000002" fill="none" stroke="#f8f8f5" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1197 152.38 Q 1216 153.55 1221.5 157.645 L 1227 161.74" fill="none" stroke="#f8f8f5" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1204 222.57999999999998 Q 1221 219.07 1230 224.335 Q 1239 229.60000000000002 1245.5 227.26000000000002 Q 1252 224.92000000000002 1261 216.145 Q 1270 207.37 1271 195.085 Q 1272 182.8 1270.5 172.85500000000002 Q 1269 162.91 1274.5 152.965 L 1280 143.02" fill="none" stroke="#ed3f3f" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="1210" y="212.24" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="1211.7" y="215.24" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 1212 224.24 L 1216 224.24" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<circle cx="1205.5" cy="222.57999999999998" r="3" fill="#e43838" stroke="white" stroke-width=".6"/>
+<path d="M 1030 194 L 1047 194" fill="none" stroke="#4f6d88" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr4f6d88)"/>
+<text x="1174.5" y="197.34" text-anchor="middle" font-family="Times New Roman,serif" font-size="26" fill="#101010"><tspan x="1174.5" dy="0">...</tspan></text>
+<path d="M 1101 273 L 1101 297" fill="none" stroke="#cc7f35" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arrcc7f35)"/>
+<rect x="974" y="299" width="257" height="63" rx="12" fill="#ffeed9" stroke="#e9a456" stroke-width="1.6"/>
+<text x="1102" y="338.32" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="1102" dy="0">Route Selection</tspan></text>
+<path d="M 1101 364 L 1101 389" fill="none" stroke="#a58d7c" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arra58d7c)"/>
+<rect x="935" y="394" width="319" height="65" rx="12" fill="#e1eefb" stroke="#246ec0" stroke-width="1.6"/>
+<text x="1094" y="434.32" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="1094" dy="0">Map Cross-Attention</tspan></text>
+<path d="M 826 331 L 875 331 L 875 426 L 932 426" fill="none" stroke="#155aaf" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr155aaf)"/>
+<text x="1422.5" y="146.48" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#111111" font-weight="bold"><tspan x="1422.5" dy="0">Selected Route Γ*</tspan></text>
+<rect x="1339" y="170" width="171" height="161" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 1344.13 289.14 Q 1381.75 282.7 1397.995 290.75 Q 1414.24 298.8 1425.355 294.775 Q 1436.47 290.75 1450.15 279.48 Q 1463.83 268.21 1466.395 251.305 Q 1468.96 234.4 1465.54 219.91000000000003 Q 1462.12 205.42000000000002 1472.3799999999999 191.735 L 1482.6399999999999 178.05" fill="none" stroke="#f8f8f5" stroke-width="23.94" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1352.68 170 Q 1392.01 205.42000000000002 1409.9650000000001 207.835 Q 1427.92 210.25 1445.02 207.835 Q 1462.12 205.42000000000002 1485.205 190.93 L 1508.29 176.44" fill="none" stroke="#f8f8f5" stroke-width="22.23" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1362.94 329.39 Q 1393.72 303.63 1397.995 287.53 Q 1402.27 271.43 1397.1399999999999 252.91500000000002 Q 1392.01 234.4 1392.01 219.91000000000003 L 1392.01 205.42000000000002" fill="none" stroke="#f8f8f5" stroke-width="18.81" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1465.54 240.84 Q 1492.9 250.5 1501.45 251.305 L 1510 252.11" fill="none" stroke="#f8f8f5" stroke-width="20.52" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1340.71 192.54 Q 1373.2 194.15 1382.605 199.78500000000003 L 1392.01 205.42000000000002" fill="none" stroke="#f8f8f5" stroke-width="13.68" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1352.68 289.14 Q 1381.75 284.31 1397.1399999999999 291.555 Q 1412.53 298.8 1423.645 295.58000000000004 Q 1434.76 292.36 1450.15 280.28499999999997 Q 1465.54 268.21 1467.25 251.305 Q 1468.96 234.4 1466.395 220.715 Q 1463.83 207.03 1473.235 193.345 L 1482.6399999999999 179.66" fill="none" stroke="#ed3f3f" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="1365.78" y="277.92" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="1367.48" y="280.92" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 1367.78 289.92 L 1371.78 289.92" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<circle cx="1355.245" cy="289.14" r="3" fill="#e43838" stroke="white" stroke-width=".6"/>
+<text x="1425" y="375.48" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#101010"><tspan x="1425" dy="0">Safety Corridor</tspan></text>
+<rect x="1339" y="394" width="171" height="160" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 1344.13 512.4 Q 1381.75 506 1397.995 514 Q 1414.24 522 1425.355 518 Q 1436.47 514 1450.15 502.8 Q 1463.83 491.6 1466.395 474.8 Q 1468.96 458 1465.54 443.6 Q 1462.12 429.2 1472.3799999999999 415.6 L 1482.6399999999999 402" fill="none" stroke="#f8f8f5" stroke-width="23.94" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1352.68 394 Q 1392.01 429.2 1409.9650000000001 431.6 Q 1427.92 434 1445.02 431.6 Q 1462.12 429.2 1485.205 414.79999999999995 L 1508.29 400.4" fill="none" stroke="#f8f8f5" stroke-width="22.23" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1362.94 552.4 Q 1393.72 526.8 1397.995 510.79999999999995 Q 1402.27 494.8 1397.1399999999999 476.4 Q 1392.01 458 1392.01 443.6 L 1392.01 429.2" fill="none" stroke="#f8f8f5" stroke-width="18.81" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1465.54 464.4 Q 1492.9 474 1501.45 474.8 L 1510 475.6" fill="none" stroke="#f8f8f5" stroke-width="20.52" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1340.71 416.4 Q 1373.2 418 1382.605 423.6 L 1392.01 429.2" fill="none" stroke="#f8f8f5" stroke-width="13.68" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1352.68 512.4 Q 1381.75 507.6 1397.1399999999999 514.8 Q 1412.53 522 1423.645 518.8 Q 1434.76 515.6 1450.15 503.6 Q 1465.54 491.6 1467.25 474.8 Q 1468.96 458 1466.395 444.4 Q 1463.83 430.8 1473.235 417.20000000000005 L 1482.6399999999999 403.6" fill="none" stroke="#75c785" stroke-width="39.33" stroke-linejoin="round" stroke-linecap="round" opacity="0.28"/>
+<path d="M 1352.68 512.4 Q 1381.75 507.6 1397.1399999999999 514.8 Q 1412.53 522 1423.645 518.8 Q 1434.76 515.6 1450.15 503.6 Q 1465.54 491.6 1467.25 474.8 Q 1468.96 458 1466.395 444.4 Q 1463.83 430.8 1473.235 417.20000000000005 L 1482.6399999999999 403.6" fill="none" stroke="#83c68b" stroke-width="27.36" stroke-linejoin="round" stroke-linecap="round" opacity="0.36"/>
+<path d="M 1352.68 512.4 Q 1381.75 507.6 1397.1399999999999 514.8 Q 1412.53 522 1423.645 518.8 Q 1434.76 515.6 1450.15 503.6 Q 1465.54 491.6 1467.25 474.8 Q 1468.96 458 1466.395 444.4 Q 1463.83 430.8 1473.235 417.20000000000005 L 1482.6399999999999 403.6" fill="none" stroke="#ed3f3f" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="1365.78" y="501.2" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="1367.48" y="504.2" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 1367.78 513.2 L 1371.78 513.2" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<circle cx="1355.245" cy="512.4" r="3" fill="#e43838" stroke="white" stroke-width=".6"/>
+<path d="M 1255 426 L 1290 426 L 1290 294 L 1333 294" fill="none" stroke="#1458a7" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr1458a7)"/>
+<path d="M 1256 426 L 1333 426" fill="none" stroke="#90b3d2" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr90b3d2)"/>
+<path d="M 1088 461 L 1088 477" fill="none" stroke="#c2d9ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<text x="1095" y="498.14" text-anchor="middle" font-family="Times New Roman,serif" font-size="21" fill="#101010"><tspan x="1095" dy="0">Safety Geometry Features</tspan></text>
+<rect x="1000" y="522" width="16" height="47" rx="5" fill="#ffa657" stroke="#ffa657" stroke-width="1.6"/>
+<rect x="1025" y="522" width="16" height="47" rx="5" fill="#ffab65" stroke="#ffab65" stroke-width="1.6"/>
+<rect x="1050" y="522" width="16" height="47" rx="5" fill="#ffad69" stroke="#ffad69" stroke-width="1.6"/>
+<rect x="1075" y="522" width="16" height="47" rx="5" fill="#ffad69" stroke="#ffad69" stroke-width="1.6"/>
+<rect x="1100" y="522" width="16" height="47" rx="5" fill="#ffaf72" stroke="#ffaf72" stroke-width="1.6"/>
+<rect x="1125" y="522" width="16" height="47" rx="5" fill="#ffb77f" stroke="#ffb77f" stroke-width="1.6"/>
+<rect x="1150" y="522" width="16" height="47" rx="5" fill="#ffdfbc" stroke="#ffdfbc" stroke-width="1.6"/>
+<text x="1208" y="551.32" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="1208" dy="0">Hgeo</tspan></text>
+<path d="M 1086 602 L 1086 579" fill="none" stroke="#caad91" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arrcaad91)"/>
+<rect x="30" y="713" width="166" height="175" rx="13" fill="#ffffff" stroke="#65af82" stroke-width="1.6" stroke-dasharray="9 5"/>
+<text x="113.5" y="742.6700000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="113.5" dy="0">Conditional</tspan><tspan x="113.5" dy="25.3">Features</tspan></text>
+<rect x="51" y="781" width="13" height="39" rx="5" fill="#7fc9ff" stroke="#7fc9ff" stroke-width="1.6"/>
+<rect x="70" y="781" width="13" height="39" rx="5" fill="#4f9ee4" stroke="#4f9ee4" stroke-width="1.6"/>
+<rect x="89" y="781" width="13" height="39" rx="5" fill="#d3be7e" stroke="#d3be7e" stroke-width="1.6"/>
+<rect x="108" y="781" width="13" height="39" rx="5" fill="#81c29b" stroke="#81c29b" stroke-width="1.6"/>
+<text x="147.5" y="807.82" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="147.5" dy="0">F</tspan></text>
+<rect x="51" y="839" width="13" height="33" rx="5" fill="#ffd6ab" stroke="#ffd6ab" stroke-width="1.6"/>
+<rect x="70" y="839" width="13" height="33" rx="5" fill="#ffb57d" stroke="#ffb57d" stroke-width="1.6"/>
+<rect x="89" y="839" width="13" height="33" rx="5" fill="#ffca9d" stroke="#ffca9d" stroke-width="1.6"/>
+<rect x="108" y="839" width="13" height="33" rx="5" fill="#ffe5cb" stroke="#ffe5cb" stroke-width="1.6"/>
+<text x="155.5" y="861.48" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#101010"><tspan x="155.5" dy="0">Hgeo</tspan></text>
+<rect x="236" y="695" width="1070" height="227" rx="16" fill="none" stroke="#5d6c78" stroke-width="1.6" stroke-dasharray="9 5"/>
+<text x="779" y="723.48" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#111111" font-weight="bold"><tspan x="779" dy="0">Iterative Denoising (t = T, …, 0)</tspan></text>
+<path d="M 196 805 L 233 805" fill="none" stroke="#329b65" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr329b65)"/>
+<rect x="258" y="765" width="106" height="79" rx="10" fill="#ffded9" stroke="#ec3f42" stroke-width="1.6"/>
+<text x="311.5" y="798.6700000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="311.5" dy="0">Safety</tspan><tspan x="311.5" dy="25.3">Fusion</tspan></text>
+<rect x="389" y="755" width="155" height="99" rx="12" fill="#d9eaff" stroke="#1258b4" stroke-width="1.6"/>
+<text x="467" y="788.0200000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#062b71" font-weight="bold"><tspan x="467" dy="0">Trajectory</tspan><tspan x="467" dy="25.3">Denoiser</tspan><tspan x="467" dy="25.3">εθ(·)</tspan></text>
+<rect x="570" y="755" width="160" height="99" rx="12" fill="#fff0dc" stroke="#eeb260" stroke-width="1.6"/>
+<text x="650" y="800.1700000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="650" dy="0">Control-Point</tspan><tspan x="650" dy="25.3">Head</tspan></text>
+<rect x="755" y="755" width="171" height="99" rx="12" fill="#efe6fa" stroke="#a888d0" stroke-width="1.6"/>
+<text x="840.5" y="800.1700000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#41226f" font-weight="bold"><tspan x="840.5" dy="0">Endpoint</tspan><tspan x="840.5" dy="25.3">Compensation</tspan></text>
+<rect x="951" y="755" width="191" height="99" rx="12" fill="#e3f2e4" stroke="#93c7a0" stroke-width="1.6"/>
+<text x="1046.5" y="800.1700000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="1046.5" dy="0">Safety Refinement</tspan><tspan x="1046.5" dy="25.3">(ALM)</tspan></text>
+<rect x="1168" y="759" width="114" height="91" rx="12" fill="#dcecff" stroke="#387dc7" stroke-width="1.6"/>
+<text x="1225" y="801.6700000000001" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#111111" font-weight="bold"><tspan x="1225" dy="0">DDIM</tspan><tspan x="1225" dy="25.3">Update</tspan></text>
+<path d="M 366 805 L 387 805" fill="none" stroke="#536676" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr536676)"/>
+<path d="M 546 805 L 568 805" fill="none" stroke="#536676" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr536676)"/>
+<path d="M 732 805 L 753 805" fill="none" stroke="#536676" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr536676)"/>
+<path d="M 928 805 L 949 805" fill="none" stroke="#536676" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr536676)"/>
+<path d="M 1144 805 L 1166 805" fill="none" stroke="#536676" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr536676)"/>
+<path d="M 1283 805 L 1333 805" fill="none" stroke="#79b596" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr79b596)"/>
+<rect x="1339" y="714" width="171" height="161" rx="12" fill="#bcc7d2" stroke="#8294aa" stroke-width="1.6"/>
+<path d="M 1344.13 833.14 Q 1381.75 826.7 1397.995 834.75 Q 1414.24 842.8 1425.355 838.775 Q 1436.47 834.75 1450.15 823.48 Q 1463.83 812.21 1466.395 795.3050000000001 Q 1468.96 778.4 1465.54 763.91 Q 1462.12 749.42 1472.3799999999999 735.7349999999999 L 1482.6399999999999 722.05" fill="none" stroke="#f8f8f5" stroke-width="23.94" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1352.68 714 Q 1392.01 749.42 1409.9650000000001 751.835 Q 1427.92 754.25 1445.02 751.835 Q 1462.12 749.42 1485.205 734.9300000000001 L 1508.29 720.44" fill="none" stroke="#f8f8f5" stroke-width="22.23" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1362.94 873.39 Q 1393.72 847.63 1397.995 831.53 Q 1402.27 815.4300000000001 1397.1399999999999 796.915 Q 1392.01 778.4 1392.01 763.91 L 1392.01 749.42" fill="none" stroke="#f8f8f5" stroke-width="18.81" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1465.54 784.84 Q 1492.9 794.5 1501.45 795.3050000000001 L 1510 796.11" fill="none" stroke="#f8f8f5" stroke-width="20.52" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1340.71 736.54 Q 1373.2 738.15 1382.605 743.785 L 1392.01 749.42" fill="none" stroke="#f8f8f5" stroke-width="13.68" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 1352.68 833.14 Q 1381.75 828.31 1397.1399999999999 835.555 Q 1412.53 842.8 1423.645 839.5799999999999 Q 1434.76 836.36 1450.15 824.2850000000001 Q 1465.54 812.21 1467.25 795.3050000000001 Q 1468.96 778.4 1466.395 764.7149999999999 Q 1463.83 751.03 1473.235 737.345 L 1482.6399999999999 723.66" fill="none" stroke="#75c785" stroke-width="39.33" stroke-linejoin="round" stroke-linecap="round" opacity="0.28"/>
+<path d="M 1352.68 833.14 Q 1381.75 828.31 1397.1399999999999 835.555 Q 1412.53 842.8 1423.645 839.5799999999999 Q 1434.76 836.36 1450.15 824.2850000000001 Q 1465.54 812.21 1467.25 795.3050000000001 Q 1468.96 778.4 1466.395 764.7149999999999 Q 1463.83 751.03 1473.235 737.345 L 1482.6399999999999 723.66" fill="none" stroke="#83c68b" stroke-width="27.36" stroke-linejoin="round" stroke-linecap="round" opacity="0.36"/>
+<path d="M 1352.68 833.14 Q 1381.75 828.31 1397.1399999999999 835.555 Q 1412.53 842.8 1423.645 839.5799999999999 Q 1434.76 836.36 1450.15 824.2850000000001 Q 1465.54 812.21 1467.25 795.3050000000001 Q 1468.96 778.4 1466.395 764.7149999999999 Q 1463.83 751.03 1473.235 737.345 L 1482.6399999999999 723.66" fill="none" stroke="#ed3f3f" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<rect x="1365.78" y="821.92" width="8" height="17" rx="2" fill="#df3030" stroke="#a82627" stroke-width="1.6"/>
+<rect x="1367.48" y="824.92" width="4.6" height="5" rx="1" fill="#c7dde4" stroke="#683b3b" stroke-width="1.6"/>
+<path d="M 1367.78 833.92 L 1371.78 833.92" fill="none" stroke="#ffffff" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<circle cx="1355.245" cy="833.14" r="3" fill="#e43838" stroke="white" stroke-width=".6"/>
+<text x="1425.5" y="905.32" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="1425.5" dy="0">Final Trajectory</tspan></text>
+<text x="1424.5" y="934.32" text-anchor="middle" font-family="Times New Roman,serif" font-size="23" fill="#101010"><tspan x="1424.5" dy="0">τ*</tspan></text>
+<path d="M 311 846 L 311 892 L 1225 892 L 1225 854" fill="none" stroke="#465360" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" marker-end="url(#arr465360)"/>
+<text x="753" y="911.48" text-anchor="middle" font-family="Times New Roman,serif" font-size="22" fill="#101010"><tspan x="753" dy="0">t ← t − 1</tspan></text>
+<path d="M 552 738 L 561 736 L 952 736 L 958 747" fill="none" stroke="#8d9e9d" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.58" stroke-dasharray="7 5" marker-end="url(#arr8d9e9d)"/>
+<path d="M 958 738 L 974 737 L 984 747" fill="none" stroke="#b6d6c4" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" opacity="0.38" stroke-dasharray="7 5" marker-end="url(#arrb6d6c4)"/>
+<text x="753.5" y="886.8" text-anchor="middle" font-family="Times New Roman,serif" font-size="20" fill="#a0a8ac"><tspan x="753.5" dy="0">t ← t − 1</tspan></text>
+<rect x="67" y="916" width="129" height="78" rx="12" fill="#ffffff" stroke="#b7c8d4" stroke-width="1.6"/>
+<path d="M 90.22 970.6 Q 103.12 934.72 125.05000000000001 935.89 Q 146.98000000000002 937.06 150.205 950.71 Q 153.43 964.36 161.815 956.95 L 170.2 949.54" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 90.22 962.02 Q 103.12 932.77 125.05000000000001 933.94 Q 146.98000000000002 935.11 150.205 948.37 Q 153.43 961.63 161.815 954.8050000000001 L 170.2 947.98" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 90.22 953.44 Q 103.12 930.82 125.05000000000001 931.99 Q 146.98000000000002 933.16 150.205 946.03 Q 153.43 958.9 161.815 952.66 L 170.2 946.42" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 90.22 944.86 Q 103.12 928.87 125.05000000000001 930.04 Q 146.98000000000002 931.21 150.205 943.69 Q 153.43 956.17 161.815 950.515 L 170.2 944.86" fill="none" stroke="#dce6ed" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="1"/>
+<path d="M 78.61 963.58 Q 95.38 947.98 106.99 949.1500000000001 Q 118.6 950.32 129.565 963.97 Q 140.52999999999997 977.62 153.42999999999998 972.94 Q 166.32999999999998 968.26 171.48999999999998 957.3399999999999 L 176.64999999999998 946.42" fill="none" stroke="#1e579a" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<path d="M 78.61 963.58 Q 96.67 955 110.215 954.61 Q 123.75999999999999 954.22 133.435 962.8 Q 143.11 971.38 153.43 969.04 Q 163.75 966.7 169.555 957.73 L 175.36 948.76" fill="none" stroke="#29227b" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<path d="M 78.61 963.58 Q 97.96 959.6800000000001 110.215 956.1700000000001 Q 122.47 952.66 132.79000000000002 958.12 Q 143.11 963.58 154.07500000000002 963.97 Q 165.04000000000002 964.36 170.20000000000002 956.56 L 175.36 948.76" fill="none" stroke="#349950" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5"/>
+<circle cx="78.61" cy="963.58" r="3" fill="#41a45d" stroke="white" stroke-width=".6"/>
+<circle cx="177.94" cy="934.72" r="2.2" fill="#e4aa8b" stroke="white" stroke-width=".6"/>
+<text x="211" y="964.98" text-anchor="start" font-family="Times New Roman,serif" font-size="22" fill="#111111"><tspan x="211" dy="0">Refinement History H</tspan></text>
+<path d="M 426 924 L 426 984 L 202 984" fill="none" stroke="#65b486" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5" marker-end="url(#arr65b486)"/>
+<path d="M 66 989 L 51 989 L 51 892" fill="none" stroke="#75bf94" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="1" stroke-dasharray="7 5" marker-end="url(#arr75bf94)"/>
+<path d="M 116 890 L 116 911" fill="none" stroke="#c0dec9" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" opacity="0.45" stroke-dasharray="7 5" marker-end="url(#arrc0dec9)"/></svg>

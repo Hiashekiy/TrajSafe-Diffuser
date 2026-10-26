@@ -80,3 +80,29 @@ def test_center_outside_halfspaces_is_diagnostic_only():
     assert not diagnostics["center_inside"].item()   # still reported ...
     assert valid.item()                              # ... but no longer fatal
 
+
+
+def test_filtered_obstacle_square_must_be_fully_separated():
+    # Centre .49 is beyond x<=.48, but the occupied square crosses it.
+    builder = EllipseRegionBuilder(torch.zeros(1, 1, 64, 64),
+                                   {'safety_margin': .02})
+    points = torch.tensor([[[.5, 0.], [.49, .2]]])
+    A, b, mask = builder._greedy_faces(
+        torch.zeros(1, 2), torch.eye(2)[None], points,
+        torch.ones(1, 2, dtype=torch.bool), point_half_extent=(1/64, 1/64))
+    assert mask.sum() == 2
+    min_projection = torch.einsum('sfd,snd->snf', A, points) - A.abs().sum(-1)[:, None]/64
+    separated = (min_projection - b[:, None]).masked_fill(~mask[:, None], -torch.inf)
+    assert (separated.amax(-1) >= -1e-6).all()
+
+
+def test_selected_square_is_separated_even_with_zero_margin():
+    builder = EllipseRegionBuilder(torch.zeros(1, 1, 32, 64),
+                                   {'safety_margin': 0.})
+    points = torch.tensor([[[.5, .2]]])
+    A, b, mask = builder._greedy_faces(
+        torch.zeros(1, 2), torch.eye(2)[None], points,
+        torch.ones(1, 1, dtype=torch.bool), point_half_extent=(1/64, 1/32))
+    min_projection = torch.einsum('sfd,snd->snf', A, points)
+    min_projection -= (A.abs()*torch.tensor([1/64,1/32])).sum(-1)[:,None]
+    assert ((min_projection-b[:,None])[mask[:,None]] >= -1e-6).all()

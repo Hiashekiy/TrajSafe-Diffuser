@@ -1,6 +1,6 @@
 # TrajSafe-Diffuser -> CARLA closed-loop demo (sample test_0056)
 carla_bridge:
-  dataset_root: E:/CarDataSample/data/carla_v1
+  dataset_root: E:/CarDataSample/data/raw/80m
   processed_root: E:/CarDataSample/Neural-IRISDiffuser/data/carla_processed
 
 carla:

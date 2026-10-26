@@ -1,0 +1,866 @@
+{
+  "configuration": "configs/paper_modified.yaml",
+  "path_features_enabled": false,
+  "fusion_num_streams": 1,
+  "fusion_input_width": 128,
+  "editable_source": "final-safety-network.drawio",
+  "vertices": [
+    {
+      "id": "panelc",
+      "value": "",
+      "geometry": {
+        "as": "geometry",
+        "x": "20",
+        "y": "965",
+        "width": "1560",
+        "height": "270"
+      }
+    },
+    {
+      "id": "panelb",
+      "value": "",
+      "geometry": {
+        "as": "geometry",
+        "x": "20",
+        "y": "600",
+        "width": "1560",
+        "height": "345"
+      }
+    },
+    {
+      "id": "panela",
+      "value": "",
+      "geometry": {
+        "as": "geometry",
+        "x": "20",
+        "y": "35",
+        "width": "1560",
+        "height": "560"
+      }
+    },
+    {
+      "id": "path",
+      "value": "",
+      "geometry": {
+        "x": "55",
+        "y": "205",
+        "width": "110",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "path_caption",
+      "value": "<b>Control</b> \\( H_{\\mathrm{ctrl}} \\)<br>\\( 48 \\times 128 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "ell",
+      "value": "",
+      "geometry": {
+        "x": "490",
+        "y": "85",
+        "width": "110",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "ell_caption",
+      "value": "<b>Safety</b> \\( H_{\\mathrm{ell}} \\)<br>\\( 128 \\times 128 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "60",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "norm",
+      "value": "AdaLN",
+      "geometry": {
+        "x": "290",
+        "y": "215",
+        "width": "95",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "sca",
+      "value": "Safety cross-attention<br>4 heads · \\( W_{\\mathrm{out}} \\)",
+      "geometry": {
+        "x": "465",
+        "y": "215",
+        "width": "220",
+        "height": "65",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "add",
+      "value": "+",
+      "geometry": {
+        "x": "740",
+        "y": "233",
+        "width": "30",
+        "height": "30",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "safe",
+      "value": "",
+      "geometry": {
+        "x": "805",
+        "y": "208",
+        "width": "110",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "safe_caption",
+      "value": "<b>Safety-fused</b> \\( H_{\\mathrm{fuse}} \\)<br>\\( 48 \\times 128 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "mlp",
+      "value": "Fusion MLP<br>\\( \\mathrm{LN}(128)\\to256 \\)<br>GELU \\( \\to128 \\)",
+      "geometry": {
+        "x": "1040",
+        "y": "200",
+        "width": "220",
+        "height": "95",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "f",
+      "value": "",
+      "geometry": {
+        "x": "1340",
+        "y": "208",
+        "width": "110",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "f_caption",
+      "value": "<b>Fused</b> \\( F \\)<br>\\( 48 \\times 128 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "ht",
+      "value": "Time embedding \\( h_t \\)<br>\\( 128 \\)",
+      "geometry": {
+        "x": "50",
+        "y": "95",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "den",
+      "value": "FinalDenoiser \\( \\times3 \\)<br>Independent TrajBlock parameters",
+      "geometry": {
+        "x": "235",
+        "y": "450",
+        "width": "275",
+        "height": "80",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "hc",
+      "value": "",
+      "geometry": {
+        "x": "565",
+        "y": "455",
+        "width": "110",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "hc_caption",
+      "value": "<b>Clean</b> \\( H_{\\mathrm{clean}} \\)<br>\\( 48 \\times 128 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "head",
+      "value": "Shared \\( \\mathrm{head}_p \\)<br>Linear \\( 128\\to2 \\)",
+      "geometry": {
+        "x": "735",
+        "y": "460",
+        "width": "180",
+        "height": "65",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "raw",
+      "value": "",
+      "geometry": {
+        "x": "970",
+        "y": "455",
+        "width": "100",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "raw_caption",
+      "value": "<b>Raw</b> \\( Q_{\\mathrm{raw}} \\)<br>\\( 48 \\times 2 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "bd",
+      "value": "BoundaryDecoder<br>Fixed endpoint compensation",
+      "geometry": {
+        "x": "1125",
+        "y": "450",
+        "width": "225",
+        "height": "80",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "fixed",
+      "value": "",
+      "geometry": {
+        "x": "1410",
+        "y": "455",
+        "width": "100",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "fixed_caption",
+      "value": "<b>Corrected</b> \\( Q_{\\mathrm{bdry}} \\)<br>\\( 48 \\times 2 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "cg",
+      "value": "Global map memory \\( C_G \\)<br>\\( 256\\times128 \\)",
+      "geometry": {
+        "x": "280",
+        "y": "375",
+        "width": "230",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "sg",
+      "value": "Start \\( S \\) / Goal \\( G \\)",
+      "geometry": {
+        "x": "1140",
+        "y": "375",
+        "width": "190",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "x",
+      "value": "\\( X \\)<br>\\( 48\\times128 \\)",
+      "geometry": {
+        "x": "55",
+        "y": "735",
+        "width": "85",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "n0",
+      "value": "AdaLN",
+      "geometry": {
+        "x": "180",
+        "y": "745",
+        "width": "105",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "op0",
+      "value": "Self-attention<br>4 heads · relative index bias",
+      "geometry": {
+        "x": "315",
+        "y": "730",
+        "width": "155",
+        "height": "80",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "p0",
+      "value": "+",
+      "geometry": {
+        "x": "500",
+        "y": "755",
+        "width": "30",
+        "height": "30",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "n1",
+      "value": "AdaLN",
+      "geometry": {
+        "x": "620",
+        "y": "745",
+        "width": "105",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "op1",
+      "value": "Map cross-attention<br>4 heads · \\( W_{\\mathrm{out}} \\)",
+      "geometry": {
+        "x": "755",
+        "y": "730",
+        "width": "155",
+        "height": "80",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "p1",
+      "value": "+",
+      "geometry": {
+        "x": "940",
+        "y": "755",
+        "width": "30",
+        "height": "30",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "n2",
+      "value": "AdaLN",
+      "geometry": {
+        "x": "1060",
+        "y": "745",
+        "width": "105",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "op2",
+      "value": "FFN<br>\\( 128\\to512\\to128 \\)<br>GELU",
+      "geometry": {
+        "x": "1195",
+        "y": "730",
+        "width": "155",
+        "height": "80",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "p2",
+      "value": "+",
+      "geometry": {
+        "x": "1380",
+        "y": "755",
+        "width": "30",
+        "height": "30",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "xp",
+      "value": "\\( X^+ \\)<br>\\( 48\\times128 \\)",
+      "geometry": {
+        "x": "1460",
+        "y": "740",
+        "width": "85",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "tb",
+      "value": "\\( h_t\\to\\mathrm{Linear}(128,256)\\to\\mathrm{split}(\\gamma,\\beta) \\)<br>Separate modulation projection in each AdaLN",
+      "geometry": {
+        "x": "420",
+        "y": "640",
+        "width": "650",
+        "height": "55",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "map",
+      "value": "",
+      "geometry": {
+        "x": "775",
+        "y": "840",
+        "width": "110",
+        "height": "48",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "map_caption",
+      "value": "<b>Map</b> \\( C_G \\)<br>\\( 256 \\times 128 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "58",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "rc",
+      "value": "",
+      "geometry": {
+        "x": "65",
+        "y": "1060",
+        "width": "110",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "rc_caption",
+      "value": "<b>Raw</b> \\( Q_{\\mathrm{raw}} \\)<br>\\( 48 \\times 2 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "sgc",
+      "value": "Start \\( S \\) / Goal \\( G \\)",
+      "geometry": {
+        "x": "65",
+        "y": "1010",
+        "width": "200",
+        "height": "40",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "err",
+      "value": "Endpoint errors<br>\\( e_s=S-Q_{\\mathrm{raw},0} \\)<br>\\( e_g=G-Q_{\\mathrm{raw},47} \\)",
+      "geometry": {
+        "x": "315",
+        "y": "1060",
+        "width": "240",
+        "height": "85",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "weights",
+      "value": "Fixed correction profiles<br>\\( w^s=[1,0.75,0.5,0.25,0,\\ldots] \\)<br>\\( w^g=\\mathrm{reverse}(w^s) \\)",
+      "geometry": {
+        "x": "610",
+        "y": "1005",
+        "width": "360",
+        "height": "65",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "delta",
+      "value": "Compensation<br>\\( \\Delta Q_i=w_i^s e_s+w_i^g e_g \\)",
+      "geometry": {
+        "x": "640",
+        "y": "1115",
+        "width": "315",
+        "height": "65",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "sum",
+      "value": "+",
+      "geometry": {
+        "x": "1030",
+        "y": "1080",
+        "width": "30",
+        "height": "30",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "bc",
+      "value": "",
+      "geometry": {
+        "x": "1110",
+        "y": "1065",
+        "width": "110",
+        "height": "60",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "bc_caption",
+      "value": "<b>Corrected</b> \\( Q_{\\mathrm{bdry}} \\)<br>\\( 48 \\times 2 \\)",
+      "geometry": {
+        "x": "-45",
+        "y": "70",
+        "width": "200",
+        "height": "50",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "spline",
+      "value": "Clamped cubic<br>B-spline decode",
+      "geometry": {
+        "x": "1290",
+        "y": "1065",
+        "width": "205",
+        "height": "65",
+        "as": "geometry"
+      }
+    },
+    {
+      "id": "ta",
+      "value": "A  Safety fusion and final clean-control prediction",
+      "geometry": {
+        "as": "geometry",
+        "x": "40",
+        "y": "40",
+        "width": "770",
+        "height": "30"
+      }
+    },
+    {
+      "id": "meta",
+      "value": "\\( C=48\\;\\cdot\\;Q=128\\;\\cdot\\;D=128 \\) · 4 heads · \\( d_h=32 \\) · batch omitted",
+      "geometry": {
+        "as": "geometry",
+        "x": "850",
+        "y": "40",
+        "width": "700",
+        "height": "30"
+      }
+    },
+    {
+      "id": "tbb",
+      "value": "B  One final denoising block: three pre-norm sublayers with separate residuals",
+      "geometry": {
+        "as": "geometry",
+        "x": "40",
+        "y": "605",
+        "width": "1450",
+        "height": "30"
+      }
+    },
+    {
+      "id": "ada",
+      "value": "\\( \\mathrm{AdaLN}(X,h_t)=(1+\\gamma(h_t))\\odot\\mathrm{LN}(X)+\\beta(h_t) \\)",
+      "geometry": {
+        "as": "geometry",
+        "x": "220",
+        "y": "902",
+        "width": "850",
+        "height": "30"
+      }
+    },
+    {
+      "id": "bias",
+      "value": "Self-attention bias:<br>\\( B_{ij}^{h}=b_h(|i-j|) \\) for \\( C=48 \\).",
+      "geometry": {
+        "as": "geometry",
+        "x": "1110",
+        "y": "850",
+        "width": "410",
+        "height": "55"
+      }
+    },
+    {
+      "id": "tc",
+      "value": "C  Parameter-free endpoint compensation",
+      "geometry": {
+        "as": "geometry",
+        "x": "40",
+        "y": "967",
+        "width": "750",
+        "height": "30"
+      }
+    },
+    {
+      "id": "eq",
+      "value": "\\( Q_{\\mathrm{bdry},0}=S,\\quad Q_{\\mathrm{bdry},47}=G \\); only the first / last four controls are shifted.",
+      "geometry": {
+        "as": "geometry",
+        "x": "315",
+        "y": "1200",
+        "width": "940",
+        "height": "30"
+      }
+    },
+    {
+      "id": "down",
+      "value": "Curve: \\( 128\\times2 \\)<br>Controls → downstream ALM",
+      "geometry": {
+        "as": "geometry",
+        "x": "1275",
+        "y": "1150",
+        "width": "270",
+        "height": "50"
+      }
+    },
+    {
+      "id": "legend",
+      "value": "Solid: feature / numeric data. Purple dashed: conditioning. Tensor grids are schematic.",
+      "geometry": {
+        "as": "geometry",
+        "x": "40",
+        "y": "1245",
+        "width": "1500",
+        "height": "30"
+      }
+    },
+    {
+      "id": "kvnote",
+      "value": "\\( K,V \\)",
+      "geometry": {
+        "as": "geometry",
+        "x": "665",
+        "y": "150",
+        "width": "55",
+        "height": "24"
+      }
+    },
+    {
+      "id": "fusion_formula",
+      "value": "\\( H_{\\mathrm{fuse}}=H_{\\mathrm{ctrl}}+\\mathrm{CrossAttention}\\!\\left(\\mathrm{AdaLN}(H_{\\mathrm{ctrl}},h_t),H_{\\mathrm{ell}}\\right) \\)",
+      "geometry": {
+        "as": "geometry",
+        "x": "260",
+        "y": "335",
+        "width": "1050",
+        "height": "30"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "path",
+      "target": "norm"
+    },
+    {
+      "source": "norm",
+      "target": "sca"
+    },
+    {
+      "source": "ell",
+      "target": "sca"
+    },
+    {
+      "source": "sca",
+      "target": "add"
+    },
+    {
+      "source": "path",
+      "target": "add"
+    },
+    {
+      "source": "add",
+      "target": "safe"
+    },
+    {
+      "source": "mlp",
+      "target": "f"
+    },
+    {
+      "source": "ht",
+      "target": "norm"
+    },
+    {
+      "source": "f",
+      "target": "den"
+    },
+    {
+      "source": "cg",
+      "target": "den"
+    },
+    {
+      "source": "ht",
+      "target": "den"
+    },
+    {
+      "source": "den",
+      "target": "hc"
+    },
+    {
+      "source": "hc",
+      "target": "head"
+    },
+    {
+      "source": "head",
+      "target": "raw"
+    },
+    {
+      "source": "raw",
+      "target": "bd"
+    },
+    {
+      "source": "bd",
+      "target": "fixed"
+    },
+    {
+      "source": "sg",
+      "target": "bd"
+    },
+    {
+      "source": "n0",
+      "target": "op0"
+    },
+    {
+      "source": "op0",
+      "target": "p0"
+    },
+    {
+      "source": "x",
+      "target": "n0"
+    },
+    {
+      "source": "x",
+      "target": "p0"
+    },
+    {
+      "source": "n1",
+      "target": "op1"
+    },
+    {
+      "source": "op1",
+      "target": "p1"
+    },
+    {
+      "source": "p0",
+      "target": "n1"
+    },
+    {
+      "source": "p0",
+      "target": "p1"
+    },
+    {
+      "source": "n2",
+      "target": "op2"
+    },
+    {
+      "source": "op2",
+      "target": "p2"
+    },
+    {
+      "source": "p1",
+      "target": "n2"
+    },
+    {
+      "source": "p1",
+      "target": "p2"
+    },
+    {
+      "source": "p2",
+      "target": "xp"
+    },
+    {
+      "source": "tb",
+      "target": "n0"
+    },
+    {
+      "source": "tb",
+      "target": "n1"
+    },
+    {
+      "source": "tb",
+      "target": "n2"
+    },
+    {
+      "source": "map",
+      "target": "op1"
+    },
+    {
+      "source": "rc",
+      "target": "err"
+    },
+    {
+      "source": "sgc",
+      "target": "err"
+    },
+    {
+      "source": "err",
+      "target": "delta"
+    },
+    {
+      "source": "weights",
+      "target": "delta"
+    },
+    {
+      "source": "delta",
+      "target": "sum"
+    },
+    {
+      "source": "rc",
+      "target": "sum"
+    },
+    {
+      "source": "sum",
+      "target": "bc"
+    },
+    {
+      "source": "bc",
+      "target": "spline"
+    },
+    {
+      "source": "safe",
+      "target": "mlp"
+    }
+  ],
+  "math_format": "LaTeX, drawio math=1"
+}

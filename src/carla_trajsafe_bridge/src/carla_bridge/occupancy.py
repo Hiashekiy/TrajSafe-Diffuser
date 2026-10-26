@@ -6,7 +6,7 @@ the checkpoint was trained on (0 = free, 1 = obstacle):
 dataset   data/carla_processed/<split>/occupancy.npy -- the frozen snapshot the
           dashboard uses.  It is already canonical (no flip needed).
 live      rasterised from the CARLA Town driving-lane quad cache
-          (data/carla_v1/maps/<Town>/driving_lane_quads.npy) with the recorded
+          (data/raw/80m/maps/<Town>/driving_lane_quads.npy) with the recorded
           ego basis of the anchor frame, then flipped ONCE by
           frame.raw_occupancy_to_canonical().
 

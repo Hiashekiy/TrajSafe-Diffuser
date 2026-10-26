@@ -1,0 +1,89 @@
+{
+  "header": {
+    "method": "stageB_fixed_circle",
+    "guidance": "alm",
+    "seed": 0,
+    "split": "test",
+    "steps": 16,
+    "warmup_reverse_steps": 3,
+    "chunk": 32,
+    "n_samples": 420,
+    "config": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\configs\\paper_modified.yaml",
+    "checkpoint": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\A\\ckpt\\best_task.pt",
+    "checkpoint_hash": "ec7996ab19cce21c",
+    "git_commit": "5a7021a4f810f1827b2d014dd26f32295d4ad26d",
+    "scene_to_meter": 80.0,
+    "alm_overrides": {
+      "force_feedback_valid_zero": false,
+      "safe_prediction_to_ddim": true,
+      "final_project": false
+    },
+    "corridor_overrides": {
+      "enabled": true,
+      "min_overlap_ratio": 0.1,
+      "bridge": {
+        "enabled": true,
+        "max_bridge_per_gap": 1
+      },
+      "topology_trials": 4,
+      "region": {
+        "safety_margin": 0.02,
+        "obstacle_window_half": 0.35,
+        "obstacle_dilation": 0,
+        "corridor_chunk_size": 512,
+        "ellipse_axis_min": 0.002,
+        "ellipse_axis_max": 2.0
+      },
+      "ellipse_prior": {
+        "mode": "fixed_circle",
+        "radius_scene": 0.14148715445707244,
+        "semi_major_scene": 0.2392699122428894,
+        "semi_minor_scene": 0.0836654081940651
+      }
+    },
+    "sdf_overrides": {},
+    "dense_points": 512,
+    "started_at": "2026-10-24 01:02:06",
+    "finished_at": "2026-10-24 01:03:17"
+  },
+  "timing": {
+    "wall_s": 65.6503508000751,
+    "per_traj_ms": [
+      147.55233750020125,
+      156.20533125002112,
+      160.6096593750408,
+      155.74548437507474,
+      153.96570625034656,
+      151.97471875035262,
+      155.0074843753464,
+      153.30352812543424,
+      155.2302750005765,
+      159.64037499998085,
+      394.6005750040058
+    ],
+    "mean_per_traj_ms": 176.712315909671
+  },
+  "prior": {
+    "split": "val",
+    "model_checkpoint": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\A\\ckpt\\best_task.pt",
+    "checkpoint_hash": "ec7996ab19cce21c",
+    "config": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\configs\\paper_modified.yaml",
+    "snapshot_forward": 4,
+    "seeds_used": [
+      0
+    ],
+    "n_samples": 1550,
+    "n_ellipses": 198400,
+    "radius_scene": 0.14148715445707244,
+    "semi_major_scene": 0.2392699122428894,
+    "semi_minor_scene": 0.0836654081940651,
+    "scene_to_meter": 80.0,
+    "radius_m": 11.318972356565794,
+    "semi_major_m": 19.141592979431152,
+    "semi_minor_m": 6.6932326555252075,
+    "rule": "a0=median(a), b0=median(b), a0>=b0, r0=sqrt(a0*b0)",
+    "git_commit": "5a7021a4f810f1827b2d014dd26f32295d4ad26d",
+    "frozen_at": "2026-10-24 00:57:17"
+  },
+  "mode": "fixed_circle"
+}

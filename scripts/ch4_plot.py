@@ -8,7 +8,7 @@ JSON 的 ``per_step``（由 ``aggregate_steps`` 生成，字段名见那里的 `
 论文 4.4 的图和 4.2 的表必须与评测输出**逐字对齐**，所以这里绝不在绘图脚本里
 重算任何指标：本脚本只做三件事
 
-1. 读 ``outputs/ch4/**/<method>__s<seed>.json``，把 ``per_step`` 里 scene 单位的量
+1. 读 ``outputs/chapter4/**/<method>__s<seed>.json``，把 ``per_step`` 里 scene 单位的量
    乘以**该 JSON 自己的** ``scene_to_meter``（不硬编码 80）换成米再画；
    ``null``（预热步 / 该方法不产生该量）保留为断点，**不画 0**；
 2. 用模块级唯一的「方法顺序 / 颜色 / marker」字典作图，保证 4.4 的几张图
@@ -83,16 +83,16 @@ B=3 与 B=16 同一 seed 下第 2 行就不同，所以必须整段重放。）
 
 用法
 ----
-    python scripts/ch4_plot.py curves --runs outputs/ch4/smoke/*__s0.json \
-        --out outputs/ch4/figures/process_curves.png
-    python scripts/ch4_plot.py smoothness --runs outputs/ch4/smoke/*__s0.json \
-        --out outputs/ch4/figures/smoothness.png
+    python scripts/ch4_plot.py curves --runs outputs/chapter4/smoke/*__s0.json \
+        --out outputs/chapter4/figures/process_curves.png
+    python scripts/ch4_plot.py smoothness --runs outputs/chapter4/smoke/*__s0.json \
+        --out outputs/chapter4/figures/smoothness.png
     python scripts/ch4_plot.py cases \
         --config configs/config_160k4p_c48_oneshot.yaml \
-        --ckpt outputs/oneshot_k4p_c48/ckpt/best_task.pt \
-        --guidance alm --samples 0,1,2 --out-dir outputs/ch4/figures/cases
-    python scripts/ch4_plot.py table --runs outputs/ch4/smoke/*__s0.json \
-        --out outputs/ch4/figures/main_table.png
+        --ckpt outputs/models/oneshot_k4p_c48/ckpt/best_task.pt \
+        --guidance alm --samples 0,1,2 --out-dir outputs/chapter4/figures/cases
+    python scripts/ch4_plot.py table --runs outputs/chapter4/smoke/*__s0.json \
+        --out outputs/chapter4/figures/main_table.png
 
 无显示环境，固定 ``matplotlib.use("Agg")``。
 """

@@ -37,7 +37,7 @@ model:
 
 train:
   epochs: 100
-  ckpt_dir: "outputs/oneshot_k4p_c48_d/ckpt"
+  ckpt_dir: "outputs/models/oneshot_k4p_c48_d/ckpt"
   feedback:
     rollout: false
 

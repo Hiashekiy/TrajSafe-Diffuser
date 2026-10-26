@@ -4,8 +4,8 @@
 #   bash scripts/ch4_train.sh <config> <out-root> <epochs> <max-hours>
 #
 # 例：
-#   bash scripts/ch4_train.sh configs/config_160k4p_c48_s_nofb.yaml outputs/oneshot_k4p_c48_s 100 6.0
-#   bash scripts/ch4_train.sh configs/config_160k4p_c48_d_std.yaml  outputs/oneshot_k4p_c48_d 100 6.0
+#   bash scripts/ch4_train.sh configs/config_160k4p_c48_s_nofb.yaml outputs/models/oneshot_k4p_c48_s 100 6.0
+#   bash scripts/ch4_train.sh configs/config_160k4p_c48_d_std.yaml  outputs/models/oneshot_k4p_c48_d 100 6.0
 #
 # 与 scripts/k4p_c48_train.sh 相同的 recipe（batch 8 x accum 2, lr 2e-4），
 # 只把 epoch 预算与数据/配置参数化。ckpt 一律落在 <out-root>/ckpt，

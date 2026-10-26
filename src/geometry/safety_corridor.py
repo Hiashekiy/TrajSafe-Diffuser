@@ -268,6 +268,8 @@ class SafetyCorridor:
                     "center": [float(cell.center[0]), float(cell.center[1])],
                     "face_count": int(cell.face_count),
                     "valid": bool(cell.valid),
+                      "A": np.asarray(cell.A, dtype=np.float64).tolist(),
+                      "b": np.asarray(cell.b, dtype=np.float64).tolist(),
                     "polygon": ([] if cell.polygon is None
                                 else np.round(np.asarray(cell.polygon,
                                                          dtype=np.float64), 5)

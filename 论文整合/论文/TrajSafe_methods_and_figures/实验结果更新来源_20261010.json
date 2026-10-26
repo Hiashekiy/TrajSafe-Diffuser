@@ -1,0 +1,170 @@
+{
+  "updated_at": "2026-10-10T12:24:49.580461",
+  "paper": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文\\TrajSafe_methods_and_figures\\TrajSafe_paper_optimized.md",
+  "backup": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文\\TrajSafe_methods_and_figures\\历史版本\\TrajSafe_paper_optimized_20261010_122449_before_corrected_efficiency_update.md",
+  "campaign": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection",
+  "metrics": {
+    "none": {
+      "n": 1260,
+      "collisions": 771,
+      "collision_pct": 61.1904761904762,
+      "feasible_pct": 39.20634920634921,
+      "violation_m": 8.001204261367047,
+      "p95_m": 30.225405597686766,
+      "min_distance_mean_m": -6.876265546632191,
+      "rmse_m": 17.696929597239645,
+      "smoothness_m": 0.026443025874092228
+    },
+    "penalty": {
+      "n": 1260,
+      "collisions": 240,
+      "collision_pct": 19.047619047619047,
+      "feasible_pct": 84.52380952380952,
+      "violation_m": 3.3504099798264972,
+      "p95_m": 26.428717136383057,
+      "min_distance_mean_m": -1.9664072876657537,
+      "rmse_m": 16.732211763470893,
+      "smoothness_m": 0.19479946694410746
+    },
+    "primal_dual": {
+      "n": 1260,
+      "collisions": 291,
+      "collision_pct": 23.095238095238095,
+      "feasible_pct": 76.98412698412699,
+      "violation_m": 4.829938416574741,
+      "p95_m": 28.462974262237516,
+      "min_distance_mean_m": -3.4656376476236987,
+      "rmse_m": 16.465367575817638,
+      "smoothness_m": 0.09972455359788404
+    },
+    "alm_sdf": {
+      "n": 1260,
+      "collisions": 301,
+      "collision_pct": 23.88888888888889,
+      "feasible_pct": 76.34920634920634,
+      "violation_m": 5.049994017591788,
+      "p95_m": 30.215416431427002,
+      "min_distance_mean_m": -3.707877119715577,
+      "rmse_m": 16.3957706038441,
+      "smoothness_m": 0.058639205268598976
+    },
+    "TrajSafe": {
+      "n": 1260,
+      "collisions": 0,
+      "collision_pct": 0.0,
+      "feasible_pct": 100.0,
+      "violation_m": 0.0,
+      "p95_m": 0.0,
+      "min_distance_mean_m": 3.2552143929496644,
+      "rmse_m": 9.966531196283915,
+      "smoothness_m": 0.031458587413062414
+    },
+    "S_raw": {
+      "n": 1260,
+      "collisions": 317,
+      "collision_pct": 25.158730158730158,
+      "feasible_pct": 75.47619047619048,
+      "violation_m": 1.0404893759017189,
+      "p95_m": 6.997886109352109,
+      "min_distance_mean_m": 1.2947651996639453,
+      "rmse_m": 9.651391621856462,
+      "smoothness_m": 0.03414301220475445
+    },
+    "A_feedback_only": {
+      "n": 1260,
+      "collisions": 42,
+      "collision_pct": 3.3333333333333335,
+      "feasible_pct": 96.98412698412699,
+      "violation_m": 0.08575056176336984,
+      "p95_m": 0.0,
+      "min_distance_mean_m": 3.0313386165758684,
+      "rmse_m": 9.937895645792523,
+      "smoothness_m": 0.02980964931156782
+    },
+    "steps4_stride1": {
+      "n": 1260,
+      "collisions": 0,
+      "rmse_m": 9.88090809772885,
+      "smoothness_m": 0.031354872029023394,
+      "feasible_pct": 100.0,
+      "collision_pct": 0.0
+    },
+    "steps16_stride8": {
+      "n": 1260,
+      "collisions": 0,
+      "collision_pct": 0.0,
+      "feasible_pct": 100.0,
+      "violation_m": 0.0,
+      "p95_m": 0.0,
+      "min_distance_mean_m": 3.2957313189430844,
+      "rmse_m": 9.926900276494404,
+      "smoothness_m": 0.031325749935404885
+    },
+    "steps4_stride8": {
+      "n": 1260,
+      "collisions": 0,
+      "rmse_m": 9.846478797235186,
+      "smoothness_m": 0.03142096124596835,
+      "feasible_pct": 100.0,
+      "collision_pct": 0.0
+    }
+  },
+  "timing_source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\efficiency_corrected_20261010\\timing.json",
+  "geometry_source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\geometry\\summary.json",
+  "endpoint_source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\custom_endpoints\\random_endpoints.json",
+  "model_epochs": {
+    "D": 172,
+    "S": 90,
+    "A": 107
+  },
+  "quality_seeds": [
+    0,
+    1,
+    2
+  ],
+  "timing_seed": 0,
+  "final_project": false,
+  "image_sha256": {
+    "case293.png": "1bdf5a5672ffcf4b70c6bb0c42f939e90e40545a1fdb25798ada3d502fc15f1b",
+    "random_endpoints_0_1.png": "c022ec9244e6b1dd5f829e5cdcfe9ef62339631c5c91a0e1ee81b8dbb421f89a",
+    "random_endpoints_2_3.png": "a74917546ecb88e0f1fca2954376fa095e58c42344e774a34be1fb82edf409fa",
+    "random_endpoints_4_5.png": "85a98496c0c638fa6694e0ce8d59b74c30bc8a44d5543393bae93b9d61df62e4"
+  },
+  "superseded_efficiency": {
+    "reason": "四步旧协议误用3步预热，质量结果撤回；效率表统一改用本轮四配置交错计时。",
+    "metrics": {
+      "steps4_stride1": {
+        "n": 1260,
+        "collisions": 2,
+        "collision_pct": 0.15873015873015872,
+        "feasible_pct": 99.84126984126985,
+        "violation_m": 0.0008837887219020298,
+        "p95_m": 0.0,
+        "min_distance_mean_m": 3.1835016568028736,
+        "rmse_m": 9.581186883884763,
+        "smoothness_m": 0.03985967676909197
+      },
+      "steps4_stride8": {
+        "n": 1260,
+        "collisions": 0,
+        "collision_pct": 0.0,
+        "feasible_pct": 100.0,
+        "violation_m": 0.0,
+        "p95_m": 0.0,
+        "min_distance_mean_m": 3.2045189694752767,
+        "rmse_m": 9.544647559476276,
+        "smoothness_m": 0.03980507141067868
+      }
+    },
+    "timing_source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\timing.json"
+  },
+  "corrected_efficiency_quality_source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\efficiency_corrected_20261010\\results.json",
+  "corrected_efficiency_manifest": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\efficiency_corrected_20261010\\manifest.json",
+  "efficiency_timing_used": "acceleration: four configurations interleaved",
+  "speedup": 3.031293439020242,
+  "warmup_by_steps": {
+    "4": 2,
+    "16": 3
+  },
+  "sequential_timing_excluded_from_speed_comparison": true
+}

@@ -1,0 +1,4 @@
+prior_mode,n,success,success_rate_pct,mean_base_area_m2,mean_bridge_regions
+learned,420,420,100,581.1968136,0
+fixed_circle,420,420,100,569.0748257,0
+fixed_ellipse,420,420,100,577.1897254,0

@@ -1,0 +1,68 @@
+# S1：车道内静止车辆绕行（完整推理 + 平滑 + C2 起点前导）
+id: S1
+name: 车道内静止车辆绕行
+map: Town10HD_Opt
+
+ego:
+  blueprint: vehicle.audi.tt
+  spawn_index: 101
+  spawn_candidates: [61, 15, 44, 45, 50, 60, 12, 98, 26]       # 右侧车道（lane -2），左邻同向车道可用
+  speed_mps: 0.0
+
+goal:
+  distance_m: 65.0       # 贴近训练分布（数据集目标点中位数 70.9 m）
+
+obstacles:
+  - blueprint: vehicle.mini.cooper_s
+    distance_m: 35.0
+    lateral_m: 0.4       # 压在本车道内
+    yaw_offset_deg: 0.0
+
+grid:
+  inflation_cells: 0
+  lanes_each_side: 2
+  route_length_m: 140.0
+  route_back_m: 40.0
+
+planner:
+  model_id: K4P_c48_oneshot:best_task
+  config: configs/config_160k4p_c48_oneshot.yaml
+  dataset: 160m-k4p-c48
+  device: cuda
+  steps: 16
+  region_stride: 1
+  corridor_margin_m: 1.0
+  corridor_axis_max_scene: 0.035
+  visualize: true
+  anchor_start: false        # 三次 Hermite 会在接缝留折角
+  anchored_refit_rms: 0
+  refit_rms_m: 0.10          # 平滑样条重拟合
+  rigid_align_start: false
+  translate_to_ego: true   # 整条旋转会破坏贴道
+  lead_in_m: 0
+  bend_start_m: 0
+  pin_start_m: 4.0
+  pin_sample_m: 12.0      # 边界约束样条的采样间隔（越大越平滑）        # 端点钉扎：前 4 m 从自车位姿出发             # 五次 Hermite 前导段，C2 接缝
+  smooth_iters: 0
+
+safety:
+  max_speed_mps: 4.0
+  max_accel_mps2: 1.5
+  comfort_decel_mps2: 2.0
+  max_lateral_accel_mps2: 1.5
+  stop_margin_m: 3.0
+  terminal_stop_buffer_m: 1.0
+  footprint_check: true
+  road_margin_m: 0.0
+
+control:
+  enabled: true
+  lookahead_m: 6.0
+  max_duration_s: 40.0
+  arrival_tolerance_m: 2.0
+
+record:
+  dir: outputs/scenarios
+  video: true
+  video_fps: 20
+  fixed_dt: 0.05

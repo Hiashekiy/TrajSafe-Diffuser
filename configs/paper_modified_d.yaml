@@ -1,0 +1,19 @@
+# Plain diffusion generator for all four paper comparison rows.
+base: configs/paper_modified.yaml
+model:
+  safety_features:
+    enabled: false
+  feedback:
+    enabled: false
+train:
+  epochs: 200
+  ckpt_dir: outputs/paper_ral/D/ckpt
+  feedback:
+    rollout: false
+loss:
+  lambda_shape: 0.0
+  lambda_iou: 0.0
+  lambda_safe: 0.0
+  lambda_alm: 0.0
+  lambda_feedback_safe: 0.0
+  lambda_curve_smooth: 0.0

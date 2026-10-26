@@ -1,0 +1,85 @@
+{
+  "experiment": "ALM iteration budget vs safety/efficiency",
+  "generator": "A (feedback-trained)",
+  "checkpoint": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\A\\ckpt\\best_task.pt",
+  "checkpoint_hash": "ec7996ab19cce21c",
+  "config": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\configs\\paper_modified.yaml",
+  "git_commit": "5a7021a4f810f1827b2d014dd26f32295d4ad26d",
+  "python": "E:\\CondaEnvData\\envs\\GGMPC\\python.exe",
+  "torch": "2.9.1+cu126",
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "ddim_steps": 4,
+  "warmup_configured": 3,
+  "warmup_effective": 2,
+  "region_stride": 8,
+  "feedback_enabled": true,
+  "final_project": false,
+  "default_budget": {
+    "activation_inner_steps": 8,
+    "inner_steps": 10
+  },
+  "constraint_tol_scene": 0.001,
+  "constraint_tol_m": 0.08,
+  "rho": 5.0,
+  "step_size": 0.05,
+  "max_curve_step_scene": 0.2,
+  "corridor_region": {
+    "safety_margin": 0.02,
+    "obstacle_window_half": 0.35,
+    "obstacle_dilation": 0,
+    "corridor_chunk_size": 512,
+    "ellipse_axis_min": 0.002,
+    "ellipse_axis_max": 2.0
+  },
+  "corridor_bridge": {
+    "enabled": true,
+    "max_bridge_per_gap": 1
+  },
+  "budget_site": "src/diffusion/sampler.py: per-sample `budget` tensor -> bspline_alm_correct(max_steps=budget)",
+  "early_stop": "src/diffusion/bspline_alm.py: remaining = (it+1 < max_steps) & (v_max_now > tol); break when no sample remains",
+  "feasibility_recheck": "constraint_state(q_final, pack) + _violation_stats; threshold = alm.constraint_tol (independent of the solver flag)",
+  "timing_scope": "bspline_alm_correct only: residual + analytic gradient + Cholesky step + dual update; excludes network forward, SDF build and corridor construction",
+  "configurations": {
+    "I2": {
+      "activation_inner_steps": 2,
+      "inner_steps": 2
+    },
+    "I4": {
+      "activation_inner_steps": 4,
+      "inner_steps": 4
+    },
+    "I6": {
+      "activation_inner_steps": 6,
+      "inner_steps": 6
+    },
+    "I8": {
+      "activation_inner_steps": 8,
+      "inner_steps": 8
+    },
+    "I10": {
+      "activation_inner_steps": 10,
+      "inner_steps": 10
+    },
+    "Default": {
+      "activation_inner_steps": 8,
+      "inner_steps": 10
+    }
+  },
+  "started_at": "2026-10-24 14:15:23",
+  "probe_4samples": {
+    "I2": {
+      "calls": 2,
+      "iterations_mean": 2.0,
+      "iterations_max": 2,
+      "seconds_per_call": 0.27628579997690395
+    },
+    "Default": {
+      "calls": 2,
+      "iterations_mean": 5.5,
+      "iterations_max": 8,
+      "seconds_per_call": 0.027771699998993427
+    }
+  },
+  "probe_budget_effective": true
+}

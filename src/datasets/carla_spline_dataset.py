@@ -1,8 +1,8 @@
 """CARLA dataset for the control-space (C B-spline controls) TrajSafe-Diffuser.
 
 Consumes the FIXED processed snapshot written by ``scripts/data/carla/*``
-(see ``docs/CARLA_BSPLINE_PIPELINE_SPEC.md``).  It never scans the live
-``data/carla_v1`` directory, so a dataset that is still being collected cannot
+(see ``docs/数据流水线与数据格式说明.md``).  It never scans the live
+``data/raw/80m`` directory, so a dataset that is still being collected cannot
 change the DataLoader mid-training.
 
 Returned per sample:

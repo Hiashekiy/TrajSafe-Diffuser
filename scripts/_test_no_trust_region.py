@@ -71,7 +71,7 @@ if __name__ == "__main__":
         "--config", "configs/config_160k4p_c48_oneshot.yaml",
         "--split", "test", "--samples", "0", "--chunk", "32",
         "--steps", "16", "--seed", "0",
-        "--model", "K4P_c48_oneshot=outputs/oneshot_k4p_c48/ckpt/best_task.pt"
+        "--model", "K4P_c48_oneshot=outputs/models/oneshot_k4p_c48/ckpt/best_task.pt"
                    "::configs/config_160k4p_c48_oneshot.yaml",
         "--out", "outputs/eval_k4p_c48_alm_notrust.json",
         "--md", "outputs/eval_k4p_c48_alm_notrust.md",

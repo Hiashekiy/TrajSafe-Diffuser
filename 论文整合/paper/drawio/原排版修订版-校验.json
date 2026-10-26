@@ -1,0 +1,68 @@
+[
+  {
+    "file": "TrajSafe-Diffuser_图3-2_§3.3控制主干8×TrajBlock-原排版修订版.drawio",
+    "images": 0,
+    "dangling_edges": [],
+    "geometry_adjustments": [
+      "bb_h0",
+      "bb_h1",
+      "bb_h2",
+      "bb_h3"
+    ],
+    "removed_off_canvas_copy": [
+      "YoYnVApzswjtIt1ukSXO-1",
+      "YoYnVApzswjtIt1ukSXO-11",
+      "YoYnVApzswjtIt1ukSXO-12",
+      "YoYnVApzswjtIt1ukSXO-13",
+      "YoYnVApzswjtIt1ukSXO-14",
+      "YoYnVApzswjtIt1ukSXO-15",
+      "YoYnVApzswjtIt1ukSXO-16",
+      "YoYnVApzswjtIt1ukSXO-17",
+      "YoYnVApzswjtIt1ukSXO-18",
+      "YoYnVApzswjtIt1ukSXO-19",
+      "YoYnVApzswjtIt1ukSXO-2",
+      "YoYnVApzswjtIt1ukSXO-20",
+      "YoYnVApzswjtIt1ukSXO-21",
+      "YoYnVApzswjtIt1ukSXO-22",
+      "YoYnVApzswjtIt1ukSXO-23",
+      "YoYnVApzswjtIt1ukSXO-24",
+      "YoYnVApzswjtIt1ukSXO-3",
+      "YoYnVApzswjtIt1ukSXO-4",
+      "YoYnVApzswjtIt1ukSXO-5"
+    ],
+    "original_preserved": true
+  },
+  {
+    "file": "TrajSafe-Diffuser_图3-3_§3.2骨架匹配与安全几何-原排版修订版.drawio",
+    "images": 0,
+    "dangling_edges": [],
+    "geometry_adjustments": [],
+    "removed_off_canvas_copy": [],
+    "original_preserved": true
+  },
+  {
+    "file": "TrajSafe-Diffuser_图3-4_§3.3融合与最终去噪-原排版修订版.drawio",
+    "images": 0,
+    "dangling_edges": [],
+    "geometry_adjustments": [
+      "hs",
+      "r1",
+      "r2",
+      "r3",
+      "blk"
+    ],
+    "removed_off_canvas_copy": [],
+    "original_preserved": true
+  },
+  {
+    "file": "TrajSafe-Diffuser_图3-5_§3.4闭环安全修正与反馈-原排版修订版.drawio",
+    "images": 0,
+    "dangling_edges": [],
+    "geometry_adjustments": [
+      "fr",
+      "hcin"
+    ],
+    "removed_off_canvas_copy": [],
+    "original_preserved": true
+  }
+]

@@ -1,0 +1,356 @@
+<mxfile host="Electron" agent="TrajSafe-Diffuser figure spec">
+  <diagram id="main-arch" name="网络框架总图">
+    <mxGraphModel dx="2000" dy="1209" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2000" pageHeight="1045" math="1" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="h1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#ECECF0;strokeColor=#B9B9C4;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;strokeWidth=1;fontSize=13;fontStyle=1;" value="① 多模态条件编码" vertex="1">
+          <mxGeometry height="28" width="290" x="20" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="h2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#ECECF0;strokeColor=#B9B9C4;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;strokeWidth=1;fontSize=13;fontStyle=1;" value="② 控制主干与粗解" vertex="1">
+          <mxGeometry height="28" width="290" x="350" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="h3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#ECECF0;strokeColor=#B9B9C4;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;strokeWidth=1;fontSize=13;fontStyle=1;" value="③ 骨架匹配与拓扑选择" vertex="1">
+          <mxGeometry height="28" width="290" x="680" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="h4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#ECECF0;strokeColor=#B9B9C4;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;strokeWidth=1;fontSize=13;fontStyle=1;" value="④ 安全几何生成" vertex="1">
+          <mxGeometry height="28" width="290" x="1010" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="h5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#ECECF0;strokeColor=#B9B9C4;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;strokeWidth=1;fontSize=13;fontStyle=1;" value="⑤ 安全特征融合与引导去噪" vertex="1">
+          <mxGeometry height="28" width="290" x="1340" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="h6" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#ECECF0;strokeColor=#B9B9C4;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;strokeWidth=1;fontSize=13;fontStyle=1;" value="⑥ 输出与推理期闭环" vertex="1">
+          <mxGeometry height="28" width="290" x="1670" y="44" as="geometry" />
+        </mxCell>
+        <mxCell id="bar_ht" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#DFF0F3;strokeColor=#12738C;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;fontSize=12;fontColor=#0F4F5E;align=left;spacingLeft=8;" value="\(h_t\) 时间步嵌入 [B,128] → 注入所有 AdaLN 模块" vertex="1">
+          <mxGeometry height="20" width="1600" x="340" y="86" as="geometry" />
+        </mxCell>
+        <mxCell id="bar_cg" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#DFF0F3;strokeColor=#12738C;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;fontSize=12;fontColor=#0F4F5E;align=left;spacingLeft=8;" value="\(C_G\) 全局地图 token" vertex="1">
+          <mxGeometry height="20" width="1600" x="340" y="118" as="geometry" />
+        </mxCell>
+        <mxCell id="bar_ce" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#DFF0F3;strokeColor=#12738C;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;fontSize=12;fontColor=#0F4F5E;align=left;spacingLeft=8;" value="\(C_E\) 精细几何 token" vertex="1">
+          <mxGeometry height="20" width="1000" x="340" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="n_occ" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFFFFF;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Occupancy&lt;/b&gt; \(\mathcal{O}\)&lt;br&gt;占据栅格 [B,1,256,256]" vertex="1">
+          <mxGeometry height="56" width="240" x="40" y="257" as="geometry" />
+        </mxCell>
+        <mxCell id="n_scene" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#D9F0F2;strokeColor=#12738C;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Scene Encoder&lt;/b&gt;&lt;br&gt;CNN 256→16，通道 32/64/96/128&lt;br&gt;→ \(C_G\) [B,256,D] / \(C_E\) [B,1024,D]" vertex="1">
+          <mxGeometry height="78" width="240" x="40" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="n_t" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFF0C9;strokeColor=#D18510;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="\(t\) → &lt;b&gt;Timestep Emb.&lt;/b&gt; \(h_t\) [B,128]&lt;br&gt;sinusoidal + 2 层 MLP" vertex="1">
+          <mxGeometry height="56" width="240" x="40" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="n_qt" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFFFFF;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;\(Q_t\)&lt;/b&gt; 噪声控制多边形 [B,32,2]&lt;br&gt;起终点 \(S,G\) 硬条件钳位（端点精确）" vertex="1">
+          <mxGeometry height="56" width="240" x="40" y="431" as="geometry" />
+        </mxCell>
+        <mxCell id="n_cenc" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFF0C9;strokeColor=#D18510;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Control Encoder&lt;/b&gt;&lt;br&gt;\(\mathrm{MLP}_T(\Phi_{xy})+\mathrm{PE}_1\)&lt;br&gt;→ \(H_{ctrl}^{0}\) [B,32,128]" vertex="1">
+          <mxGeometry height="72" width="240" x="40" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="n_fbin" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDF1F7;strokeColor=#6B7A99;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=1 3;" value="上一轮 \(Q^{safe}\) , \(\Delta\) , \(valid\)&lt;br&gt;[B,32,2] · [B,32,2] · [B]" vertex="1">
+          <mxGeometry height="56" width="240" x="40" y="689" as="geometry" />
+        </mxCell>
+        <mxCell id="n_fbenc" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDF1F7;strokeColor=#6B7A99;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=1 3;" value="&lt;b&gt;Feedback Encoder&lt;/b&gt;（model.feedback）&lt;br&gt;门控残差 \(\oplus\) 注入 \(H_{ctrl}\)" vertex="1">
+          <mxGeometry height="64" width="240" x="40" y="605" as="geometry" />
+        </mxCell>
+        <mxCell id="LmwJkdtHbzJri7LHQGoW-2" edge="1" parent="1" source="gate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;curved=0;" target="n_cbb">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="338" y="228" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="gate" parent="1" style="ellipse;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;fillColor=#FFFFFF;strokeColor=#21854A;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;fontSize=13;fontColor=#21854A;" value="\(\oplus\)" vertex="1">
+          <mxGeometry height="24" width="24" x="326" y="534" as="geometry" />
+        </mxCell>
+        <mxCell id="n_cbb" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFF0C9;strokeColor=#D18510;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Control Backbone&lt;/b&gt;　8 × TrajBlock&lt;br&gt;AdaLN · Self-Attn / \(C_G\) Cross-Attn / FFN&lt;br&gt;→ \(H_{ctrl}\) [B,32,128]" vertex="1">
+          <mxGeometry height="86" width="260" x="370" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="n_head" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDDEF7;strokeColor=#7B38B0;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;head_p&lt;/b&gt;（共享线性层 \(D\!\to\!2\)）&lt;br&gt;→ \(\tilde{Q}_{coarse}\) [B,32,2]" vertex="1">
+          <mxGeometry height="72" width="260" x="370" y="291" as="geometry" />
+        </mxCell>
+        <mxCell id="n_bdec0" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#F2F2F4;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=4 3;" value="&lt;b&gt;Boundary Decoder&lt;/b&gt;&lt;br&gt;固定 · 零参数 · 端点精确" vertex="1">
+          <mxGeometry height="72" width="260" x="370" y="383" as="geometry" />
+        </mxCell>
+        <mxCell id="n_qco" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFFFFF;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="\(Q_{coarse}\) [B,32,2]&lt;br&gt;无候选骨架时的回退解" vertex="1">
+          <mxGeometry height="56" width="260" x="370" y="475" as="geometry" />
+        </mxCell>
+        <mxCell id="n_cand" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFFFFF;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="Skeleton Candidates \(S_m\)&lt;br&gt;[B,4,128,2]" vertex="1">
+          <mxGeometry height="56" width="260" x="700" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="n_skenc" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEE6FA;strokeColor=#3157B3;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Skeleton Encoder&lt;/b&gt;　\(N_S{=}2\)&lt;br&gt;→ \(H_S\) [B,4,128,128]" vertex="1">
+          <mxGeometry height="64" width="260" x="700" y="261" as="geometry" />
+        </mxCell>
+        <mxCell id="n_match" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEE6FA;strokeColor=#3157B3;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;MatchBlock&lt;/b&gt;&lt;br&gt;\(\mathrm{CrossAttn}(H_{ctrl}\!\to\! H_S[m])\)&lt;br&gt;→ \(R\) [B,4,32,128]" vertex="1">
+          <mxGeometry height="76" width="260" x="700" y="345" as="geometry" />
+        </mxCell>
+        <mxCell id="n_topo" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDDEF7;strokeColor=#7B38B0;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;TopologyHead&lt;/b&gt;&lt;br&gt;→ \(\pi\) [B,4]" vertex="1">
+          <mxGeometry height="56" width="260" x="700" y="441" as="geometry" />
+        </mxCell>
+        <mxCell id="n_mstar" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFFFFF;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;\(m^{*}\)&lt;/b&gt;　训练：GT ／ 推理：\(\arg\max_m \pi_m\)" vertex="1">
+          <mxGeometry height="60" width="260" x="700" y="517" as="geometry" />
+        </mxCell>
+        <mxCell id="n_pfh" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEE6FA;strokeColor=#3157B3;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;PathFeatureHead&lt;/b&gt;\((R[m^{*}])\)&lt;br&gt;→ \(H_{path}\) [B,32,128]" vertex="1">
+          <mxGeometry height="68" width="260" x="700" y="616" as="geometry" />
+        </mxCell>
+        <mxCell id="n_sqh" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEF2E1;strokeColor=#21854A;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;SafetyQueryHead&lt;/b&gt;\((H_S[m^{*}])\)&lt;br&gt;→ \(H_{safety}\) [B,128,128]" vertex="1">
+          <mxGeometry height="68" width="260" x="1030" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="n_anch" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEE6FA;strokeColor=#3157B3;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Skeleton Anchors&lt;/b&gt;（\(\Gamma_{m^{*}}\) 由 \(m^{*}\) 选中）&lt;br&gt;\(c_i=\Gamma_{m^{*}}\!\left(\tfrac{i}{Q-1}\right)\) 固定进度 · [B,128,2]" vertex="1">
+          <mxGeometry height="68" width="260" x="1030" y="273" as="geometry" />
+        </mxCell>
+        <mxCell id="n_ellg" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEF2E1;strokeColor=#21854A;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;EllipseGeometry&lt;/b&gt;&lt;br&gt;\(q_i^{E}=h_i^{path}+\mathrm{MLP}_C(\Phi_{xy}(c_i))\)&lt;br&gt;中心偏置 Cross-Attn（\(C_E\)）&lt;br&gt;→ \(H_{ell}\) [B,128,128]" vertex="1">
+          <mxGeometry height="86" width="260" x="1030" y="361" as="geometry" />
+        </mxCell>
+        <mxCell id="n_shape" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDDEF7;strokeColor=#7B38B0;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;EllipseShapeHead&lt;/b&gt;（\(a\ge b&gt;0\)）&lt;br&gt;\(\mathrm{shape}_4=(\log a,\log b,\cos 2\theta,\sin 2\theta)\)&lt;br&gt;[B,128,4]" vertex="1">
+          <mxGeometry height="76" width="260" x="1030" y="467" as="geometry" />
+        </mxCell>
+        <mxCell id="n_ell" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEF2E1;strokeColor=#21854A;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="局部安全椭圆 \((c_i,a,b,\theta)\)&lt;br&gt;→ 安全走廊 / 碰撞约束" vertex="1">
+          <mxGeometry height="56" width="260" x="1030" y="563" as="geometry" />
+        </mxCell>
+        <mxCell id="n_scf" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#DEF2E1;strokeColor=#21854A;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;SafetyControlFusion&lt;/b&gt;　安全→控制&lt;br&gt;\(A_{safe}=H_{path}+\mathrm{CrossAttn}(\)&lt;br&gt;\(\mathrm{AdaLN}(H_{path},h_t),\,H_{ell},\,H_{ell})\)" vertex="1">
+          <mxGeometry height="86" width="260" x="1360" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="n_fuse" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFF0C9;strokeColor=#D18510;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;FusionMLP&lt;/b&gt;&lt;br&gt;\(F_s=\mathrm{MLP}([H_{ctrl};H_{path};A_{safe}])\)&lt;br&gt;[B,32,128]" vertex="1">
+          <mxGeometry height="76" width="260" x="1360" y="291" as="geometry" />
+        </mxCell>
+        <mxCell id="n_den" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFF0C9;strokeColor=#D18510;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;Final Denoiser&lt;/b&gt;　3 × TrajBlock&lt;br&gt;AdaLN · Self-Attn / \(C_G\) Cross-Attn / FFN&lt;br&gt;（同 Control Backbone，参数独立）&lt;br&gt;→ \(H_{clean}\) [B,32,128]" vertex="1">
+          <mxGeometry height="86" width="260" x="1360" y="387" as="geometry" />
+        </mxCell>
+        <mxCell id="n_eps" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDDEF7;strokeColor=#7B38B0;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="&lt;b&gt;head_p&lt;/b&gt;（与 ② 共享）&lt;br&gt;\(\hat{x}_0=\tilde{Q}_{final}\) [B,32,2]" vertex="1">
+          <mxGeometry height="68" width="260" x="1360" y="493" as="geometry" />
+        </mxCell>
+        <mxCell id="n_bdec" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#F2F2F4;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=4 3;" value="&lt;b&gt;Boundary Decoder&lt;/b&gt;（固定 · 零参数）&lt;br&gt;→ \(Q_{final}\) [B,32,2]　端点精确" vertex="1">
+          <mxGeometry height="72" width="260" x="1690" y="185" as="geometry" />
+        </mxCell>
+        <mxCell id="n_bspl" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#F2F2F4;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=4 3;" value="&lt;b&gt;B-spline 解码&lt;/b&gt;　\(B_{128}\)（固定）" vertex="1">
+          <mxGeometry height="56" width="260" x="1690" y="277" as="geometry" />
+        </mxCell>
+        <mxCell id="n_curve" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#FFFFFF;strokeColor=#57575F;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;" value="轨迹 \(C(s)\) [B,128,2]&lt;br&gt;（仅绘图 / 指标 / 控制器）" vertex="1">
+          <mxGeometry height="60" width="260" x="1690" y="353" as="geometry" />
+        </mxCell>
+        <mxCell id="n_alm" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDF1F7;strokeColor=#6B7A99;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=1 3;" value="&lt;b&gt;ALM 安全修正&lt;/b&gt;（控制空间）&lt;br&gt;bspline_alm_correct · 32 控制点&lt;br&gt;约束包 = 安全走廊" vertex="1">
+          <mxGeometry height="72" width="260" x="1690" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="n_qsafe" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDF1F7;strokeColor=#6B7A99;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=1 3;" value="\(Q^{safe}\) [B,32,2]" vertex="1">
+          <mxGeometry height="56" width="260" x="1690" y="562" as="geometry" />
+        </mxCell>
+        <mxCell id="n_ddim" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDF1F7;strokeColor=#6B7A99;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=1 3;" value="&lt;b&gt;DDIM 反向步&lt;/b&gt;&lt;br&gt;\(t\to t-1\)" vertex="1">
+          <mxGeometry height="64" width="260" x="1690" y="638" as="geometry" />
+        </mxCell>
+        <mxCell id="n_qnext" parent="1" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=4;fillColor=#EDF1F7;strokeColor=#6B7A99;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=1 3;" value="\(Q_{t-1}\) [B,32,2]" vertex="1">
+          <mxGeometry height="56" width="260" x="1690" y="722" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=middle;fillColor=#FBFBFC;strokeColor=#C8C8CF;strokeWidth=1.4;fontSize=12;fontColor=#1A1A1A;dashed=1;dashPattern=4 3;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fontSize=11;" value="&lt;b&gt;图例&lt;/b&gt;&lt;br&gt;&lt;font color=&#39;#D18510&#39;&gt;■&lt;/font&gt; 颜色：控制点 / 扩散主干 · &lt;font color=&#39;#12738C&#39;&gt;■&lt;/font&gt; 地图条件编码 · &lt;font color=&#39;#3157B3&#39;&gt;■&lt;/font&gt; 骨架与拓扑 · &lt;font color=&#39;#21854A&#39;&gt;■&lt;/font&gt; 安全几何与融合 · &lt;font color=&#39;#7B38B0&#39;&gt;■&lt;/font&gt; 预测头&lt;br&gt;&lt;font color=&#39;#57575F&#39;&gt;■&lt;/font&gt; 线型：实线框 = 可训练模块　灰虚线框 = 固定 · 零参数（Boundary Decoder、B-spline 解码）　点线框 = 仅推理期&lt;br&gt;&lt;font color=&#39;#12738C&#39;&gt;■&lt;/font&gt; 连线：顶部细条 = 条件总线（\(h_t\) / \(C_G\) / \(C_E\)）　实线箭头 = 张量流向　\(\oplus\) = 门控残差相加&lt;br&gt;训练链路止于 \(Q_{final}\)；ALM 与 DDIM 只在推理期运行，不改变网络、checkpoint 与训练损失" vertex="1">
+          <mxGeometry height="100" width="950" x="340" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="e_occ_scene" edge="1" parent="1" source="n_occ" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_scene">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_scene_cg" edge="1" parent="1" source="n_scene" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#12738C;strokeWidth=1.2;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;endSize=5;exitX=1;exitY=0.331;entryX=0.0;entryY=0.5;exitPerimeter=0;" target="bar_cg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="360.81" />
+              <mxPoint x="300" y="128" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_scene_ce" edge="1" parent="1" source="n_scene" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;entryDx=0;entryDy=0;strokeColor=#12738C;strokeWidth=1.2;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;endSize=5;entryX=0.0;entryY=0.5;exitX=1;exitY=0.714;exitDx=0;exitDy=0;exitPerimeter=0;" target="bar_ce">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="320" y="390.71" />
+              <mxPoint x="320" y="160" />
+            </Array>
+            <mxPoint x="279.99" y="320" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_t_ht" edge="1" parent="1" source="n_t" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;entryDx=0;entryDy=0;strokeColor=#12738C;strokeWidth=1.2;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;endSize=5;entryX=0.0;entryY=0.5;" target="bar_ht">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="160" y="96" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_qt_cenc" edge="1" parent="1" source="n_qt" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_cenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cenc_cbb" edge="1" parent="1" source="n_cenc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;" target="gate">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_fbin_fbenc" edge="1" parent="1" source="n_fbin" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="n_fbenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fbenc_gate" edge="1" parent="1" source="n_fbenc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;strokeColor=#6B7A99;strokeWidth=1.3;dashed=1;dashPattern=2 3;endArrow=block;endFill=1;endSize=5;exitX=1;exitY=0.5;" target="gate">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="336" y="637" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cbb_head" edge="1" parent="1" source="n_cbb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_head">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_head_bdec0" edge="1" parent="1" source="n_head" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_bdec0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bdec0_qco" edge="1" parent="1" source="n_bdec0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_qco">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cbb_match" edge="1" parent="1" source="n_cbb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n_match">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="228" />
+              <mxPoint x="660" y="383" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cbb_fuse" edge="1" parent="1" source="n_cbb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n_fuse" value="\(H_{ctrl}\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="228" />
+              <mxPoint x="660" y="755" />
+              <mxPoint x="1340" y="755" />
+              <mxPoint x="1340" y="329" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_pfh_scf" edge="1" parent="1" source="n_pfh" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n_scf" value="\(H_{path}\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="960" y="650" />
+              <mxPoint x="1318" y="650" />
+              <mxPoint x="1318" y="228" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cand_skenc" edge="1" parent="1" source="n_cand" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_skenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_skenc_match" edge="1" parent="1" source="n_skenc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_match">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_match_topo" edge="1" parent="1" source="n_match" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_topo">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_topo_mstar" edge="1" parent="1" source="n_topo" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_mstar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_mstar_pfh" edge="1" parent="1" source="n_mstar" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_pfh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_skenc_sqh" edge="1" parent="1" source="n_skenc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;entryX=0;entryY=0.25;" target="n_sqh" value="\(H_S\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="985" y="293" />
+              <mxPoint x="985" y="202" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_mstar_sqh" edge="1" parent="1" source="n_mstar" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;entryX=0;entryY=0.75;" target="n_sqh" value="\(m^{*}\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1000" y="547" />
+              <mxPoint x="1000" y="236" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_sqh_anch" edge="1" parent="1" source="n_sqh" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_anch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_anch_ellg" edge="1" parent="1" source="n_anch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_ellg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ellg_shape" edge="1" parent="1" source="n_ellg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_shape">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_shape_ell" edge="1" parent="1" source="n_shape" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_ell">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_scf_fuse" edge="1" parent="1" source="n_scf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_fuse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fuse_den" edge="1" parent="1" source="n_fuse" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_den">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_den_eps" edge="1" parent="1" source="n_den" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_eps">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_eps_bdec" edge="1" parent="1" source="n_eps" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n_bdec" value="\(\hat{x}_0\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1660" y="527" />
+              <mxPoint x="1660" y="221" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_bdec_bspl" edge="1" parent="1" source="n_bdec" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_bspl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bspl_curve" edge="1" parent="1" source="n_bspl" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_curve">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bdec_alm" edge="1" parent="1" source="n_bdec" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#6B7A99;strokeWidth=1.3;dashed=1;dashPattern=2 3;endArrow=block;endFill=1;endSize=5;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" target="n_alm" value="推理期">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1974" y="221" />
+              <mxPoint x="1974" y="506" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_alm_qsafe" edge="1" parent="1" source="n_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_qsafe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_qsafe_ddim" edge="1" parent="1" source="n_qsafe" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_ddim">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ddim_qnext" edge="1" parent="1" source="n_ddim" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n_qnext">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_qnext_qt" edge="1" parent="1" source="n_qnext" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;strokeColor=#333333;strokeWidth=1.5;endArrow=block;endFill=1;endSize=6;exitX=0.5;exitY=1;" target="n_qt" value="DDIM 反向步闭环">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1820.03" y="968" />
+              <mxPoint x="10.03" y="968" />
+              <mxPoint x="10.03" y="459.03" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_qnext_fb" edge="1" parent="1" source="n_qnext" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#6B7A99;strokeWidth=1.3;dashed=1;dashPattern=2 3;endArrow=block;endFill=1;endSize=5;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" target="n_fbin" value="反馈缓存 \(Q^{safe},\Delta,valid\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1820" y="920" />
+              <mxPoint x="160" y="920" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cg_cbb" edge="1" parent="1" source="bar_cg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#12738C;strokeWidth=1.2;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;endSize=5;exitX=0.1625;exitY=1;entryX=0.885;entryY=0;" target="n_cbb">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="600" y="138" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cg_den" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;entryDx=0;entryDy=0;strokeColor=#12738C;strokeWidth=1.2;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;endSize=5;entryX=1;entryY=0.5;" target="n_den">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1630" y="138" />
+              <mxPoint x="1640" y="138" />
+              <mxPoint x="1640" y="430" />
+            </Array>
+            <mxPoint x="1630" y="140" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_ce_ellg" edge="1" parent="1" source="bar_ce" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;jettySize=auto;orthogonalLoop=1;exitDx=0;exitDy=0;entryDx=0;entryDy=0;strokeColor=#12738C;strokeWidth=1.2;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;endSize=5;exitX=0.99;exitY=1;entryX=1.0;entryY=0.5;" target="n_ellg">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1330" y="170" />
+              <mxPoint x="1330" y="404" />
+              <mxPoint x="1290" y="404" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -11,8 +11,8 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
-S_LOG=outputs/oneshot_k4p_c48_s/train.log
-S_CKPT=outputs/oneshot_k4p_c48_s/ckpt/best_task.pt
+S_LOG=outputs/models/oneshot_k4p_c48_s/train.log
+S_CKPT=outputs/models/oneshot_k4p_c48_s/ckpt/best_task.pt
 LOGD=outputs/logs
 mkdir -p "$LOGD"
 LOG="$LOGD/ch4_chain_d.log"
@@ -36,5 +36,5 @@ fi
 sleep 30          # let the S-C48 process release the GPU
 echo "### launching D-C48 training  $(date '+%F %T')" | tee -a "$LOG"
 bash scripts/ch4_train.sh configs/config_160k4p_c48_d_std.yaml \
-  outputs/oneshot_k4p_c48_d 100 6.0 >> "$LOG" 2>&1
+  outputs/models/oneshot_k4p_c48_d 100 6.0 >> "$LOG" 2>&1
 echo "### D-C48 training finished rc=$?  $(date '+%F %T')" | tee -a "$LOG"

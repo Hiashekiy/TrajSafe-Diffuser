@@ -1,6 +1,6 @@
 """03_validate_processed.py - full offline validator for the CARLA processed cache.
 
-Checks the contract of ``docs/CARLA_BSPLINE_PIPELINE_SPEC.md`` before training:
+Checks the contract of ``docs/数据流水线与数据格式说明.md`` before training:
 
   * all arrays exist with the expected shape/dtype;
   * no NaN/Inf; occupancy in {0,1};

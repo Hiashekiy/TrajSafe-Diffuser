@@ -1,0 +1,50 @@
+[
+  {
+    "number": "3-2",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\论文最终插图\\TrajSafe-Diffuser_图3-2_控制主干与TrajBlock-论文插图版.drawio",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\publication-v2\\drawio\\fig3-2.drawio",
+    "svg": "fig3-2.svg",
+    "png": "fig3-2.png",
+    "pdf": "fig3-2.pdf",
+    "page": [
+      1040,
+      760
+    ]
+  },
+  {
+    "number": "3-3",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\论文最终插图\\TrajSafe-Diffuser_图3-3_骨架匹配与安全几何-论文插图版.drawio",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\publication-v2\\drawio\\fig3-3.drawio",
+    "svg": "fig3-3.svg",
+    "png": "fig3-3.png",
+    "pdf": "fig3-3.pdf",
+    "page": [
+      1040,
+      870
+    ]
+  },
+  {
+    "number": "3-4",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\论文最终插图\\TrajSafe-Diffuser_图3-4_融合与最终去噪-论文插图版.drawio",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\publication-v2\\drawio\\fig3-4.drawio",
+    "svg": "fig3-4.svg",
+    "png": "fig3-4.png",
+    "pdf": "fig3-4.pdf",
+    "page": [
+      1040,
+      678
+    ]
+  },
+  {
+    "number": "3-5",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\论文最终插图\\TrajSafe-Diffuser_图3-5_安全修正与历史反馈-论文插图版.drawio",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\publication-v2\\drawio\\fig3-5.drawio",
+    "svg": "fig3-5.svg",
+    "png": "fig3-5.png",
+    "pdf": "fig3-5.pdf",
+    "page": [
+      1040,
+      762
+    ]
+  }
+]

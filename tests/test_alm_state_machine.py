@@ -22,7 +22,7 @@ from src.diffusion.schedule import NoiseSchedule
 from src.geometry.bspline import BSplineCodec
 from src.models.trajsafe.geometry import gather_dense_path_points
 
-KNOTS = os.path.join(ROOT, "data", "carla_v1", "bspline_knots.npy")
+KNOTS = os.path.join(ROOT, "data", "raw", "80m", "bspline_knots.npy")
 HORIZON = 128
 GEO = 128
 RES = 128
@@ -304,19 +304,26 @@ def test_alm_safe_prediction_enters_the_ddim_update():
     assert moved, "the ALM never changed the clean prediction"
     # the DDIM consumed the last SAFE prediction
     assert torch.equal(out["trace"][-1]["q"], out["trace"][-1]["q0_safe"])
-    # The terminal hard projection (commit bf37aa3) runs AFTER the reverse loop,
-    # so the returned polygon is the PROJECTED one and the trace ends one step
-    # earlier; ``control_pre_projection`` is what the guided phase produced.
-    if "control_pre_projection" in out:
-        assert torch.equal(out["control_pre_projection"],
-                           out["trace"][-1]["q"])
-        # The projection's contract is MONOTONE NON-REGRESSION (a sample whose LP
-        # is infeasible keeps its input and is flagged), never "always feasible".
-        projection = out["final_projection"]
-        assert bool((projection["hard_project_violation"]
-                     <= projection["hard_project_violation_before"] + 1e-9).all())
-    else:
-        assert torch.equal(out["control"], out["trace"][-1]["q"])
+    # No post-loop projection exists any more: the returned polygon IS the last
+    # guided-phase output.
+    assert torch.equal(out["control"], out["trace"][-1]["q"])
+
+
+def test_feedback_only_ablation_keeps_alm_history_but_ddim_uses_raw():
+    out = _run(
+        bump=0.35, feedback=True,
+        alm={"safe_prediction_to_ddim": False,
+             "feedback_accept_tol": 1.0})
+    moved = [s for s in out["trace"]
+             if s["alm_active"] and not torch.equal(
+                 s["q0_safe"], s["q0_raw"])]
+    assert moved, "the ALM never produced a feedback correction"
+    assert out["feedback"]["history"]["accepted"] > 0
+    last = out["trace"][-1]
+    assert torch.equal(last["q0_ddim"], last["q0_raw"])
+    assert torch.equal(last["q"], last["q0_raw"])
+    assert torch.equal(out["control"], last["q0_raw"])
+    assert not torch.equal(last["q0_safe"], last["q0_ddim"])
 
 
 def test_alm_reduces_the_final_constraint_violation_end_to_end():
@@ -361,16 +368,15 @@ def test_final_only_mode_is_an_ablation_not_the_default():
 
 
 # ------------------------------------------------------------- hard invariants
-def test_ddim_never_applies_a_second_final_projection():
+def test_ddim_never_applies_a_second_projection():
     out = _run(bump=0.2)
     # the last trace entry is the terminal 0 -> -1 transition: q == q0_safe
     assert int(out["trace"][-1]["t"]) == 0
     assert int(out["trace"][-1]["s"]) == -1
     assert torch.equal(out["trace"][-1]["q"], out["trace"][-1]["q0_safe"])
-    # ``control`` may additionally carry the terminal hard projection, which is
-    # applied once, after the loop -- never inside it.
-    assert torch.equal(out.get("control_pre_projection", out["control"]),
-                       out["trace"][-1]["q0_safe"])
+    # No post-loop projection is applied at all: ``control`` is exactly the last
+    # guided-phase output.
+    assert torch.equal(out["control"], out["trace"][-1]["q0_safe"])
 
 
 def test_legacy_waypoint_alm_is_still_refused():

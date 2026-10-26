@@ -7,7 +7,7 @@
 #
 #   C     ckpt                  数据根
 #   32    outputs/oneshot_k4p        data/carla_processed_160k4p
-#   48    outputs/oneshot_k4p_c48    data/carla_processed_160k4p_c48   <- 本配置
+#   48    outputs/models/oneshot_k4p_c48    data/processed/160m-k4p-c48   <- 本配置
 #
 # 为什么 C 变了必须换数据根（而不是原地改）：
 #   control_gt.npy 是**离线数据**（用与网络解码同一个端点约束最小二乘投影，从
@@ -21,13 +21,13 @@
 #
 # 提示：control_gt 的拟合 RMSE 会随 C 增大而下降（自由度更多），这是本实验的
 # 自变量本身；若要判断「48 点是否更贴合真实轨迹」，直接看
-# data/carla_processed_160k4p_c48/refit_controls_report.json 里两个 C 的
+# data/processed/160m-k4p-c48/refit_controls_report.json 里两个 C 的
 # decode RMSE 对比。
 # ============================================================
 base: "configs/config_160k4p_oneshot.yaml"
 
 data:
-  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed_160k4p_c48"
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/processed/160m-k4p-c48"
 
 # The ONE number of control points: read by src/utils/config.num_controls() from
 # BOTH keys (they are refused to disagree).  bspline.knots="auto" regenerates the
@@ -39,7 +39,7 @@ bspline:
   num_controls: 48
 
 train:
-  ckpt_dir: "outputs/oneshot_k4p_c48/ckpt"
+  ckpt_dir: "outputs/models/oneshot_k4p_c48/ckpt"
 
 # --- 信任域（唯一的 ALM 覆盖）-------------------------------------------
 # ALM 每个内迭代允许的**真实曲线位移**上限 `max_i ‖(B·ΔQ)_i‖`，scene 单位
@@ -55,28 +55,3 @@ train:
 # 之间摆动（λ 无上限，`ΔQ` 是累积量），所以每次调整都要重跑同协议评测。
 alm:
   max_curve_step_scene: 0.20
-
-  # --- 末端硬投影（保证输出可行）-----------------------------------------
-  # ALM 在 guided 阶段每步只有固定预算、且一旦整批可行就早停，所以**采样结束时
-  # 返回的控制点未必满足冻结的约束包**（实测这一轮 420 个样本里有 53 个最终
-  # 违反量仍为正）。这里在 reverse 循环结束后、解码成曲线之前做一次【真·硬投射】：
-  #   min Σ|ΔQ|₁  s.t.  M q ≤ v（每段 Bezier 的 4 个控制点都落在责任凸区域内）
-  # 写成一个 LP 交给 HiGHS **精确求解**（不是再跑一遍 ALM 迭代），因此返回的多边
-  # 形带【可行性证书】而不是容差级近似；L1 目标让修正尽量稀疏（只动少数控制点）。
-  #   * 已经满足约束的样本原样返回，一次 LP 都不解；
-  #   * 端点（start/goal）作为硬等式钉住；若它们让 LP 不可行，保留输入并标记
-  #     hard_project_feasible = False；
-  #   * 解完后再用同一套约束重新校验返回的多边形（certificate）。
-  # 实测（420 样本同协议）：最终违反量 > 0 的样本 53 → 0，最差 +4.8e-4 → −1.8e-7，
-  # 走廊归属率 = 1.0 的样本 367 → 420，碰撞与 rmse 不变。
-  final_project: true
-  # 精确性容差：LP 解出后重新校验返回的多边形，要求 max(M q - v) <= 该值。
-  final_project_tol: 1.0e-9
-  # LP 求解必须【串行】。默认值 0 会走 auto = cpu-2 = 14 路并发，把同一个 chunk 内
-  # 多个 scipy/HiGHS LP 塞进一个进程：HiGHS 有时会在原生代码里长时间持有 GIL，于是
-  # 主线程卡死在 ThreadPoolExecutor.add_worker 的 Thread.start() 上（实测在完整
-  # 420 条测试集的第 9 个 chunk 永久卡死，单核 100% 空转、Python 帧一行不跑）。
-  # 而 linprog 既没有 maxiter 也没有超时，所以永远不会返回。
-  # 主表的 Full 行（3 个 seed × 420）是用【串行】路径跑出来的，这里显式钉死；
-  # 线程池的 1.60× 见报告 §2.6.2，那条已按“在完整测试集上不安全”撤回。
-  projection_workers: 1

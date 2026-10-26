@@ -1,0 +1,49 @@
+{
+  "index": 349,
+  "sample_id": 71030,
+  "selected_idx": 1,
+  "prior": {
+    "split": "val",
+    "model_checkpoint": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\A\\ckpt\\best_task.pt",
+    "checkpoint_hash": "ec7996ab19cce21c",
+    "config": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\configs\\paper_modified.yaml",
+    "snapshot_forward": 4,
+    "seeds_used": [
+      0
+    ],
+    "n_samples": 1550,
+    "n_ellipses": 198400,
+    "radius_scene": 0.14148715445707244,
+    "semi_major_scene": 0.2392699122428894,
+    "semi_minor_scene": 0.0836654081940651,
+    "scene_to_meter": 80.0,
+    "radius_m": 11.318972356565794,
+    "semi_major_m": 19.141592979431152,
+    "semi_minor_m": 6.6932326555252075,
+    "rule": "a0=median(a), b0=median(b), a0>=b0, r0=sqrt(a0*b0)",
+    "git_commit": "5a7021a4f810f1827b2d014dd26f32295d4ad26d",
+    "frozen_at": "2026-10-24 00:57:17"
+  },
+  "area_rel_spread": 0.15645447555611483,
+  "note": "prior ellipses drawn every 16th anchor; polygons are the deterministic convex regions",
+  "summary": {
+    "learned": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.1101255648828028
+    },
+    "fixed_circle": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.1051031622891698
+    },
+    "fixed_ellipse": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.09399888365626852
+    }
+  }
+}

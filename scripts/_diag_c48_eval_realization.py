@@ -39,7 +39,7 @@ from src.utils.checkpoint import load_model  # noqa: E402
 from src.utils.config import load_config, num_controls, num_safety_queries  # noqa: E402
 
 CFG = "configs/config_160k4p_c48_oneshot.yaml"
-CKPT = "outputs/oneshot_k4p_c48/ckpt/best_task.pt"
+CKPT = "outputs/models/oneshot_k4p_c48/ckpt/best_task.pt"
 EVAL_JSON = "outputs/eval_k4p_c48_own_alm.json"
 TARGETS = [167, 291, 325, 333, 342, 343, 348, 366, 368]
 CHUNK, STEPS, SEED, RES, DENSE = 32, 16, 0, 256, 512

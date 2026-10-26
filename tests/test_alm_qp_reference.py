@@ -36,7 +36,7 @@ from src.geometry.bspline_constraints import (BSplineConstraintPack,  # noqa: E4
 from src.geometry.convex_region import EllipseRegionBuilder         # noqa: E402
 from src.geometry.safety_corridor import build_safety_corridor      # noqa: E402
 
-KNOTS = os.path.join(ROOT, "data", "carla_v1", "bspline_knots.npy")
+KNOTS = os.path.join(ROOT, "data", "raw", "80m", "bspline_knots.npy")
 ALM_CFG = {
     "rho": 5.0, "step_size": 0.05, "proximity_weight": 1.0,
     "correction_smooth_weight": 0.1, "constraint_tol": 1.0e-3,

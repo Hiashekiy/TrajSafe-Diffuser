@@ -1,0 +1,16 @@
+{
+  "protocol": {
+    "batch": 32,
+    "n": 420,
+    "seed": 0,
+    "steps": 4,
+    "return_trace": false,
+    "warmup_chunks": 3
+  },
+  "mean_ms": 62.312985512438566,
+  "budget": {
+    "activation": 10,
+    "inner": 10,
+    "label": "I10"
+  }
+}

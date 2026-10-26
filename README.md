@@ -6,9 +6,9 @@
 
 **架构规格**（source of truth）：
 
-> 当前实现（**优先**）：[`docs/CONTROL_SPACE_REFACTOR.md`](docs/CONTROL_SPACE_REFACTOR.md)
-> 重构前设计报告：[`docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md`](docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md)
-> CARLA 数据流水线：[`docs/CARLA_BSPLINE_PIPELINE_SPEC.md`](docs/CARLA_BSPLINE_PIPELINE_SPEC.md)
+> 当前实现（**优先**）：[`docs/控制点空间改造记录.md`](docs/控制点空间改造记录.md)
+> 重构前设计报告：[`docs/网络结构设计说明.md`](docs/网络结构设计说明.md)
+> CARLA 数据流水线：[`docs/数据流水线与数据格式说明.md`](docs/数据流水线与数据格式说明.md)
 >
 > 设计报告描述的是重构前的 128 曲线点 token 版本，两者冲突时以控制点空间重构说明为准。
 
@@ -102,7 +102,7 @@ docs/                                     架构报告、控制点空间重构�
 
 ## 4. 数据
 
-训练使用 CARLA v1 处理快照（`data.root: data/carla_v1` -> `data.processed_root:
+训练使用 CARLA v1 处理快照（`data.root: data/raw/80m` -> `data.processed_root:
 data/carla_processed`），由 `CarlaSplineDataset` 读取。离线控制点标签
 （`control_gt.npy`）是**数据**：改 `bspline.num_controls` 后必须重跑流水线。
 
@@ -113,9 +113,9 @@ python scripts/data/carla/02_build_ellipse_labels.py --config configs/config.yam
 python scripts/data/carla/03_validate_processed.py   --config configs/config.yaml
 ```
 
-* 原始轨迹 / 条件 / 占据图：`data/carla_v1`（仓库已提供）；
+* 原始轨迹 / 条件 / 占据图：`data/raw/80m`（仓库已提供）；
 * 候选缓存 / 椭圆标签 / 控制点 GT：`data/carla_processed/{train,val,test}`；
-* 详情见 [`docs/CARLA_BSPLINE_PIPELINE_SPEC.md`](docs/CARLA_BSPLINE_PIPELINE_SPEC.md)。
+* 详情见 [`docs/数据流水线与数据格式说明.md`](docs/数据流水线与数据格式说明.md)。
   旧的 Maze2D（`data/scenes` / `data/skeleton`）工具链仍保留在 `scripts/data/` 下，
   但默认配置不再使用。
 
@@ -181,7 +181,7 @@ checkpoint 与训练损失。
 * 已验证：`outputs/bspline_carla/ckpt/best_task.pt`（epoch 449）在 legacy 链路上与重构前
   逐位一致（曲线 / 控制点 / 椭圆中心 / shape4 / pi 的 max |diff| = 0.0）。
 * 细节（新前向链路、固定 Boundary Decoder、8 项损失、配置项、改 `C` 的完整步骤）见
-  [`docs/CONTROL_SPACE_REFACTOR.md`](docs/CONTROL_SPACE_REFACTOR.md)；与设计报告冲突时
+  [`docs/控制点空间改造记录.md`](docs/控制点空间改造记录.md)；与设计报告冲突时
   以该文为准。
 
 ---
@@ -209,5 +209,5 @@ fb_mean_violation / fb_correction / fb_topo_match` 用于确认反馈分支真�
 激活就被重新路由。
 
 * 实现细节、配置项、消融方式、逐 step 诊断字段：见
-  [`docs/HISTORICAL_SAFETY_FEEDBACK.md`](docs/HISTORICAL_SAFETY_FEEDBACK.md)。
+  [`docs/历史安全反馈说明.md`](docs/历史安全反馈说明.md)。
 * 测试：`python -m pytest tests/test_feedback.py tests/test_alm_state_machine.py -q`。

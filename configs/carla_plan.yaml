@@ -1,0 +1,37 @@
+# CARLA → 占据图 → TrajSafe 轨迹（一次性规划，不含控制与安全校验）
+carla:
+  host: 127.0.0.1
+  port: 2000
+  town: Town05_Opt
+  timeout_s: 120
+  python_api: E:/CARLA_0.9.16/PythonAPI/carla
+
+map:
+  # 固定路段（已验证存在同向双车道）。也可用 --road/--lane/--s 覆盖。
+  road_id: 34
+  lane_id: 3
+  s: 60.0
+  route_length_m: 100.0      # 从起点沿车道取多长的 waypoint 链
+  horizon_m: 70.0            # 局部目标距离（米）
+  inflation_cells: 4         # 障碍栅格膨胀格数（数据构建用，非后处理）
+  lane_width_m: 3.5
+  left_lane: true            # 占据图里是否包含左邻车道
+
+obstacle:
+  enabled: true              # 是否在前方本车道放一辆静止车（让走廊有意义）
+  distance_m: 36.0
+  half_length_m: 2.2
+  half_width_m: 0.9
+  lateral_offset_m: 0.65
+
+planner:
+  model_id: K4P_c48_oneshot:best_task
+  config: configs/config_160k4p_c48_oneshot.yaml
+  dataset: 160m-k4p-c48
+  device: cuda
+  steps: 4
+  region_stride: 8           # 区域共享：128 个锚点只留 17 个基础凸区域（论文的组合加速）
+  visualize: true
+
+output:
+  dir: outputs/plan_once

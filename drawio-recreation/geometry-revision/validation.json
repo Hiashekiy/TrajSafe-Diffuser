@@ -1,0 +1,15 @@
+{
+  "predicted_ellipses": 11,
+  "convex_regions_with_bridges": 29,
+  "final_spline_degree": 3,
+  "final_spline_controls": 15,
+  "spline_collision_sampling": 1201,
+  "spline_collision_free": true,
+  "corridor_regions_collision_free": true,
+  "mathjax_enabled": true,
+  "mathjax_labels": 18,
+  "history_input": "\\mathcal{H}_t",
+  "history_feedback": "\\mathcal{H}_{t+1}",
+  "note": "Synthetic schematic geometry; the visible control points are actual B-spline controls, not curve samples.",
+  "final_spline_in_corridor_union": true
+}

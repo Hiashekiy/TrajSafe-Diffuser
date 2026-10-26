@@ -19,7 +19,7 @@ The clamped knot vector guarantees C(0) = Q_0 and C(1) = Q_31, therefore hard
 endpoint conditioning on the CONTROL polygon is equivalent to hard endpoints on
 the decoded curve.
 
-The knot vector is loaded from the dataset root (``data/carla_v1/bspline_knots.npy``,
+The knot vector is loaded from the dataset root (``data/raw/80m/bspline_knots.npy``,
 [36] for 32 controls / degree 3) so that the offline labels, the offline
 control-GT refit and the network use exactly one basis.
 """
@@ -66,7 +66,7 @@ def default_knots(num_controls: int, degree: int) -> np.ndarray:
 
     ``[0]*(p+1) + linspace(0,1,C-p+1)[1:-1] + [1]*(p+1)`` (length C+p+1).
     For the shipped 32-control / degree-3 setup this reproduces
-    ``data/carla_v1/bspline_knots.npy`` bit-for-bit, so ``knots: auto`` lets C
+    ``data/raw/80m/bspline_knots.npy`` bit-for-bit, so ``knots: auto`` lets C
     be changed in the config without regenerating a knot file.
     """
     nc, p = int(num_controls), int(degree)

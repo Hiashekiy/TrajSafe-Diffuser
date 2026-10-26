@@ -32,13 +32,13 @@ Verified equivalence: re-fitting the shipped C=32 cache from its own
 
     python scripts/data/carla_full/06_refit_controls.py \
         --source data/carla_processed_160k4p \
-        --out    data/carla_processed_160k4p_c48 \
+        --out    data/processed/160m-k4p-c48 \
         --config configs/config_160k4p_c48_oneshot.yaml
 
 then re-validate the contract:
 
     python scripts/data/carla/03_validate_processed.py \
-        --processed data/carla_processed_160k4p_c48 \
+        --processed data/processed/160m-k4p-c48 \
         --config configs/config_160k4p_c48_oneshot.yaml
 """
 from __future__ import annotations

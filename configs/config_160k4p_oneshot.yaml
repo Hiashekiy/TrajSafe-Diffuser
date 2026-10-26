@@ -14,7 +14,7 @@
 #
 # 注意 k4p 的边界保护规则：--border-mode protect 会把外侧 k 格恢复成原图，
 # 所以 k=4 保护 0..3 环、k=8 保护 0..7；两套缓存在该环带内不是嵌套关系
-# （详见 docs/CAMPAIGN_160K8P_RESULTS.md 第 9 节）。
+# （详见 docs/历史实验记录_160k8p.md 第 9 节）。
 base: "configs/config_160k8p.yaml"
 
 data:

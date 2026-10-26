@@ -1,0 +1,27 @@
+{
+  "missing_local_links": [],
+  "pending_results": false,
+  "terminal_projection_mentions": 0,
+  "tables": 8,
+  "figure_resources": [
+    "figures/fig3-1_framework.drawio",
+    "figures/fig3-2_feature_fusion.drawio",
+    "figures/fig3-3_safety_geometry.drawio",
+    "figures/fig3-4_denoising.drawio",
+    "figures/fig3-5_alm.svg",
+    "figures/experiments/fig4-1.svg",
+    "figures/experiments/case293.png",
+    "figures/experiments/random_endpoints_0_1.png",
+    "figures/experiments/random_endpoints_2_3.png",
+    "figures/experiments/random_endpoints_4_5.png"
+  ],
+  "paper_sha256": "73da75ec3f33b2cd3de2dc732e13b1a2871f3915193461bb1df605a7c602d879",
+  "updated_at": "2026-10-10T12:24:49.583462",
+  "efficiency_results_complete": true,
+  "efficiency_collision_counts": {
+    "steps4_stride1": 0,
+    "steps4_stride8": 0
+  },
+  "efficiency_speedup": 3.031293439020242,
+  "efficiency_timing_source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\efficiency_corrected_20261010\\timing.json"
+}

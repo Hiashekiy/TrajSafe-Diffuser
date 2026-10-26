@@ -1,47 +1,80 @@
 # scripts 目录说明
 
-所有脚本通过 `--config configs/config.yaml` 读取配置。
+所有脚本用 `E:/CondaEnvData/envs/GGMPC/python.exe` 运行，配置从 `configs/*.yaml` 读。
+**2026-10 清理后的实际内容**（旧 Maze2D 流水线脚本已删除）。
 
-## scripts/data/ —— 数据准备
+## 1. 闭环仿真（当前主线）
 
 | 脚本 | 作用 |
 |---|---|
-| `01_build_skeletons.py` | 构建骨架图并缓存 `data/skeleton/skeletons` |
-| `02_build_candidates.py` | 离线候选路径 + topology 标签（`S_m` / `Γ_m`） |
-| `03_build_ellipse_labels.py` | 椭圆形状标签（`ellipse_shape4_gt` / `shape_valid`） |
+| `carla_online_closed_loop.py` | **CARLA 在线闭环主入口**：`--mode inspect/observe/drive/audit`，输出到 `outputs/closed_loop/<时间戳>/` |
+| `start_dashboard_carla.cmd` | 启动 diffusion-dashboard（CARLA 链路） |
+| `probe_carla_visibility.py` | 相机可见性排查（35 m / 100 m 高度下车是否可见） |
+| `inspect_carla_lane_candidates.py` | 车道候选快速查看 |
+| `audit_carla_handover.py` | 换轨（handover）审计 |
+| `audit_carla_speed_boundaries.py` | 参考速度边界审计 |
 
-```bash
-python scripts/data/01_build_skeletons.py               --config configs/config.yaml
-python scripts/data/02_build_candidates.py  --config configs/config.yaml
-python scripts/data/03_build_ellipse_labels.py       --config configs/config.yaml
+## 2. 数据流水线（重建缓存唯一途径）
+
+```
+scripts/data/carla/          80 m / 原始 carla_v1 快照
+  00_clean_dataset.py        清洗 + 生成控制点 GT
+  01_build_candidates.py     候选通路 S_m / Γ_m
+  02_build_ellipse_labels.py 椭圆标签
+  03_validate_processed.py   校验 processed 缓存形状
+
+scripts/data/carla_full/     160 m / 256 px 快照
+  00_build_processed.py       生成 160 m processed 缓存
+  04_build_alm_constraints.py ALM 约束包
+  05_erode_occupancy.py       障碍腐蚀（--k / --border-mode protect）
+  06_refit_controls.py        控制点重拟合（C=32 → C=48）
+  run_pipeline_160.ps1/.sh    一键跑完整 160 m 流水线
 ```
 
-`data/scenes`（轨迹 / 条件 / 地图）已随仓库提供。从 d4rl hdf5 重建它的
-V1 数据准备脚本已删除，需要时从 git 历史取回。
+当前在用的缓存：`data/processed/160m-k4p-c48`（k=4 腐蚀保边 + C=48）。
 
-## scripts/debug/ —— 诊断
-
-| 脚本 | 作用 |
-|---|---|
-| `candidate_recall.py` | 候选路径对 GT 轨迹的召回率（离线标签体检） |
-| `profile_step.py` | 单步 forward/backward 计时探针（不训练） |
-| `visualize_labels.py` | 可视化标签：候选路径 / 选中拓扑 / 椭圆 |
-
-## scripts/plot/ —— 出图
+## 3. 训练与评估
 
 | 脚本 | 作用 |
 |---|---|
-| `plot_safety_stack.py` | 对指定样本画 2×2 四宫格：① 提取的骨架 ② 沿骨架的 128 个固定进度椭圆 ③ 由每个椭圆生成的局部凸区域 ④ 安全走廊 + **示意**的修正对比（灰色虚线=起点直连终点的直线，落在通道外的部分用品红高亮；红色实线=沿走廊的修正轨迹）。前三格单色线稿，只有第四格上色 |
+| `night_train.py` | 训练驱动（deadline / 断点续训 / 自动重启），`--config` `--ckpt-dir` |
+| `eval_chapter4.py` | 第 4 章统一评估（方法 = checkpoint × guidance × feedback 四元组） |
+| `eval_random_endpoints.py` | 随机端点评估 |
+| `audit_paper_constraints.py` / `audit_paper_offline_preflight.py` | 论文口径的约束/预检审计 |
 
-```bash
-python scripts/plot/plot_safety_stack.py --config configs/config.yaml \
-    --split test --ids 59 23 41 17 82 109 10 42 \
-    --out outputs/bspline_carla/safety_stack
-# --shape-source pred --ckpt <ckpt> 改用网络自己预测的椭圆与 argmax(pi) 候选
-# --no-illustration 只画通道，不画示意轨迹
-```
+仓库根的 `train.py` / `sample.py` / `evaluate.py` 是训练、采样、评估的主入口。
 
-输出：`sample_<idx>_stack.png`（每样本一张 2×2 四宫格）、`stage{1..4}_*.png`（每阶段一张 2×4 网格）、
-`safety_stack.json`（每样本的骨架规模 / 区域有效数 / 走廊 base+bridge / overlap min·mean）。
+## 4. 论文实验
 
-采样图由 `sample.py` 直接输出到 `--out`。
+| 目录 / 脚本 | 作用 |
+|---|---|
+| `experiments/` | 实验框架：`common.py`（采样与计时）、`metrics.py`、`exp1_methods.py`（主对比）、`exp2_ablation.py` / `exp2_feedback_process.py`（消融与历史反馈）、`exp3_alm_budget.py` / `exp3_ellipse_prior.py`（ALM 预算、椭圆先验）、`summarize.py` |
+| `run_paper_modified_campaign.py` | RA-L 论文 A/D/S 三组 campaign（结果在 `outputs/paper_ral/`） |
+| `run_modified_model_experiment.py` | modified model 消融（结果在 `outputs/ablation_hpath/`） |
+| `ch4_*.py` / `ch4_*.sh` / `ch4_*.cmd` | 中文论文第 4 章：campaign、性能计时、绘图、报告（结果在 `outputs/chapter4/`） |
+
+## 5. 出图与论文写作
+
+| 脚本 | 作用 |
+|---|---|
+| `plot/plot_c48_failure_342.py` / `plot_c48_regions_342.py` | C=48 失败样本、区域示意 |
+| `plot/make_diffusion_report_figures.py` | 扩散报告配图 |
+| `plot_ch4_closed_loop.py` | 闭环过程曲线（读 `outputs/chapter4/`） |
+| `plot_dashboard_case293.py` / `plot_random_endpoints.py` | 看板案例、随机端点出图 |
+| `paper/make_zh_docx.py` / `sync_zh_md.py` / `sync_figures.py` | 中文论文 docx 生成、正文与插图同步 |
+| `generate_thesis_docx.py` | 学位论文 docx 生成 |
+
+## 6. 诊断与剖析（一次性为主）
+
+| 脚本 | 作用 |
+|---|---|
+| `debug/profile_planner.py` / `profile_stages.py` | 单次在线规划的耗时拆解（网络 / 走廊 / 硬投影） |
+| `debug/profile_step.py` | 单步 forward/backward 计时 |
+| `_diag_c48_*.py`（5 个） | C=48 版本的激活、评估、失败、命中原因、投影范围诊断 |
+| `diagnose_four_step_collision.py` | 4 步采样碰撞诊断 |
+| `compare_modified_geometry.py` / `summarize_modified_geometry.py` / `summarize_square_filter.py` | 几何修改消融的对比与汇总 |
+| `hpath_diagnostics.py` / `geometry_audit_utils.py` | hpath 分支诊断、几何审计工具 |
+| `check_window_regression.py` / `rank_dashboard_samples.py` | 窗口回归检查、看板样本排序 |
+| `update_paper_completed_results.py` / `update_paper_no_projection.py` | 论文正文数字回填 |
+| `paper_modified_endpoints.py` / `paper_modified_geometry.py` / `paper_modified_timing.py` | 论文三项补充实验 |
+| `launch_detached.ps1` | 后台脱离启动 |

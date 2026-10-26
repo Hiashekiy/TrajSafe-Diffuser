@@ -1,0 +1,7 @@
+# Safety-conditioned generator without feedback training.
+base: configs/paper_modified.yaml
+train:
+  epochs: 200
+  ckpt_dir: outputs/paper_ral/S/ckpt
+  feedback:
+    rollout: false

@@ -35,7 +35,7 @@ from src.geometry.safety_corridor import (build_safety_corridor,
                                           overlap_ratio, polygon_area)
 
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "data", "carla_processed_160k4p_c48", "test")
+                    "data", "processed", "160m-k4p-c48", "test")
 
 
 def _cyclic_equal(a: np.ndarray, b: np.ndarray, tol: float = 1e-7) -> bool:

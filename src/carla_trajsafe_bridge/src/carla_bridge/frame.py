@@ -11,7 +11,7 @@ local   the ego-anchored metric frame of one dataset sample:
             y_local = (world_xy - anchor_xy) . right_xy       metres right
 
         forward_xy / right_xy are the RECORDED ego basis of the anchor frame
-        (data/carla_v1/episodes/<Town>/episode_XXXXXX/ego_frame_vectors.npy),
+        (data/raw/80m/episodes/<Town>/episode_XXXXXX/ego_frame_vectors.npy),
         never a yaw computed by hand.
 scene   the model frame, [-1, 1]^2 over the fixed 80 m x 80 m window:
 

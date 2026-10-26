@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """00_build_processed.py - carla_full_160_256 -> processed cache contract.
 
-Bridges data/carla_full_160_256 (scene/task layout, see its DATASET_REPORT.md)
+Bridges data/raw/160m-256px (scene/task layout, see its DATASET_REPORT.md)
 to the FIXED per-split snapshot consumed by src/datasets/carla_spline_dataset.py
-(see docs/CARLA_BSPLINE_PIPELINE_SPEC.md).
+(see docs/数据流水线与数据格式说明.md).
 
 This script ONLY writes the "raw -> processed" part of that contract; the
 candidate / topology / ellipse labels are built afterwards by the unchanged
@@ -39,7 +39,7 @@ endpoint-constrained least-squares projection the network decodes with, which
 keeps the repository invariant decode(control_gt) ~= curve_gt exactly.  The
 dataset's own bspline_controls are only used as a cross-check.
 
-    python scripts/data/carla_full/00_build_processed.py --source data/carla_full_160_256 --out data/carla_processed_160
+    python scripts/data/carla_full/00_build_processed.py --source data/raw/160m-256px --out data/carla_processed_160
 """
 from __future__ import annotations
 
@@ -274,7 +274,7 @@ def build_split(rows: List[dict], scenes: Dict[int, dict], c: int, h: int,
 def main() -> int:
     global _SOURCE
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default="data/carla_full_160_256")
+    ap.add_argument("--source", default="data/raw/160m-256px")
     ap.add_argument("--out", default=None)
     ap.add_argument("--config", default="configs/config_160.yaml")
     ap.add_argument("--limit", type=int, default=None)

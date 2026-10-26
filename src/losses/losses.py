@@ -13,7 +13,7 @@
       + lambda_curve  * L_curve     (2nd/3rd differences of the DECODED curve)
 
 ``L_fbsafe`` / ``L_curve`` are the two terms of the historical-safety-feedback
-two-step rollout (see ``docs/HISTORICAL_SAFETY_FEEDBACK.md``); they are computed
+two-step rollout (see ``docs/历史安全反馈说明.md``); they are computed
 on ``Q0_raw(s)``, the second network's OWN output after a real ALM + DDIM step.
 
 There is NO ``L_traj``: the decoded 128-point curve never enters the loss, and

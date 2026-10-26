@@ -1,0 +1,44 @@
+{
+  "header": {
+    "method": "A1",
+    "guidance": "none",
+    "seed": 1,
+    "split": "test",
+    "steps": 16,
+    "warmup_reverse_steps": 3,
+    "chunk": 32,
+    "n_samples": 420,
+    "config": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\configs\\paper_modified_s.yaml",
+    "checkpoint": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\S\\ckpt\\best_task.pt",
+    "checkpoint_hash": "55739aada24cfffc",
+    "git_commit": "5a7021a4f810f1827b2d014dd26f32295d4ad26d",
+    "scene_to_meter": 80.0,
+    "alm_overrides": {
+      "force_feedback_valid_zero": true,
+      "safe_prediction_to_ddim": true,
+      "final_project": false
+    },
+    "corridor_overrides": {},
+    "sdf_overrides": {},
+    "dense_points": 512,
+    "started_at": "2026-10-24 00:41:41",
+    "finished_at": "2026-10-24 00:42:02"
+  },
+  "timing": {
+    "wall_s": 16.38367170005222,
+    "per_traj_ms": [
+      37.20218750004278,
+      37.06153437542525,
+      38.45807187462924,
+      37.37283125065005,
+      37.29713124994305,
+      37.034650000350666,
+      36.96343125011481,
+      36.96412812496419,
+      39.755081250405055,
+      36.94528750020254,
+      197.45162499748403
+    ],
+    "mean_per_traj_ms": 52.04599630674652
+  }
+}

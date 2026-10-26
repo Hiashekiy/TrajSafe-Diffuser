@@ -1,0 +1,172 @@
+{
+  "method_and_experiment_figures": [
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\总体框架图.drawio.png",
+      "prepared": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\paper_ral_v2\\figures\\prepared\\fig01_framework.png",
+      "exterior_crop": [
+        11,
+        11,
+        6113,
+        3693
+      ],
+      "size": [
+        6102,
+        3682
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\安全约束生成.png",
+      "prepared": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\paper_ral_v2\\figures\\prepared\\fig02_safety_generation.png",
+      "exterior_crop": [
+        103,
+        8,
+        6532,
+        2257
+      ],
+      "size": [
+        6429,
+        2249
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\alm_continuous_safety.png",
+      "prepared": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\paper_ral_v2\\figures\\prepared\\fig03_alm.png",
+      "exterior_crop": [
+        202,
+        110,
+        4487,
+        2592
+      ],
+      "size": [
+        4285,
+        2482
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\E2_fig1_feedback_process.png",
+      "prepared": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\paper_ral_v2\\figures\\prepared\\fig04_feedback.png",
+      "exterior_crop": [
+        22,
+        23,
+        2111,
+        819
+      ],
+      "size": [
+        2089,
+        796
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\E3_fig1_alm_budget.png",
+      "prepared": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\paper_ral_v2\\figures\\prepared\\fig05_alm_budget.png",
+      "exterior_crop": [
+        22,
+        23,
+        2111,
+        841
+      ],
+      "size": [
+        2089,
+        818
+      ]
+    }
+  ],
+  "carla_panels": [
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\直行1.png",
+      "panel": "a",
+      "category": "Straight road",
+      "row": 1,
+      "rect": [
+        0.0,
+        17.0,
+        124.5,
+        141.5
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\直行2.png",
+      "panel": "e",
+      "category": "Straight road",
+      "row": 2,
+      "rect": [
+        0.0,
+        161.5,
+        124.5,
+        286.0
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\拐弯1.png",
+      "panel": "b",
+      "category": "Intersection",
+      "row": 1,
+      "rect": [
+        130.5,
+        17.0,
+        255.0,
+        141.5
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\拐弯2.png",
+      "panel": "f",
+      "category": "Intersection",
+      "row": 2,
+      "rect": [
+        130.5,
+        161.5,
+        255.0,
+        286.0
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\弯道1.png",
+      "panel": "c",
+      "category": "Curved road",
+      "row": 1,
+      "rect": [
+        261.0,
+        17.0,
+        385.5,
+        141.5
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\弯道2.png",
+      "panel": "g",
+      "category": "Curved road",
+      "row": 2,
+      "rect": [
+        261.0,
+        161.5,
+        385.5,
+        286.0
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\长距离1.png",
+      "panel": "d",
+      "category": "Long-distance route",
+      "row": 1,
+      "rect": [
+        391.5,
+        17.0,
+        516.0,
+        141.5
+      ]
+    },
+    {
+      "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\论文整合\\picture\\carla\\长距离2.png",
+      "panel": "h",
+      "category": "Long-distance route",
+      "row": 2,
+      "rect": [
+        391.5,
+        161.5,
+        516.0,
+        286.0
+      ]
+    }
+  ]
+}

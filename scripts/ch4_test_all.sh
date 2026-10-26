@@ -7,11 +7,11 @@
 # 只用现成 ckpt，每一步都幂等（产物存在即跳过），可反复重跑 / 断点续跑：
 #
 #   1 单元测试
-#   2 验证集选参（4 个外部处理器）          -> outputs/ch4/sweep_*.json
-#   3 主表 6 方法 x seed 0/1/2 x test 420  -> outputs/ch4/runs/
-#   4 消融 A0-A3（推理期）                 -> outputs/ch4/runs_abl/
-#   5 消融 T0-T3（训练期）                 -> outputs/ch4/runs_abl/
-#   6 汇总表 + 图 + 可选案例图             -> outputs/ch4/REPORT.md, figures/
+#   2 验证集选参（4 个外部处理器）          -> outputs/chapter4/sweep_*.json
+#   3 主表 6 方法 x seed 0/1/2 x test 420  -> outputs/chapter4/runs/
+#   4 消融 A0-A3（推理期）                 -> outputs/chapter4/runs_abl/
+#   5 消融 T0-T3（训练期）                 -> outputs/chapter4/runs_abl/
+#   6 汇总表 + 图 + 可选案例图             -> outputs/chapter4/REPORT.md, figures/
 #   7 效率套件（计时 / 走廊加速 A-B / 区域共享扫描）
 #
 # 环境变量：
@@ -54,15 +54,15 @@ if ! "$PY" -c "import torch, sys; print('### python   ', sys.executable); print(
 fi
 
 LOGD=outputs/logs
-mkdir -p "$LOGD" outputs/ch4/runs outputs/ch4/runs_abl outputs/ch4/figures
+mkdir -p "$LOGD" outputs/chapter4/runs outputs/chapter4/runs_abl outputs/chapter4/figures
 LOG="$LOGD/ch4_test_all.log"
 
 D_CFG=configs/config_160k4p_c48_d_std.yaml
-D_CKPT=outputs/oneshot_k4p_c48_d/ckpt/best_task.pt
+D_CKPT=outputs/models/oneshot_k4p_c48_d/ckpt/best_task.pt
 A_CFG=configs/config_160k4p_c48_oneshot.yaml
-A_CKPT=outputs/oneshot_k4p_c48/ckpt/best_task.pt
+A_CKPT=outputs/models/oneshot_k4p_c48/ckpt/best_task.pt
 S_CFG=configs/config_160k4p_c48_s_nofb.yaml
-S_CKPT=outputs/oneshot_k4p_c48_s/ckpt/best_task.pt
+S_CKPT=outputs/models/oneshot_k4p_c48_s/ckpt/best_task.pt
 VAL_SAMPLES="${VAL_SAMPLES:-256}"
 
 FORCE_ARG=()
@@ -99,8 +99,8 @@ echo "=============================================================="
 step "0/7 前置检查（本脚本不含训练，训练产物必须已存在）"
 MISS=0
 for f in "$D_CFG" "$D_CKPT" "$A_CFG" "$A_CKPT" "$S_CFG" "$S_CKPT" \
-         data/carla_processed_160k4p_c48/test/occupancy.npy \
-         data/carla_processed_160k4p_c48/val/occupancy.npy; do
+         data/processed/160m-k4p-c48/test/occupancy.npy \
+         data/processed/160m-k4p-c48/val/occupancy.npy; do
   if [ -f "$f" ]; then echo "  OK   $f"; else echo "  MISS $f"; MISS=1; fi
 done
 if [ "$MISS" != 0 ]; then
@@ -124,7 +124,7 @@ if [ "${SKIP_SWEEP:-0}" = 1 ]; then
 else
   step "2/7 验证集选参（网格来自指南 4.1.2，内迭代预算固定为 10）"
   for m in penalty projection primal_dual alm_sdf; do
-    if [ -f "outputs/ch4/sweep_$m.json" ] && [ "${FORCE:-0}" != 1 ]; then
+    if [ -f "outputs/chapter4/sweep_$m.json" ] && [ "${FORCE:-0}" != 1 ]; then
       echo "  sweep $m 已存在，跳过"
     else
       run "sweep_$m" "$PY" scripts/ch4_sweep_val.py \
@@ -136,7 +136,7 @@ fi
 echo "---- 冻结参数"
 "$PY" -c "
 import glob, json
-for p in sorted(glob.glob('outputs/ch4/sweep_*.json')):
+for p in sorted(glob.glob('outputs/chapter4/sweep_*.json')):
     d = json.load(open(p, encoding='utf-8'))
     print('  %-12s -> %s' % (d['guidance'], json.dumps(d['winner'])))
 " || FAILED+=("print_sweep_winners")
@@ -151,13 +151,13 @@ run main "$PY" scripts/ch4_campaign.py --stage main --seeds 0 1 2 \
 # ---------------------------------------------------------------- 4 消融 A
 step "4/7 推理期消融 A0-A3（同一 A-C48，只切推理开关）"
 run ablation_a "$PY" scripts/ch4_campaign.py --stage ablation_a --seeds 0 \
-  --out-dir outputs/ch4/runs_abl ${FORCE_ARG[@]+"${FORCE_ARG[@]}"} \
+  --out-dir outputs/chapter4/runs_abl ${FORCE_ARG[@]+"${FORCE_ARG[@]}"} \
   --a-ckpt "$A_CKPT" --a-config "$A_CFG"
 
 # ---------------------------------------------------------------- 5 消融 T
 step "5/7 训练期消融 T0-T3（S-C48 与 A-C48，全部关闭末端投影）"
 run ablation_t "$PY" scripts/ch4_campaign.py --stage ablation_t --seeds 0 \
-  --out-dir outputs/ch4/runs_abl ${FORCE_ARG[@]+"${FORCE_ARG[@]}"} \
+  --out-dir outputs/chapter4/runs_abl ${FORCE_ARG[@]+"${FORCE_ARG[@]}"} \
   --d-ckpt "$D_CKPT" --d-config "$D_CFG" \
   --a-ckpt "$A_CKPT" --a-config "$A_CFG" \
   --s-ckpt "$S_CKPT" --s-config "$S_CFG"
@@ -165,18 +165,18 @@ run ablation_t "$PY" scripts/ch4_campaign.py --stage ablation_t --seeds 0 \
 # ---------------------------------------------------------------- 6 表 + 图
 step "6/7 汇总表 + 图"
 run report "$PY" scripts/ch4_report.py \
-  --runs-dir outputs/ch4/runs outputs/ch4/runs_abl --out outputs/ch4/REPORT.md
+  --runs-dir outputs/chapter4/runs outputs/chapter4/runs_abl --out outputs/chapter4/REPORT.md
 
 # 方法名里有空格（"Full (A-C48+ALM+FB+Proj)__s0.json"），运行列表必须保持为数组：
 # 未加引号的 $(ls ...) 会被词分割，图会静默不生成。
-mapfile -t RUNS < <(ls outputs/ch4/runs/*__s0.json 2>/dev/null | sort)
+mapfile -t RUNS < <(ls outputs/chapter4/runs/*__s0.json 2>/dev/null | sort)
 if [ "${#RUNS[@]}" = 0 ]; then
   echo "  ### 没有找到主表运行，跳过绘图"; FAILED+=("figures(no runs)")
 else
   echo "  ### plotting ${#RUNS[@]} run(s)"
-  run fig_curves     "$PY" scripts/ch4_plot.py curves     --runs "${RUNS[@]}" --out outputs/ch4/figures/process_curves.png
-  run fig_smoothness "$PY" scripts/ch4_plot.py smoothness --runs "${RUNS[@]}" --out outputs/ch4/figures/smoothness.png
-  run fig_table      "$PY" scripts/ch4_plot.py table      --runs "${RUNS[@]}" --out outputs/ch4/figures/main_table.png
+  run fig_curves     "$PY" scripts/ch4_plot.py curves     --runs "${RUNS[@]}" --out outputs/chapter4/figures/process_curves.png
+  run fig_smoothness "$PY" scripts/ch4_plot.py smoothness --runs "${RUNS[@]}" --out outputs/chapter4/figures/smoothness.png
+  run fig_table      "$PY" scripts/ch4_plot.py table      --runs "${RUNS[@]}" --out outputs/chapter4/figures/main_table.png
 fi
 
 if [ "${PLOT_CASES:-0}" = 1 ]; then
@@ -184,9 +184,9 @@ if [ "${PLOT_CASES:-0}" = 1 ]; then
   "$PY" scripts/ch4_plot.py cases --ckpt "$A_CKPT" --guidance alm \
     --samples 0,1,2,63,293 --exact --campaign-samples 0 \
     --feedback on --final-project on \
-    --out-dir outputs/ch4/figures/cases || echo "  ### cases(alm) 失败，忽略"
+    --out-dir outputs/chapter4/figures/cases || echo "  ### cases(alm) 失败，忽略"
   "$PY" scripts/ch4_plot.py cases --ckpt "$D_CKPT" --guidance none \
-    --samples 0,1,2 --out-dir outputs/ch4/figures/cases || echo "  ### cases(none) 失败，忽略"
+    --samples 0,1,2 --out-dir outputs/chapter4/figures/cases || echo "  ### cases(none) 失败，忽略"
 fi
 
 # ---------------------------------------------------------------- 7 效率套件
@@ -202,13 +202,12 @@ except Exception:
 ")
   echo "  ### 当前 CPU 负载 ${LOAD}%（>25% 时计时列不可引用，只当相对比较）"
 
-  # 7A+7B: §2.6.1 分方法计时(128 条,16 步) + §2.6.3 步数x投影矩阵(420 条)
-  # 这份日志上次在 "steps=4 proj=True" 之前被打断，即报告里那格"待补测"。
-  run eff_timing bash -c "'$PY' -u outputs/_perf_report.py 2>&1 | tee outputs/logs/ch4_perf_report.log"
-  # 7C: §2.6.2 走廊向量化 A/B（同一进程背靠背，比值不受负载影响）
-  run eff_corridor bash -c "'$PY' -u outputs/_ab_batch.py 32 2>&1 | tee outputs/logs/ch4_ab_batch.log"
+  # 7A+7B: 分方法计时(128 条,16 步) + 步数x投影矩阵(420 条)
+  run eff_timing bash -c "'$PY' -u scripts/ch4_perf_timing.py 2>&1 | tee outputs/logs/ch4_perf_report.log"
+  # 7C: 走廊向量化 A/B（同一进程背靠背，比值不受负载影响）
+  run eff_corridor bash -c "'$PY' -u scripts/ch4_perf_corridor_ab.py 32 2>&1 | tee outputs/logs/ch4_ab_batch.log"
   # 7D: 区域共享扫描 stride 1/2/4/8（420 条 x 4 配置，4 步去噪，逐 chunk 交替）
-  run eff_stride bash -c "'$PY' -u outputs/_stride_ab.py 0 2>&1 | tee outputs/logs/ch4_stride.log"
+  run eff_stride bash -c "'$PY' -u scripts/ch4_perf_stride.py 0 2>&1 | tee outputs/logs/ch4_stride.log"
 fi
 
 # ---------------------------------------------------------------- 汇总
@@ -219,17 +218,17 @@ import json
 import os
 
 out = []
-runs = sorted(glob.glob('outputs/ch4/runs/*.json'))
-abl = sorted(glob.glob('outputs/ch4/runs_abl/*.json'))
+runs = sorted(glob.glob('outputs/chapter4/runs/*.json'))
+abl = sorted(glob.glob('outputs/chapter4/runs_abl/*.json'))
 out.append('main runs %d (expect 18)   abl runs %d (expect 8)'
            % (len(runs), len(abl)))
 missing_commit = [p for p in runs + abl
                   if 'git_commit' not in json.load(open(p, encoding='utf-8'))]
 out.append('runs without git_commit: %s' % (missing_commit or 'none'))
-for path in ('outputs/ch4/REPORT.md',
-             'outputs/ch4/figures/process_curves.png',
-             'outputs/ch4/figures/smoothness.png',
-             'outputs/ch4/figures/main_table.png'):
+for path in ('outputs/chapter4/REPORT.md',
+             'outputs/chapter4/figures/process_curves.png',
+             'outputs/chapter4/figures/smoothness.png',
+             'outputs/chapter4/figures/main_table.png'):
     out.append('%-52s %s' % (path, 'OK' if os.path.exists(path) else 'MISS'))
 for path in ('outputs/logs/ch4_perf_report.log',
              'outputs/logs/ch4_ab_batch.log',

@@ -40,13 +40,14 @@ class EllipseGeometry(_MHABase):
     def __init__(self, d_model: int, num_heads: int, spatial_pe: nn.Module,
                  geo_mem_res: int = 32, geo_sigma: float = 0.25,
                  geo_bias_clip: float = 8.0, hidden: int = 256,
-                 dropout: float = 0.0):
+                 dropout: float = 0.0, center_encoding: bool = True):
         super().__init__(d_model, num_heads, dropout)
         self.spatial_pe = spatial_pe
         self.geo_mem_res = int(geo_mem_res)
         self.geo_sigma = float(geo_sigma)
         self.geo_bias_clip = float(geo_bias_clip)
-        self.mlp_c = CoordMLP(d_model, hidden)
+        self.center_encoding = bool(center_encoding)
+        self.mlp_c = CoordMLP(d_model, hidden) if self.center_encoding else None
         self.adaln = AdaLN(d_model, d_model)
         self.q = nn.Linear(d_model, d_model)
         self.kv = nn.Linear(d_model, 2 * d_model)
@@ -64,7 +65,11 @@ class EllipseGeometry(_MHABase):
                 geo_mem: torch.Tensor | None, h_t: torch.Tensor,
                 ab: torch.Tensor | None):
         """h_path [B,H,D], center [B,H,2] -> (H_ell [B,H,D], A_E or None)."""
-        q_e = h_path + self.mlp_c(self.spatial_pe(center))
+        # h_path here is the selected route's H_Gamma safety query, not the
+        # C-token H_path branch used by the trajectory fusion.
+        q_e = h_path
+        if self.center_encoding:
+            q_e = q_e + self.mlp_c(self.spatial_pe(center))
         if geo_mem is None:
             # The report defines A^E = 0 when C_E is unavailable.
             return q_e, None

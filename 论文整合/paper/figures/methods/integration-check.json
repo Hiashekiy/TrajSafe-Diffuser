@@ -1,0 +1,60 @@
+{
+  "paper": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\TrajSafe-Diffuser：生成式安全约束下的扩散运动规划方法.md",
+  "backup": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\backup\\TrajSafe-Diffuser：生成式安全约束下的扩散运动规划方法-方法重写前-20261001-003731.md",
+  "scope": "method section only",
+  "other_sections_unchanged": true,
+  "image_links": 7,
+  "missing_links": [],
+  "figure_order": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+  ],
+  "inline_formulas": 139,
+  "method_chinese_characters": 4822,
+  "original_diagrams_unchanged": true,
+  "exports": [
+    {
+      "number": "3-1",
+      "png_size": [
+        4194,
+        2302
+      ],
+      "svg_bytes": 594392
+    },
+    {
+      "number": "3-2",
+      "png_size": [
+        3918,
+        3017
+      ],
+      "svg_bytes": 80721
+    },
+    {
+      "number": "3-3",
+      "png_size": [
+        2966,
+        4376
+      ],
+      "svg_bytes": 254685
+    },
+    {
+      "number": "3-4",
+      "png_size": [
+        2966,
+        4136
+      ],
+      "svg_bytes": 179747
+    },
+    {
+      "number": "3-5",
+      "png_size": [
+        4253,
+        2930
+      ],
+      "svg_bytes": 233222
+    }
+  ]
+}

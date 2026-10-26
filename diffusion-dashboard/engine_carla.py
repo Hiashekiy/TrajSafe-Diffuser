@@ -35,7 +35,7 @@ if ROOT not in sys.path:
 
 from src.utils.config import load_config
 from src.utils.checkpoint import load_model
-from src.diffusion.sampler import ablation_configs, sample
+from src.diffusion.sampler import ablation_configs, sample, effective_warmup_steps
 from src.diffusion.schedule import NoiseSchedule
 from src.geometry.skeleton_graph import build_skeleton_graph
 from src.geometry.skeleton_paths import (CandidateConfig, generate_candidates,
@@ -55,71 +55,19 @@ from src.models.trajsafe import TrajSafePlanner
 #   B1_base      只训基座、feedback 关闭（100 ep, best_task ep24）——对照臂
 #   REF_160k8    旧 160k8 (k=8) 的 best_task（跨缓存参考）
 MODELS = {
-    "A_oneshot": {
-        "config": "configs/config_160k8p.yaml",
-        "ckpt_dir": "outputs/campaign_a_oneshot/ckpt",
-        "label": "A · 一步到位 feedback（best_task ep50）",
-    },
-    "B2_feedback": {
-        "config": "configs/config_160k8p.yaml",
-        "ckpt_dir": "outputs/campaign_b2_feedback/ckpt",
-        "label": "B2 · 基座 + feedback 微调（best_task ep36）",
-    },
-    "B1_base": {
-        "config": "configs/config_160k8p_s1.yaml",
-        "ckpt_dir": "outputs/campaign_b1_base/ckpt",
-        "label": "B1 · 基座（无 feedback，best_task ep24）",
-    },
-    "REF_160k8": {
-        "config": "configs/config_160k8.yaml",
-        "ckpt_dir": "outputs/bspline_carla_160k8/ckpt",
-        "label": "REF · 旧 160k8 best_task（跨缓存）",
-    },
-    # Arm A's recipe retrained on the PRE-EROSION cache (k=0, free area 0.185):
-    # 65 epochs / 2.4 h, best_task at epoch 59.  Only the dataset differs from
-    # ``A_oneshot``, so it is the single-variable control for "how much of the
-    # safety came from the widened k=8 channels".  It needs its OWN config
-    # because that YAML points at data/carla_processed_160 (the architecture is
-    # identical to A's, so the checkpoint files are drop-in interchangeable).
-    "RAW160_oneshot": {
-        "config": "configs/config_160raw_oneshot.yaml",
-        "ckpt_dir": "outputs/oneshot_raw160/ckpt",
-        "label": "RAW160 · 腐蚀前数据集上重训的 OneShot（best_task ep59）",
-    },
-    # Same recipe again, this time on the k=4 eroded build
-    # (data/carla_processed_160k4p, free area 0.279, all three splits).
-    # 200 epochs / 5.7 h;
-    # ``best_task`` sits at epoch 98 (the val topology term is overfit from
-    # ~epoch 20 on, so the last epoch is NOT the model to use).
-    # On its own eroded test split: 5/420 collisions with ALM (viol -0.018),
-    # 50/420 without -- see docs/CAMPAIGN_160K8P_RESULTS.md §11.
-    "K4P_oneshot": {
-        "config": "configs/config_160k4p_oneshot.yaml",
-        "ckpt_dir": "outputs/oneshot_k4p/ckpt",
-        "label": "K4P · k=4 腐蚀数据集上重训的 OneShot（best_task ep98）",
-    },
-    # C=32 -> 48 control points on the SAME k=4 cache and the SAME recipe (200
-    # epochs, batch 8 x accum 2); only model/bspline.num_controls differ.
-    # 200 epochs / 7.4 h (28.5 % slower per epoch), ``best_task`` at epoch 55.
-    # On its OWN cache, ALM on: 3/420 collisions (viol -0.019); 48/420 with ALM off.
-    # NOTE the history: it first measured 9/420, but 6 of those 9 were the
-    # trajectory leaving the 256^2 crop -- a hole in the CONSTRAINT SET (the
-    # corridor cells were never clipped to the map, so the ALM reported
-    # "feasible" and did nothing).  Fixed by the map-boundary halfspaces in
-    # src/geometry/convex_region.py (section 12.8); the same fix leaves the C=32
-    # model at 5/420, so C=48 is the better one here.
-    # MUST be paired with the ``160k4p_c48`` cache below (the panel draws the GT
-    # control polygon, and that cache is the one carrying C=48 control labels).
+    # Only checkpoints that still exist after the 2026-10 cleanup.  The campaign
+    # arms (A_oneshot / B1 / B2 / REF_160k8 / RAW160 / K4P_oneshot) and their
+    # output dirs were deleted together with the 160k8p / 160raw data caches.
     "K4P_c48_oneshot": {
         "config": "configs/config_160k4p_c48_oneshot.yaml",
-        "ckpt_dir": "outputs/oneshot_k4p_c48/ckpt",
-        "label": "K4P_c48 · 48 控制点重训（best_task ep55）",
+        "ckpt_dir": "outputs/models/oneshot_k4p_c48/ckpt",
+        "label": "K4P_c48 · 48 控制点（best_task ep55）· 闭环与看板在用",
     },
 }
 # ``best`` is deliberately NOT offered for the campaign arms: their val-total
 # best (epoch 7-26) is an overfit-topology artifact, ``best_task`` is the model
 # that is actually deployed.
-CKPT_KINDS = ("best_task", "latest")
+CKPT_KINDS = ("best_task",)   # latest.pt was pruned in the 2026-10 cleanup
 CHECKPOINTS = {
     "%s:%s" % (run, kind): os.path.join(ROOT, spec["ckpt_dir"],
                                         "%s.pt" % kind)
@@ -147,33 +95,15 @@ DEFAULT_CONFIG = os.path.join(ROOT, "configs", "config_160k8p.yaml")
 # Measured on test: free area 0.3573 (k8p) vs 0.2792 (k4p), straight start->goal
 # line collides in 220/420 (k8p) vs 234/420 (k4p) samples.
 DATASETS = {
-    "raw160": {
-        "root": "data/carla_processed_160",
-        "label": "raw160 · 未腐蚀（障碍不动）",
-        "note": "自由面积 0.185 · RAW160_oneshot 的训练缓存",
-    },
-    "160k8p": {
-        "root": "data/carla_processed_160k8p",
-        "label": "160k8p · 宽走廊（障碍各让 5 m）",
-        "note": "campaign 训练/评估所用缓存 · 自由面积 0.357",
-    },
-    "160k4p": {
-        "root": "data/carla_processed_160k4p",
-        "label": "160k4p · 紧走廊（障碍各让 2.5 m）",
-        "note": "更严格的地图 · 自由面积 0.279 · 三 split 齐全",
-    },
-    # Byte-identical to ``160k4p`` EXCEPT control_gt.npy, which is re-fitted for
-    # C=48 (scripts/data/carla_full/06_refit_controls.py copies every other array
-    # verbatim).  The panel draws the GT control polygon, so pairing the C=48
-    # model with the C=32 cache would show a C=48 prediction against C=32 GT --
-    # use THIS cache for K4P_c48_oneshot.  Map/corridor/GT curve are identical.
-    "160k4p_c48": {
-        "root": "data/carla_processed_160k4p_c48",
-        "label": "160k4p_c48 · 紧走廊 + C=48 控制点标签",
-        "note": "与 160k4p 逐字节相同（只有 control_gt 是 C=48）· 自由面积 0.279",
+    # The only cache that still exists on disk.  raw160 / 160k8p / 160k4p were
+    # deleted during the 2026-10 data cleanup; their checkpoints are gone too.
+    "160m-k4p-c48": {
+        "root": "data/processed/160m-k4p-c48",
+        "label": "160 m · 紧走廊(腐蚀4格保边) · C=48 控制点",
+        "note": "唯一在用的缓存：420 test 样本 · 自由面积 0.212 · 闭环仿真与 K4P_c48_oneshot 使用",
     },
 }
-DEFAULT_DATASET = "160k8p"
+DEFAULT_DATASET = "160m-k4p-c48"
 SPLIT_ORDER = ("train", "val", "test")
 
 
@@ -203,24 +133,6 @@ def _scalar(value):
     if isinstance(value, (bool, int, float, str)):
         return value
     return str(value)
-
-
-def _final_projection_payload(out: dict):
-    """The final HARD-projection report for sample 0 (None when it did not run)."""
-    fp = out.get("final_projection")
-    if not fp:
-        return None
-    feasible = fp.get("hard_project_feasible")
-    feasible = bool(feasible.reshape(-1)[0]) if torch.is_tensor(feasible)         else bool(feasible)
-    return {
-        "status": _scalar(fp.get("hard_project_status")),
-        "applied": bool(_scalar(fp.get("hard_project_applied")) or False),
-        "feasible": feasible,
-        "violation_before": _scalar(fp.get("hard_project_violation_before")),
-        "violation_after": _scalar(fp.get("hard_project_violation")),
-        "correction_m": _scalar(fp.get("hard_project_correction_m")),
-        "correction_scene": _scalar(fp.get("hard_project_correction_scene")),
-    }
 
 
 def dataset_key(dataset_id=None) -> str:
@@ -565,8 +477,7 @@ class Engine:
     # -------------------------------------------------------------- generate
     def generate(self, sample_key, split, index, occupancy, condition, seed,
                  model_id="best_task", verify_regions=False, alm_enabled=True,
-                 ablation=None, steps=None, times=None, dataset=None,
-                 final_project=None):
+                 ablation=None, steps=None, times=None, dataset=None):
         model, epoch = self.get_model(model_id)
         dkey = dataset_key(dataset)
         condition = np.asarray(condition, dtype=np.float32).reshape(2, 2)
@@ -598,9 +509,6 @@ class Engine:
             corridor_cfg = _deep_update(corridor_cfg, _mcfg.get("corridor") or {})
         except Exception as _exc:                       # noqa: BLE001
             print("[engine] per-model alm config skipped: %s" % _exc, flush=True)
-        # per-request switch (the dashboard toggle): None keeps the config value
-        if final_project is not None:
-            alm_cfg["final_project"] = bool(final_project)
         if steps is not None:
             # Warm-up is counted in EXECUTED forwards, not in timesteps: with a
             # short schedule the configured 3 would swallow the guided phase
@@ -608,7 +516,7 @@ class Engine:
             # least 2 guided forwards.  Measured on the full test split, 4 steps
             # with warm-up 1/2/3 is indistinguishable from the 16-step baseline.
             base = int(alm_cfg.get("warmup_reverse_steps", 3))
-            alm_cfg["warmup_reverse_steps"] = max(1, min(base, int(steps) - 2))
+            alm_cfg["warmup_reverse_steps"] = effective_warmup_steps(base, int(steps))
         if ablation:
             alm_cfg, corridor_cfg = ablation_configs(alm_cfg, corridor_cfg,
                                                      ablation)
@@ -732,22 +640,12 @@ class Engine:
                 "constraint_tol": out["alm_settings"]["constraint_tol"],
                 "max_curve_step_scene":
                     out["alm_settings"]["max_curve_step_scene"],
-                # effective value of the final hard-projection switch
-                "final_project": bool(alm_cfg.get("final_project", True)),
                 "frames": alm_frames,
             },
             "corridor": out["corridors"][0],
             "activation": activation,
             "pack_summary": out["pack_summary"],
             "final_validation": out["final_validation"][0],
-            # EXACT projection of the returned polygon onto the frozen
-            # constraint pack (LP, HiGHS) -- status "not_needed" means the
-            # guided phase already ended inside the constraints
-            "final_projection": _final_projection_payload(out),
-            # the trajectory BEFORE that projection (guided-phase output), so the
-            # panel can draw what the hard map actually moved
-            "pre_projection": (self._rounded(out["p_pre_projection"][0])
-                               if out.get("p_pre_projection") is not None else None),
             # the AUTHORITATIVE output curve: decoded from the returned polygon,
             # i.e. AFTER the hard projection (the per-step frames stop before it)
             "final_curve": self._rounded(out["p"][0]),

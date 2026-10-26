@@ -1,0 +1,16 @@
+{
+  "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\TrajSafe-Diffuser：生成式安全约束下的扩散运动规划方法.md",
+  "source_type": "current manuscript only",
+  "dataset_samples": {
+    "train": 3850,
+    "validation": 1550,
+    "test": 420
+  },
+  "trajectories_per_configuration": {
+    "main": 1260,
+    "ablation": 420,
+    "efficiency": 420
+  },
+  "no_per_town_counts_or_empirical_distributions_inferred": true,
+  "generator": "tools/plot_paper_dataset_protocol.py"
+}

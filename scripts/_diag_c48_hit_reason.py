@@ -80,7 +80,7 @@ def nearest_obstacle_m(occ: np.ndarray, p: np.ndarray) -> np.ndarray:
 
 
 def main(argv):
-    occ_all = np.load("%s/data/carla_processed_160k4p_c48/test/occupancy.npy" % ROOT,
+    occ_all = np.load("%s/data/processed/160m-k4p-c48/test/occupancy.npy" % ROOT,
                       mmap_mode="r")
     idxs = [int(a) for a in argv[1:]] or FAILURES
     cc = codec()

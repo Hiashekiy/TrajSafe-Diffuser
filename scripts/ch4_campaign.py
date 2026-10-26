@@ -3,7 +3,7 @@
 
 按阶段调用 ``scripts/eval_chapter4.py``，每个「方法 × seed」写一个独立 JSON，
 已存在就跳过（可断点续跑）。四个外部处理器的超参数从
-``outputs/ch4/sweep_<mode>.json`` 的 ``winner`` 读取，即验证集上冻结的那一组。
+``outputs/chapter4/sweep_<mode>.json`` 的 ``winner`` 读取，即验证集上冻结的那一组。
 
 阶段::
 
@@ -34,11 +34,11 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 #: every run that failed, reported at the end (see run())
 FAILURES: list = []
 
-D_CKPT = "outputs/oneshot_k4p_c48_d/ckpt/best_task.pt"
+D_CKPT = "outputs/models/oneshot_k4p_c48_d/ckpt/best_task.pt"
 D_CFG = "configs/config_160k4p_c48_d_std.yaml"
-A_CKPT = "outputs/oneshot_k4p_c48/ckpt/best_task.pt"
+A_CKPT = "outputs/models/oneshot_k4p_c48/ckpt/best_task.pt"
 A_CFG = "configs/config_160k4p_c48_oneshot.yaml"
-S_CKPT = "outputs/oneshot_k4p_c48_s/ckpt/best_task.pt"
+S_CKPT = "outputs/models/oneshot_k4p_c48_s/ckpt/best_task.pt"
 S_CFG = "configs/config_160k4p_c48_s_nofb.yaml"
 
 
@@ -117,7 +117,7 @@ def main() -> int:
     ap.add_argument("--samples", type=int, default=0)
     ap.add_argument("--chunk", type=int, default=32)
     ap.add_argument("--steps", type=int, default=16)
-    ap.add_argument("--out-dir", default="outputs/ch4/runs")
+    ap.add_argument("--out-dir", default="outputs/chapter4/runs")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--d-ckpt", default=D_CKPT,
                     help="override the D-C48 checkpoint (default %s)" % D_CKPT)
@@ -135,7 +135,7 @@ def main() -> int:
     if args.stage == "smoke":
         args.samples = 16
         args.chunk = 16
-        args.out_dir = "outputs/ch4/smoke"
+        args.out_dir = "outputs/chapter4/smoke"
         args.seeds = [0]
         stages = ["main"]          # the smoke stage runs the main table, tiny
 

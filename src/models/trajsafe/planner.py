@@ -108,6 +108,10 @@ class TrajSafePlanner(nn.Module):
             max(self.num_controls, self.num_safety_queries, self.curve_points)))
 
         self.control_space = bool(model_cfg.get("control_space", True))
+        self.path_features_enabled = bool(model_cfg.get("path_features", {}).get("enabled", True))
+        self.center_encoding_enabled = bool(model_cfg.get("safety_query", {}).get("center_encoding", True))
+        if not self.path_features_enabled and not self.control_space:
+            raise ValueError("Removing H_path requires the control-space architecture")
 
         self.d_model = int(model_cfg.get("d_model", 128))
         self.num_heads = int(model_cfg.get("num_heads", 4))
@@ -211,7 +215,8 @@ class TrajSafePlanner(nn.Module):
         self.match_block = MatchBlock(self.d_model, self.num_heads,
                                       self.ffn_dim, dropout)
         self.topology_head = TopologyHead(self.d_model, head_hidden)
-        self.path_feature_head = PathFeatureHead(self.d_model, head_hidden)
+        self.path_feature_head = (PathFeatureHead(self.d_model, head_hidden)
+                                  if self.path_features_enabled else None)
         # selected-Skeleton -> safety/ellipse geometry query (own parameters)
         # safety (Q tokens) -> control (C tokens) cross attention
         # (both belong to the safety-region branch; absent in D-C48)
@@ -235,7 +240,8 @@ class TrajSafePlanner(nn.Module):
             self.ellipse_geometry = EllipseGeometry(
                 self.d_model, self.num_heads, self.spatial_pe,
                 geo_mem_res=self.geo_mem_res, geo_sigma=geo_sigma,
-                geo_bias_clip=geo_bias_clip, hidden=coord_hidden, dropout=dropout)
+                geo_bias_clip=geo_bias_clip, hidden=coord_hidden, dropout=dropout,
+                center_encoding=self.center_encoding_enabled)
             self.ellipse_shape_head = EllipseShapeHead(
                 self.d_model, head_hidden, dropout)
         else:
@@ -245,7 +251,9 @@ class TrajSafePlanner(nn.Module):
 
         # ---- fusion + final denoiser -----------------------------------
         self.fusion_mlp = FusionMLP(
-            self.d_model, num_streams=(3 if self.safety_features_enabled else 2))
+            self.d_model, num_streams=(
+                (3 if self.safety_features_enabled else 2)
+                if self.path_features_enabled else 1))
         self.final_denoiser = FinalDenoiser(
             self.d_model, self.num_heads, self.ffn_dim, self.curve_points,
             blocks=self.final_blocks, dropout=dropout,
@@ -491,7 +499,8 @@ class TrajSafePlanner(nn.Module):
         idx, has_cand, ar = self._route_topology(r, topo, candidate_mask,
                                                  select_index)
         r_use = r[ar, idx]                                      # [B,C,D]
-        h_path = self.path_feature_head(r_use)                  # [B,C,D]
+        h_path = (self.path_feature_head(r_use)
+                  if self.path_features_enabled else None)     # [B,C,D] or absent
 
         # ---- Q safety geometry queries on the SELECTED Skeleton -----------
         h_gamma = None
@@ -514,8 +523,10 @@ class TrajSafePlanner(nn.Module):
             shape = self.ellipse_shape_head(h_ell, h_t)
 
             # ---- safety -> control cross attention + fusion ----------------
-            h_safe_ctrl = self.safety_cross_attention(h_path, h_ell, h_t)
-            f = self.fusion_mlp(h_ctrl, h_path, h_safe_ctrl)
+            query = h_path if self.path_features_enabled else h_ctrl
+            h_safe_ctrl = self.safety_cross_attention(query, h_ell, h_t)
+            f = (self.fusion_mlp(h_ctrl, h_path, h_safe_ctrl)
+                 if self.path_features_enabled else self.fusion_mlp(h_safe_ctrl))
         else:
             # D-C48: NO ellipse-geometry tokens and NO safety cross attention.
             # The safety/ellipse entries of ``out`` stay present but are ZERO
@@ -525,7 +536,8 @@ class TrajSafePlanner(nn.Module):
             Q = int(self.num_safety_queries)
             s = torch.zeros(B, Q, device=dev, dtype=h_ctrl.dtype)
             center = torch.zeros(B, Q, 2, device=dev, dtype=h_ctrl.dtype)
-            f = self.fusion_mlp(h_ctrl, h_path)
+            f = (self.fusion_mlp(h_ctrl, h_path)
+                 if self.path_features_enabled else self.fusion_mlp(h_ctrl))
         h_clean = self.final_denoiser(f, c_g, h_t)
         q_raw_final = self.head_p(h_clean)                      # [B,C,2]
         q_final = self.boundary_decoder(q_raw_final, cond)      # [B,C,2]
@@ -747,7 +759,10 @@ class TrajSafePlanner(nn.Module):
         assert C == self.num_controls
         assert out["H_traj"].shape == (B, C, D), out["H_traj"].shape
         assert out["R"].shape == (B, out["H_S"].shape[1], C, D)
-        assert out["H_path"].shape == (B, C, D), out["H_path"].shape
+        if self.path_features_enabled:
+            assert out["H_path"].shape == (B, C, D), out["H_path"].shape
+        else:
+            assert out["H_path"] is None
         assert out["F"].shape == (B, C, D), out["F"].shape
         assert out["H_clean"].shape == (B, C, D), out["H_clean"].shape
         assert out["control"].shape == (B, C, 2), out["control"].shape

@@ -1,7 +1,7 @@
 # src 代码说明
 
 `src/` 按职责分 6 个包：`datasets / geometry / diffusion / models / losses / utils`。
-架构规格见 `docs/TrajSafe-Diffuser_网络结构设计报告_实现细化版.md`，概览见 `docs/ARCHITECTURE.md`。
+架构规格见 `docs/网络结构设计说明.md`，概览见 `docs/项目架构说明.md`。
 
 ---
 

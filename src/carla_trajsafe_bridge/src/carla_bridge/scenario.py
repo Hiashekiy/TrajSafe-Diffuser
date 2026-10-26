@@ -3,7 +3,7 @@
 Scene reproduction for sample test_0056
 ---------------------------------------
 The sample comes from episode 70 of the shipped CARLA v1 dataset:
-town Town03, raw trajectory index 104 (data/carla_v1/samples.jsonl,
+town Town03, raw trajectory index 104 (data/raw/80m/samples.jsonl,
 sample_id 1252).  The dataset was collected with NO NPCs -- the only obstacles
 in the occupancy are non-driving-lane cells (sidewalk, buildings, the opposite
 carriageway), which already exist in the Town03 map.  Restoring the scene is

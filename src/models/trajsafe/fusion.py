@@ -39,16 +39,20 @@ class FusionMLP(nn.Module):
     def __init__(self, d_model: int, num_streams: int = 3):
         super().__init__()
         self.num_streams = int(num_streams)
-        if self.num_streams not in (2, 3):
-            raise ValueError("num_streams must be 2 or 3, got %d" % self.num_streams)
+        if self.num_streams not in (1, 2, 3):
+            raise ValueError("num_streams must be 1, 2 or 3, got %d" % self.num_streams)
         self.net = nn.Sequential(
             nn.LayerNorm(self.num_streams * d_model),
             nn.Linear(self.num_streams * d_model, 2 * d_model), nn.GELU(),
             nn.Linear(2 * d_model, d_model),
         )
 
-    def forward(self, h_traj: torch.Tensor, h_path: torch.Tensor,
+    def forward(self, h_traj: torch.Tensor, h_path: torch.Tensor | None = None,
                 h_ell: torch.Tensor | None = None) -> torch.Tensor:
+        if self.num_streams == 1:
+            return self.net(h_traj)
+        if h_path is None:
+            raise ValueError("Multi-stream fusion needs h_path")
         streams = [h_traj, h_path]
         if self.num_streams == 3:
             if h_ell is None:

@@ -396,6 +396,9 @@ def main() -> int:
                              "alm_sdf", "alm"])
     ap.add_argument("--feedback", default=None, choices=["on", "off"],
                     help="history safety feedback (paper method only)")
+    ap.add_argument("--safe-to-ddim", default=None, choices=["on", "off"],
+                    help="whether the ALM-corrected clean prediction enters "
+                         "the DDIM transition; off is the feedback-only ablation")
     ap.add_argument("--final-project", default=None, choices=["on", "off"],
                     help="terminal L1 corridor projection (paper method only)")
     ap.add_argument("--split", default="test")
@@ -411,6 +414,8 @@ def main() -> int:
     ap.add_argument("--md", default=None)
     ap.add_argument("--records", default=None)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--raw-diagnostics", action="store_true",
+                    help="Record final raw network prediction before ALM and repair costs")
     ap.add_argument("--keep-assert-shapes", action="store_true",
                     help="keep the per-forward shape/finiteness asserts "
                          "(they cost ~18% of the wall clock at inference)")
@@ -434,12 +439,16 @@ def main() -> int:
         # guide 4.3.1: force feedback_valid = 0 while KEEPING FeedbackEncoder
         # and its weights in the graph (never unload the module).
         alm_cfg["force_feedback_valid_zero"] = (args.feedback == "off")
+    if args.safe_to_ddim is not None:
+        alm_cfg["safe_prediction_to_ddim"] = (args.safe_to_ddim == "on")
     if args.final_project is not None:
         alm_cfg["final_project"] = (args.final_project == "on")
     sdf_cfg: dict = {}
     _apply_overrides(sdf_cfg, args.sdf_set, "sdf-set")
     alm_cfg["guidance"] = args.guidance
-    warmup = int(alm_cfg.get("warmup_reverse_steps", DEFAULT_WARMUP))
+    from src.diffusion.sampler import effective_warmup_steps
+    warmup = effective_warmup_steps(
+        int(alm_cfg.get("warmup_reverse_steps", DEFAULT_WARMUP)), args.steps)
 
     limit = None if args.samples in (0, None) else int(args.samples)
     dataset = CarlaSplineDataset(args.split, processed, geometry_points=1280,
@@ -505,7 +514,10 @@ def main() -> int:
         "seed": args.seed,
         "warmup_reverse_steps": warmup,
         "feedback": (args.feedback if args.guidance == "alm" else None),
-        "final_project": (args.final_project if args.guidance == "alm" else None),
+        "safe_prediction_to_ddim": (
+            args.safe_to_ddim if args.guidance == "alm" else None),
+        "final_project": (bool(alm_cfg.get("final_project", False))
+                          if args.guidance == "alm" else None),
         "scene_to_meter": scene_to_meter,
         "dense_points": DENSE_POINTS,
         "feasible_eps": FEASIBLE_EPS,
@@ -539,6 +551,7 @@ def main() -> int:
     gt_acc = {k: [] for k in ("collision", "rmse_m", "smoothness_m",
                               "sdf_max_residual_m", "sdf_violation_m",
                               "sdf_min_distance_m", "sdf_safe_point_rate")}
+    raw_diagnostic_records = []
     n_chunks = 0
     timed_chunks = 0
     started = time.time()
@@ -570,6 +583,12 @@ def main() -> int:
         metrics = evaluate_controls(model.bspline, out["control"], occ, cond,
                                     batch["pos"].to(device), sdf, out.get("pack"),
                                     batch, scene_to_meter)
+        chunk_raw_records = None
+        if args.raw_diagnostics:
+            from hpath_diagnostics import collect
+            chunk_raw_records = collect(model, out, occ, cond, batch, sdf,
+                                        scene_to_meter, evaluate_controls)
+            raw_diagnostic_records.extend(chunk_raw_records)
         gt = evaluate_controls(model.bspline, batch["control_gt"].to(device), occ,
                                cond, batch["pos"].to(device), sdf, None, batch,
                                scene_to_meter)
@@ -636,6 +655,8 @@ def main() -> int:
                                   if frames else None),
                 "corridor_guided": bool(out["guided"][local]),
             }
+            if chunk_raw_records is not None:
+                record.update(chunk_raw_records[local])
             _write_jsonl(rec_path, record)
 
         print("  [%s] %d/%d collisions=%d rmse=%.2fm"
@@ -695,6 +716,9 @@ def main() -> int:
             "sdf_safe_point_rate": _mean(gt_acc["sdf_safe_point_rate"]),
         },
     }
+    if args.raw_diagnostics:
+        from hpath_diagnostics import summarize
+        aggregate["raw_diagnostics"] = summarize(raw_diagnostic_records)
     payload = dict(header)
     payload["aggregate"] = aggregate
     payload["per_step"] = aggregate_steps(traces, args.chunk)

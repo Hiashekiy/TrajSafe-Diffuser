@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """_diag_c48_failures.py - why did the C=48 run still collide on its 9 failures?
 
-For every failing test index of ``outputs/oneshot_k4p_c48`` (ALM on, 16 steps,
+For every failing test index of ``outputs/models/oneshot_k4p_c48`` (ALM on, 16 steps,
 seed 0 -- the eval protocol) this asks the ONE question that separates the two
 possible causes:
 
@@ -149,7 +149,7 @@ def analyse(idx: int, occ: np.ndarray, wall: np.ndarray):
 
 
 def main(argv):
-    occ_all = np.load("%s/data/carla_processed_160k4p_c48/test/occupancy.npy" % ROOT,
+    occ_all = np.load("%s/data/processed/160m-k4p-c48/test/occupancy.npy" % ROOT,
                       mmap_mode="r")
     idxs = [int(a) for a in argv[1:]] or FAILURES
     print("cell size = %.3f m   (1 cell = 0.625 m)" % CELL_M)

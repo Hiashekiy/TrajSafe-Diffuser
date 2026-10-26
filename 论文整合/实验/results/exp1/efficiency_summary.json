@@ -1,0 +1,14 @@
+{
+  "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\outputs\\paper_modified\\run_20261009_no_projection\\efficiency_corrected_20261010\\timing.json",
+  "protocol": {
+    "n": 420,
+    "seed": 0,
+    "chunk": 32,
+    "final_project": false,
+    "idle_after_training": true
+  },
+  "speedup": 3.031293439020242,
+  "note": "reused historical interleaved timing; no new timing run",
+  "method_level_times_present": true,
+  "method_level_times_used": false
+}

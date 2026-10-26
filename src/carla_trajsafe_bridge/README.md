@@ -19,7 +19,7 @@
 | CARLA Python binding | 与 0.9.16 匹配的 py3.10 版本 | `E:/CarDataSample/tools/carla/_vendor` |
 | TrajSafe-Diffuser 仓库 | 提供模型 / 几何 / 采样器 / dashboard 推理引擎 | `E:/CarDataSample/Neural-IRISDiffuser` |
 | 模型权重 | `best_task.pt` 等 | `<repo>/outputs/bspline_carla/ckpt/` |
-| 数据集快照 | processed 占据图 / 条件 / B 样条 knots | `<repo>/data/carla_processed`、`data/carla_v1` |
+| 数据集快照 | processed 占据图 / 条件 / B 样条 knots | `<repo>/data/carla_processed`、`data/raw/80m` |
 | Python 环境 | torch+cu126、numpy、opencv、matplotlib、pyyaml | `E:/CondaEnvData/envs/GGMPC/python.exe` |
 | （可选）车道栅格化 | 只用于 live occupancy 交叉校验，缺失会自动降级 | `<workspace>/tools/carla/map_cache.py` |
 

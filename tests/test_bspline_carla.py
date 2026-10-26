@@ -29,7 +29,7 @@ from src.geometry.bspline import (BSplineCodec, bspline_basis_matrix,
 from src.models.trajsafe import TrajSafePlanner
 from src.utils.config import load_config
 
-KNOTS = os.path.join(ROOT, "data", "carla_v1", "bspline_knots.npy")
+KNOTS = os.path.join(ROOT, "data", "raw", "80m", "bspline_knots.npy")
 SCENE_TO_METER = 40.0
 FORBIDDEN = ["progress_gt", "ellipse_center_gt", "lambda_align",
              "center_alignment_loss", "Head_prog", "ProgressHead"]
@@ -42,7 +42,7 @@ def _codec():
 
 def _carla_samples(n=8):
     files = sorted(glob.glob(os.path.join(
-        ROOT, "data", "carla_v1", "samples", "train", "*.npz")))[:n]
+        ROOT, "data", "raw", "80m", "samples", "train", "*.npz")))[:n]
     out = []
     for f in files:
         with np.load(f) as z:

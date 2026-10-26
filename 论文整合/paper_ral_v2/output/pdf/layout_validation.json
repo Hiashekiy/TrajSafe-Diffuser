@@ -1,0 +1,17 @@
+{
+  "pages": 8,
+  "supplied_images_embedded": 13,
+  "sha256": "fcdfbf5b32cfc432b56906a3eeb44ea5b50b67603c80a7a84305524f0d856686",
+  "main_pdf_matches_delivery": true,
+  "single_column_experiment_figures": [
+    4,
+    5
+  ],
+  "carla_composite_grid": [
+    2,
+    4
+  ],
+  "carla_page": 8,
+  "carla_position": "top",
+  "original_result_tables_unchanged": true
+}

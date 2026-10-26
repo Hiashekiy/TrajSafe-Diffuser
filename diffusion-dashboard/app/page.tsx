@@ -109,7 +109,7 @@ export default function Home() {
   const [displayMode, setDisplayMode] = useState<DisplayMode>('prediction');
   // Reverse forwards actually executed: 4 is the campaign default (measured on
   // the full test split: 4 and 16 steps give the SAME collision rate, see
-  // docs/CAMPAIGN_160K8P_RESULTS.md), 16 = the full training schedule.
+  // docs/历史实验记录_160k8p.md), 16 = the full training schedule.
   const [denoiseSteps, setDenoiseSteps] = useState(4);
   const [almEnabled, setAlmEnabled] = useState(false);
   // 末端硬投射开关：false 时返回引导阶段的原始输出（不做 LP 投影）

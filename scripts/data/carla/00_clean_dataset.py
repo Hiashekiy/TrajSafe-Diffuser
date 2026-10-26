@@ -2,9 +2,9 @@
 """Clean the raw CARLA v1 dataset into fixed-length per-split arrays.
 
 This script implements the *raw -> processed* stage of
-``docs/CARLA_BSPLINE_PIPELINE_SPEC.md``.
+``docs/数据流水线与数据格式说明.md``.
 
-It reads ``data/carla_v1/samples.jsonl`` (and ``episodes.jsonl``) and, for every
+It reads ``data/raw/80m/samples.jsonl`` (and ``episodes.jsonl``) and, for every
 record, validates the corresponding ``.npz`` sample.  Accepted samples are
 projected onto the fixed 32-control cubic B-spline codec
 (``src.geometry.bspline.numpy_fit_curve_to_controls``) and written as
@@ -19,7 +19,7 @@ Rules that are easy to get wrong and are therefore stated explicitly:
 * one scene unit is 40 m (the crop is 80 m wide and the scene span is 2.0);
 * a single broken sample must never abort the run: every failure is recorded as
   a reason and the sample is skipped;
-* ``data/carla_v1`` is strictly read-only.
+* ``data/raw/80m`` is strictly read-only.
 
 The script is intentionally dependency-free apart from numpy + PyYAML (optional)
 and ``src.geometry.bspline``.
@@ -190,7 +190,7 @@ def resolve_paths(args: argparse.Namespace, cfg: Dict[str, Any]
     """Return (root, out, knots_path, knots_source)."""
     root_raw = args.root
     if root_raw is None:
-        root_raw = _cfg_get(cfg, "data.root") or "data/carla_v1"
+        root_raw = _cfg_get(cfg, "data.root") or "data/raw/80m"
     out_raw = args.out
     if out_raw is None:
         out_raw = _cfg_get(cfg, "data.processed_root") or "data/carla_processed"
@@ -536,7 +536,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Clean CARLA v1 raw samples into fixed per-split arrays.")
     parser.add_argument("--root", default=None,
-                        help="raw dataset root (default: data/carla_v1 or "
+                        help="raw dataset root (default: data/raw/80m or "
                              "config data.root)")
     parser.add_argument("--out", default=None,
                         help="processed output root (default: "

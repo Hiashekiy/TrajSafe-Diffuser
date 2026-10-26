@@ -31,6 +31,11 @@ Three-stage state machine (report sections 1-3, 9, 10, 31, 32, 35, 36):
         runs the control-space ALM on THAT step's fresh ``Q0_raw`` and the DDIM
         update consumes ``Q0_safe``.  The dual is warm-started across steps.
 
+For the feedback-only ablation, ``alm.safe_prediction_to_ddim = false`` keeps
+the same ALM and feedback construction but lets the DDIM update consume
+``Q0_raw``.  This isolates the historical feedback feature from the direct
+injection of the corrected trajectory into the diffusion state.
+
 There is NO extra final projection at ``t = 0``: the last guided step already
 returns ``Q0_safe``.  The trailing ``0 -> -1`` transition sets ``q = q0_used``.
 
@@ -64,7 +69,7 @@ from ..geometry.safety_corridor import (SCENE_TO_METER, build_safety_corridor,
                                         progress_alignment_stats)
 import time as _time
 
-from .bspline_alm import bspline_alm_correct, bspline_hard_project
+from .bspline_alm import bspline_alm_correct
 from .sdf_guidance import GUIDANCE_MODES, apply_sdf_guidance
 from ..geometry.sdf_field import build_occupancy_sdf
 
@@ -184,6 +189,13 @@ def try_activate_corridor(
     B = q.shape[0]
     device = q.device
     trials = max(1, int(corridor_cfg.get("topology_trials", 4)))
+    # 实验 3 geometry-prior switch (absent -> "learned", i.e. no intervention)
+    from ..geometry.ellipse_prior import apply_ellipse_prior, prior_from_config
+    prior = prior_from_config(corridor_cfg)
+    prior_mode = prior["mode"]
+    prior_radius = prior["radius"]
+    prior_semi_major = prior["semi_major"]
+    prior_semi_minor = prior["semi_minor"]
     pi = current_out["topo"]["pi"]
     score = pi.masked_fill(~candidate_mask, float("-inf"))
     order = torch.argsort(score, dim=-1, descending=True)[:, :trials]
@@ -230,6 +242,19 @@ def try_activate_corridor(
             shape4 = out_k["ellipse"]["shape4"][b].detach()
             gamma = geometry[b, cand]
             glen = int(geometry_lengths[b, cand].item())
+            # 实验 3: replace ONLY the ellipse geometry handed to the convex
+            # region constructor.  Absent/learned -> the prediction is used
+            # verbatim, so the default pipeline is unchanged.
+            if prior_mode != "learned":
+                shape4 = torch.as_tensor(
+                    apply_ellipse_prior(
+                        shape4.detach().cpu().numpy(), None, 
+                        gamma.detach().cpu().numpy(), glen,
+                        anchors.detach().cpu().numpy(),
+                        mode=prior_mode, radius=prior_radius,
+                        semi_major=prior_semi_major,
+                        semi_minor=prior_semi_minor),
+                    dtype=shape4.dtype, device=shape4.device)
             corridor = build_safety_corridor(
                 builders[b], centers, shape4, anchors, gamma=gamma,
                 gamma_lengths=max(glen, 1), config=corridor_cfg)
@@ -395,6 +420,11 @@ def dense_validation(model, codec, q, pack, occ, cond, num_points=512,
 # ---------------------------------------------------------------------------
 
 
+def effective_warmup_steps(configured_warmup: int, num_forwards: int) -> int:
+    """Reuse the short-schedule rule originally applied by engine_carla.generate."""
+    return max(1, min(int(configured_warmup), int(num_forwards) - 2))
+
+
 @torch.no_grad()
 def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
            geometry, geometry_lengths, device="cuda", steps=None, seed=None,
@@ -541,6 +571,8 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         pairs.append((times[0], -1))
 
     warmup = int(alm_cfg.get("warmup_reverse_steps", 3))
+    if steps is not None:
+        warmup = effective_warmup_steps(warmup, len(pairs))
     max_delay = int(alm_cfg.get("max_activation_delay_steps", 2))
     activation_inner = int(alm_cfg.get("activation_inner_steps", 6))
     inner_steps = int(alm_cfg.get("inner_steps", 3))
@@ -599,6 +631,8 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     # exact identity, so the network sees the same input distribution it would
     # without the module -- without deleting anything from the state dict.
     fb_force_zero = bool(alm_cfg.get("force_feedback_valid_zero", False))
+    safe_prediction_to_ddim = bool(
+        alm_cfg.get("safe_prediction_to_ddim", True))
 
     def _fb_kwargs():
         if not fb_on:
@@ -700,6 +734,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                             alm_status[b] = "activation_failed"
 
         _t0 = _time.perf_counter()
+        step_budget = None
         if alm_enabled and bool(guided.any()):
             budget = torch.where(
                 just_activated,
@@ -707,13 +742,18 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 torch.full((B,), inner_steps, device=dev, dtype=torch.long))
             budget = torch.where(
                 guided, budget, torch.zeros(B, dtype=torch.long, device=dev))
+            step_budget = budget.detach().cpu().clone()
             q0_used, lam, step_alm_stats = bspline_alm_correct(
                 q0_used, pack, model.bspline,
                 lam if inherit_dual else None, alm_cfg,
                 inner_steps=max(activation_inner, inner_steps),
                 max_steps=budget)
         _sync()
-        timing["corridor_s"] += _time.perf_counter() - _t0
+        # wall clock of ONE ALM call (residual + gradient + Cholesky step +
+        # dual update inside ``bspline_alm_correct``), read by the 实验 3
+        # budget study; it is a pure measurement and changes nothing.
+        alm_elapsed = _time.perf_counter() - _t0
+        timing["corridor_s"] += alm_elapsed
 
         # ---- external SDF constraint processors (section 4.2) -------------
         # SAME action site as the corridor ALM above: the corrected clean
@@ -755,13 +795,19 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
             fb_history["rejected"] += fb_stats["rejected"]
             fb_history["invalid_steps"] += int((~fb_valid).sum())
 
+        # Feedback-only ablation: ALM still produces Q0_safe and the
+        # (Q0_safe, Q0_safe-Q0_raw) history above, but its correction is not
+        # injected into the current DDIM transition or returned at t=0.
+        # The default remains the complete method.
+        q0_ddim = (q0_used if safe_prediction_to_ddim or
+                   step_alm_stats is None else step_q0_raw)
         if int(s_t) < 0:
-            q = q0_used
+            q = q0_ddim
         else:
             sa_t, s1_t = sqrt_ab[int(t)], sqrt_1ma[int(t)]
             sa_s, s1_s = sqrt_ab[int(s_t)], sqrt_1ma[int(s_t)]
-            eps = (q - sa_t * q0_used) / s1_t
-            q = sa_s * q0_used + s1_s * eps
+            eps = (q - sa_t * q0_ddim) / s1_t
+            q = sa_s * q0_ddim + s1_s * eps
         q = model.hard_control_endpoints(q, cond)
         reverse_forward_count += 1
 
@@ -771,6 +817,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "q": q.detach().cpu().clone(),
                 "q0_raw": step_q0_raw.detach().cpu().clone(),
                 "q0_safe": q0_used.detach().cpu().clone(),
+                "q0_ddim": q0_ddim.detach().cpu().clone(),
                 "q0": out["control"].detach().cpu().clone(),
                 "p": model.bspline.decode_controls(q).detach().cpu().clone(),
                 "p_raw": model.bspline.decode_controls(
@@ -778,7 +825,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "p_safe": model.bspline.decode_controls(
                     q0_used).detach().cpu().clone(),
                 "final": model.bspline.decode_controls(
-                    q0_used).detach().cpu().clone(),
+                    q0_ddim).detach().cpu().clone(),
                 "coarse": out["coarse"].detach().cpu().clone(),
                 "selected_idx": idx_used.detach().cpu().clone(),
                 "pi": out["topo"]["pi"].detach().cpu().clone(),
@@ -791,6 +838,11 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "guided": guided.detach().cpu().clone(),
                 "frozen_topology_idx": frozen_idx.detach().cpu().clone(),
                 "alm_active": bool(step_alm_stats is not None),
+                # 实验 3 (ALM iteration budget): the budget actually granted to
+                # each sample on THIS call and the measured cost of the call.
+                "alm_budget": step_budget,
+                "alm_seconds": (alm_elapsed
+                                if step_alm_stats is not None else None),
                 "feedback_enabled": fb_on,
                 "feedback_valid_in": fb_in_valid.detach().cpu().clone(),
                 "feedback_valid": fb_valid.detach().cpu().clone(),
@@ -840,42 +892,11 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                               if step_alm_stats is not None else None),
             })
 
-    # ---- FINAL HARD PROJECTION ------------------------------------------
-    # The guided phase runs a fixed per-step budget and early-stops as soon as
-    # the batch is feasible, so the polygon that leaves the reverse loop can
-    # still violate the frozen corridor.  Project it once more, with a large
-    # budget, so the RETURNED controls are inside the constraint set (the
-    # per-step trust region stays on -- unbounded, the iteration diverges to
-    # NaN -- and a per-sample monotone guard keeps the input when the
-    # projection is not better).
-    final_projection = None
-    q_pre_projection = None
-    if (alm_enabled and pack is not None and bool(guided.any())
-            and bool(alm_cfg.get("final_project", True))):
-        # keep the polygon the guided phase produced, for the dashboard overlay
-        # ("what the trajectory was BEFORE the hard projection")
-        q_pre_projection = q.clone()
-        _t0 = _time.perf_counter()
-        q, final_projection = bspline_hard_project(
-            q, pack, model.bspline, alm_cfg,
-            tol=float(alm_cfg.get("final_project_tol", 1e-9)))
-        _sync()
-        timing["final_projection_s"] += _time.perf_counter() - _t0
-        q = model.hard_control_endpoints(q, cond)
-
     p = model.bspline.decode_controls(q)
     result = {"control": q, "p": p, "final": p, "has_candidate": has_cand,
               "guidance": guidance_mode, "sdf_mode": sdf_mode,
               "sdf_guided_steps": sdf_applied_steps,
               "guard_frames": guard_frames, "timing": timing}
-    if q_pre_projection is not None:
-        result["control_pre_projection"] = q_pre_projection
-        result["p_pre_projection"] = model.bspline.decode_controls(
-            q_pre_projection)
-    if final_projection is not None:
-        # raw per-sample tensors; the dashboard engine picks what it needs and
-        # converts to JSON (the eval reads it the same way)
-        result["final_projection"] = final_projection
     if last is not None:
         result["selected_idx"] = last["selected_idx"]
         result["topology_pi"] = last["topo"]["pi"]
@@ -916,6 +937,7 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         "constraint_tol": float(alm_cfg.get("constraint_tol", 1e-3)),
         "max_curve_step_scene": float(
             alm_cfg.get("max_curve_step_scene", 0.01)),
+        "safe_prediction_to_ddim": safe_prediction_to_ddim,
         "scene_to_meter": float(alm_cfg.get("scene_to_meter", SCENE_TO_METER)),
     }
     if return_trace:

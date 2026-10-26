@@ -1,0 +1,97 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{lavalle2006planning}
+\citation{karaman2011sampling}
+\citation{zucker2013chomp}
+\citation{ho2020ddpm}
+\citation{janner2022diffuser}
+\citation{huang2023scenediffuser}
+\citation{carvalho2025mpd}
+\citation{ames2017cbf}
+\citation{xiao2025safediffuser}
+\citation{christopher2024projected}
+\citation{liang2025smd}
+\citation{deits2015iris}
+\citation{wang2025firi}
+\citation{marcucci2023gcs}
+\citation{liang2026dgd}
+\citation{song2021ddim}
+\citation{chen2023analogbits}
+\citation{piegl1997nurbs}
+\citation{peebles2023dit}
+\citation{vaswani2017attention}
+\citation{nocedal2006numerical}
+\citation{dosovitskiy2017carla}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\citation{janner2022diffuser}
+\citation{huang2023scenediffuser}
+\citation{carvalho2025mpd}
+\citation{xiao2025safediffuser}
+\citation{christopher2024projected}
+\citation{liang2025smd}
+\citation{deits2015iris}
+\citation{wang2025firi}
+\citation{marcucci2023gcs}
+\citation{liang2026dgd}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}Method}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Overall Framework}{2}{subsection.3.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overall framework of TrajSafe-Diffuser.}}{3}{figure.1}\protected@file@percent }
+\newlabel{fig:framework}{{1}{3}{Overall framework of TrajSafe-Diffuser}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Feature Encoding and Fusion}{3}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:feature}{{\mbox  {III-B}}{3}{Feature Encoding and Fusion}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Map and Control Point Feature Encoding}{3}{subsubsection.3.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Historical Safety Feedback Fusion}{3}{subsubsection.3.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Safety Feature and Constraint Generation}{3}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}1}Local Safety Geometry Prediction}{3}{subsubsection.3.3.1}\protected@file@percent }
+\citation{dosovitskiy2017carla}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Conditional attention and historical-feedback gated fusion. (a) The conditional attention block consists of control point self-attention, global-map cross-attention and a feed-forward network, and extracts control features through time-condition modulation and residual connections. (b) Historical safety correction features are fused into the current control features through a feedback validity flag and channel-wise gating.}}{4}{figure.2}\protected@file@percent }
+\newlabel{fig:fusion}{{2}{4}{Conditional attention and historical-feedback gated fusion. (a) The conditional attention block consists of control point self-attention, global-map cross-attention and a feed-forward network, and extracts control features through time-condition modulation and residual connections. (b) Historical safety correction features are fused into the current control features through a feedback validity flag and channel-wise gating}{figure.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Experiments and Analysis}{4}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Experimental Setup}{4}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}1}Dataset and Implementation Details}{4}{subsubsection.4.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}2}Comparison Methods and Evaluation Metrics}{4}{subsubsection.4.1.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Local safety feature and ellipse geometry prediction. Safety centers are sampled at fixed positions along the selected route, and a spatial distance bias between the centers and the map positions is added to the cross-attention; the resulting safety latent features are passed through an ellipse shape head that outputs the local semi-axes and orientation, which are used for the subsequent convex safe region construction.}}{5}{figure.3}\protected@file@percent }
+\newlabel{fig:geom}{{3}{5}{Local safety feature and ellipse geometry prediction. Safety centers are sampled at fixed positions along the selected route, and a spatial distance bias between the centers and the map positions is added to the cross-attention; the resulting safety latent features are passed through an ellipse shape head that outputs the local semi-axes and orientation, which are used for the subsequent convex safe region construction}{figure.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Comparison of Different Safety Constraint Methods}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}1}Safety and Trajectory Quality}{5}{subsubsection.4.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}2}Computational Efficiency}{5}{subsubsection.4.2.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Comparison of Safety and Trajectory Quality of Different Safety Constraint Methods}}{6}{table.1}\protected@file@percent }
+\newlabel{tab:compare}{{I}{6}{Comparison of Safety and Trajectory Quality of Different Safety Constraint Methods}{table.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Efficiency Comparison of Different Sampling Step and Region Sharing Configurations}}{6}{table.2}\protected@file@percent }
+\newlabel{tab:efficiency}{{II}{6}{Efficiency Comparison of Different Sampling Step and Region Sharing Configurations}{table.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Ablation of Key Components}{6}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Visualization of Trajectory Generation and Safety Correction}{6}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{6}{section.5}\protected@file@percent }
+\bibstyle{IEEEtran}
+\bibdata{references}
+\bibcite{lavalle2006planning}{1}
+\bibcite{karaman2011sampling}{2}
+\bibcite{zucker2013chomp}{3}
+\bibcite{ho2020ddpm}{4}
+\bibcite{janner2022diffuser}{5}
+\bibcite{huang2023scenediffuser}{6}
+\bibcite{carvalho2025mpd}{7}
+\bibcite{ames2017cbf}{8}
+\bibcite{xiao2025safediffuser}{9}
+\bibcite{christopher2024projected}{10}
+\bibcite{liang2025smd}{11}
+\bibcite{deits2015iris}{12}
+\bibcite{wang2025firi}{13}
+\bibcite{marcucci2023gcs}{14}
+\bibcite{liang2026dgd}{15}
+\bibcite{song2021ddim}{16}
+\bibcite{chen2023analogbits}{17}
+\bibcite{piegl1997nurbs}{18}
+\bibcite{peebles2023dit}{19}
+\bibcite{vaswani2017attention}{20}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Progressive Ablation Results of the Key Components}}{7}{table.3}\protected@file@percent }
+\newlabel{tab:ablation}{{III}{7}{Progressive Ablation Results of the Key Components}{table.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Trajectory prediction and safety correction during reverse diffusion. The orange dashed line is the prediction before the ALM correction at the current step, the blue curve is the trajectory output at that step, and the light blue region is the safe corridor. The 1st step belongs to the warm-up stage and the corridor is shown for visual comparison only.}}{7}{figure.4}\protected@file@percent }
+\newlabel{fig:steps}{{4}{7}{Trajectory prediction and safety correction during reverse diffusion. The orange dashed line is the prediction before the ALM correction at the current step, the blue curve is the trajectory output at that step, and the light blue region is the safe corridor. The 1st step belongs to the warm-up stage and the corridor is shown for visual comparison only}{figure.4}{}}
+\@writefile{toc}{\contentsline {section}{References}{7}{section*.1}\protected@file@percent }
+\bibcite{nocedal2006numerical}{21}
+\bibcite{dosovitskiy2017carla}{22}
+\gdef \@abspage@last{8}

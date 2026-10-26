@@ -1,0 +1,67 @@
+{
+  "scope": "manuscript-authoritative revision and 4 native method figures",
+  "abstract_and_introduction_unchanged": true,
+  "experimental_tables_unchanged": true,
+  "old_sources_unchanged": true,
+  "image_links_valid": true,
+  "inline_math_only": true,
+  "intended_width_mm": 170,
+  "figures": [
+    {
+      "number": "3-2",
+      "native_vertices": 29,
+      "native_edges": 22,
+      "connected_edges": 22,
+      "embedded_images": 0,
+      "png_size": [
+        3104,
+        2262
+      ],
+      "rendered_math": true,
+      "min_label_pt_at_170mm": 7.92,
+      "vector_pdf": true
+    },
+    {
+      "number": "3-3",
+      "native_vertices": 63,
+      "native_edges": 26,
+      "connected_edges": 20,
+      "embedded_images": 0,
+      "png_size": [
+        3104,
+        2576
+      ],
+      "rendered_math": true,
+      "min_label_pt_at_170mm": 7.92,
+      "vector_pdf": true
+    },
+    {
+      "number": "3-4",
+      "native_vertices": 21,
+      "native_edges": 12,
+      "connected_edges": 12,
+      "embedded_images": 0,
+      "png_size": [
+        3104,
+        1985
+      ],
+      "rendered_math": true,
+      "min_label_pt_at_170mm": 7.45,
+      "vector_pdf": true
+    },
+    {
+      "number": "3-5",
+      "native_vertices": 22,
+      "native_edges": 17,
+      "connected_edges": 16,
+      "embedded_images": 0,
+      "png_size": [
+        3104,
+        2256
+      ],
+      "rendered_math": true,
+      "min_label_pt_at_170mm": 7.45,
+      "vector_pdf": true
+    }
+  ]
+}

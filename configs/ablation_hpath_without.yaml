@@ -1,0 +1,11 @@
+base: configs/config_160k4p_c48_oneshot.yaml
+model:
+  path_features:
+    enabled: false
+  safety_query:
+    center_encoding: false
+train:
+  epochs: 200
+  max_hours: null
+  save_every: 0
+  ckpt_dir: outputs/ablation_hpath/without_hpath/ckpt

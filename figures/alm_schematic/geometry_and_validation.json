@@ -1,0 +1,274 @@
+{
+  "synthetic_example": true,
+  "degree": 3,
+  "spline_control_points": 9,
+  "convex_regions": 4,
+  "region_boundaries": [
+    0.0,
+    0.22,
+    0.48,
+    0.72,
+    1.0
+  ],
+  "knots": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "union_partition": [
+    0.0,
+    0.16666666666666666,
+    0.22,
+    0.3333333333333333,
+    0.48,
+    0.5,
+    0.6666666666666666,
+    0.72,
+    0.8333333333333334,
+    1.0
+  ],
+  "bezier_subsegments": 9,
+  "alm_outer_iterations": 30,
+  "max_corrected_bezier_halfspace_violation": 3.3830256374045575e-09,
+  "max_original_bezier_halfspace_violation": 0.915891106489572,
+  "endpoints_fixed": true,
+  "original_control_points": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.7,
+      0.1
+    ],
+    [
+      1.8,
+      1.5
+    ],
+    [
+      3.1,
+      3.25
+    ],
+    [
+      4.5,
+      -0.050000000000000044
+    ],
+    [
+      5.8,
+      0.15000000000000002
+    ],
+    [
+      7.1,
+      2.0
+    ],
+    [
+      8.8,
+      3.0
+    ],
+    [
+      10.0,
+      3.0
+    ]
+  ],
+  "corrected_control_points": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.7,
+      0.1
+    ],
+    [
+      1.8293249737393664,
+      1.28442099467511
+    ],
+    [
+      3.0781802352630008,
+      2.394707297842704
+    ],
+    [
+      4.618791198592766,
+      0.9604485546046504
+    ],
+    [
+      5.851828468063648,
+      0.8645781320223435
+    ],
+    [
+      7.1,
+      2.0
+    ],
+    [
+      8.8,
+      3.0
+    ],
+    [
+      10.0,
+      3.0
+    ]
+  ],
+  "alm_trace": [
+    {
+      "iteration": 1,
+      "max_violation": 0.08918861880887685,
+      "rho": 5.0
+    },
+    {
+      "iteration": 2,
+      "max_violation": 0.037345067757786454,
+      "rho": 5.0
+    },
+    {
+      "iteration": 3,
+      "max_violation": 0.024713178909765654,
+      "rho": 5.0
+    },
+    {
+      "iteration": 4,
+      "max_violation": 0.018293537646787206,
+      "rho": 5.0
+    },
+    {
+      "iteration": 5,
+      "max_violation": 0.01446997372732195,
+      "rho": 10.0
+    },
+    {
+      "iteration": 6,
+      "max_violation": 0.00819135542425764,
+      "rho": 10.0
+    },
+    {
+      "iteration": 7,
+      "max_violation": 0.007096273118328389,
+      "rho": 10.0
+    },
+    {
+      "iteration": 8,
+      "max_violation": 0.006703718768775291,
+      "rho": 10.0
+    },
+    {
+      "iteration": 9,
+      "max_violation": 0.0063314558778686525,
+      "rho": 20.0
+    },
+    {
+      "iteration": 10,
+      "max_violation": 0.006036910638885784,
+      "rho": 20.0
+    },
+    {
+      "iteration": 11,
+      "max_violation": 0.005739945784010603,
+      "rho": 20.0
+    },
+    {
+      "iteration": 12,
+      "max_violation": 0.005464223818321123,
+      "rho": 20.0
+    },
+    {
+      "iteration": 13,
+      "max_violation": 0.0016277105742581455,
+      "rho": 40.0
+    },
+    {
+      "iteration": 14,
+      "max_violation": 0.001168940238595706,
+      "rho": 40.0
+    },
+    {
+      "iteration": 15,
+      "max_violation": 0.0003610781970718735,
+      "rho": 40.0
+    },
+    {
+      "iteration": 16,
+      "max_violation": 0.00014664717641599267,
+      "rho": 40.0
+    },
+    {
+      "iteration": 17,
+      "max_violation": 7.18240006047921e-05,
+      "rho": 80.0
+    },
+    {
+      "iteration": 18,
+      "max_violation": 3.373298018671811e-05,
+      "rho": 80.0
+    },
+    {
+      "iteration": 19,
+      "max_violation": 1.5758699606127635e-05,
+      "rho": 80.0
+    },
+    {
+      "iteration": 20,
+      "max_violation": 7.3569088114844305e-06,
+      "rho": 80.0
+    },
+    {
+      "iteration": 21,
+      "max_violation": 2.246150601958874e-06,
+      "rho": 160.0
+    },
+    {
+      "iteration": 22,
+      "max_violation": 6.761086837059338e-07,
+      "rho": 160.0
+    },
+    {
+      "iteration": 23,
+      "max_violation": 2.181112708221633e-07,
+      "rho": 160.0
+    },
+    {
+      "iteration": 24,
+      "max_violation": 5.7867474811956754e-08,
+      "rho": 160.0
+    },
+    {
+      "iteration": 25,
+      "max_violation": 1.9068744805395e-08,
+      "rho": 320.0
+    },
+    {
+      "iteration": 26,
+      "max_violation": 1.6670808733465492e-08,
+      "rho": 320.0
+    },
+    {
+      "iteration": 27,
+      "max_violation": 1.3764260842208387e-08,
+      "rho": 320.0
+    },
+    {
+      "iteration": 28,
+      "max_violation": 1.3040449609036386e-08,
+      "rho": 320.0
+    },
+    {
+      "iteration": 29,
+      "max_violation": 1.0326944632765844e-08,
+      "rho": 640.0
+    },
+    {
+      "iteration": 30,
+      "max_violation": 3.3830258594491625e-09,
+      "rho": 640.0
+    }
+  ],
+  "note": "Computed synthetic ALM illustration; not measured project results. Safety claim is only relative to the assigned illustrative convex corridor."
+}

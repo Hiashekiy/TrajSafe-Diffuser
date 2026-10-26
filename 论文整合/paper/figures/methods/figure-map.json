@@ -1,0 +1,83 @@
+[
+  {
+    "number": "3-1",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\TrajSafe-Diffuser_arch-main.framed.drawio",
+    "source_sha256": "304190e3bfed98b92b5c8f3fc58077f38f9c56296c556421d34459bd20a232ae",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\drawio\\fig3-1.drawio",
+    "adjustments": [
+      "l_qt: <b>噪声控制多边形</b>　\\(Q_t\\)<br>[B, 32, 2] -> <b>噪声控制多边形</b>　\\(Q_t\\)<br>[B, 48, 2]",
+      "p1_ffbcap: \\(H_{fb}\\) -> \\(h_t\\)"
+    ],
+    "svg": "fig3-1.svg",
+    "png": "fig3-1.png",
+    "pdf": "fig3-1.pdf"
+  },
+  {
+    "number": "3-2",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\TrajSafe-Diffuser_图3-2_§3.3控制主干8×TrajBlock-原排版修订版.drawio",
+    "source_sha256": "9ba061998ade9d9a9e18fbd8348484da02f5d58fde50e391dda66a7c4fb9fd1b",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\drawio\\fig3-2.drawio",
+    "adjustments": [
+      "Removed internal figure title; use manuscript caption"
+    ],
+    "svg": "fig3-2.svg",
+    "png": "fig3-2.png",
+    "pdf": "fig3-2.pdf"
+  },
+  {
+    "number": "3-3",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\TrajSafe-Diffuser_图3-3_§3.2骨架匹配与安全几何-原排版修订版.drawio",
+    "source_sha256": "6ecb386f57378c94f472ea2198d1361902bc926f59ee2de057f6133ff9dc8888",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\drawio\\fig3-3.drawio",
+    "adjustments": [
+      "Removed internal figure title; use manuscript caption",
+      "curve: CurveDecoder<br>固定参数位置采样 -> CurveDecoder<br>固定归一化弧长采样",
+      "bias: \\(d_{ij}=\\Vert g_j-c_i\\Vert\\)<br>\\(B_{ij}^{\\mathrm{geo}}=-\\bar\\alpha_t^2 d_{ij}^2/(2\\sigma^2)\\)<br>\\(\\mathrm{clip}(B_{ij}^{\\mathrm{geo}},-8,0)\\) -> \\(d_{ij}=\\Vert g_j-c_i\\Vert\\)<br>\\(B_{ij}^{\\mathrm{geo}}=-\\bar\\alpha_t d_{ij}^2/(2\\sigma^2)\\)<br>\\(\\mathrm{clip}(B_{ij}^{\\mathrm{geo}},-8,0)\\)"
+    ],
+    "svg": "fig3-3.svg",
+    "png": "fig3-3.png",
+    "pdf": "fig3-3.pdf"
+  },
+  {
+    "number": "3-4",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\TrajSafe-Diffuser_图3-4_§3.3融合与最终去噪-原排版修订版.drawio",
+    "source_sha256": "1ae30fe624119a56b1323282b63f08ce5172515b41455339641384ea63d7f151",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\drawio\\fig3-4.drawio",
+    "adjustments": [
+      "Removed internal figure title; use manuscript caption"
+    ],
+    "svg": "fig3-4.svg",
+    "png": "fig3-4.png",
+    "pdf": "fig3-4.pdf"
+  },
+  {
+    "number": "3-5",
+    "source": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\drawio\\TrajSafe-Diffuser_图3-5_§3.4闭环安全修正与反馈-原排版修订版.drawio",
+    "source_sha256": "41e01eaf9d065597e9e1440d24bbafaeda7155e6dfc7e230f2fb196c5d1e0ac4",
+    "publication_copy": "D:\\ProjectDirectory\\Neural-IRISDiffuser\\paper\\figures\\methods\\drawio\\fig3-5.drawio",
+    "adjustments": [
+      "Removed internal figure title; use manuscript caption",
+      "raw: Q<sub>0</sub><sup>pred</sup>　[B,C,2]　当前干净预测 -> 当前干净预测　\\(Q_0^{\\mathrm{pred}}\\quad[B,C,2]\\)",
+      "pack: 冻结的连续走廊约束　A<sub>j</sub> E_lr Q − b<sub>j</sub> ≤ 0 -> 冻结连续约束　\\(A_j E_\\ell Q-b_j\\leq0\\)",
+      "g: 违规 g　[B,P,4,F<sub>max</sub>] -> \\(g(Q)\\quad[B,P,4,F_{\\max}]\\)",
+      "dual: 约束权重 ω = ReLU(λ + ρg) -> \\(\\omega=[\\lambda+\\rho g(Q)]_+\\)",
+      "lam: ω　[B,P,4,F<sub>max</sub>]（供解析梯度使用） -> \\(\\omega\\quad[B,P,4,F_{\\max}]\\)　解析梯度权重",
+      "clip: 对偶更新　λ ← ReLU(λ + ρg_new) -> 对偶更新　\\(\\lambda\\leftarrow[\\lambda+\\rho g(Q_{\\mathrm{new}})]_+\\)",
+      "tol: max ReLU(g<sub>new</sub>) ≤ ε，或达到 K 次内迭代 -> \\(\\max[g(Q_{\\mathrm{new}})]_+\\leq\\varepsilon_{\\mathrm{alm}}\\)，或达到迭代预算",
+      "q0s: Q_0^safe　[B,C,2] -> \\(Q_0^{\\mathrm{safe}}\\quad[B,C,2]\\)",
+      "ddim: DDIM(q<sub>t</sub>, Q_0^safe) → q_{t−1} -> \\(Q_{t^-}=\\mathrm{DDIM}(Q_t,Q_0^{\\mathrm{safe}})\\)",
+      "hard: 固定端点　q_{t−1,0}=S，q_{t−1,C−1}=G -> 固定端点　\\(q_{t^-,0}=S,\\quad q_{t^-,C-1}=G\\)",
+      "qnext: q_{t−1}　[B,C,2] -> \\(Q_{t^-}\\quad[B,C,2]\\)",
+      "fin: Concat(Q_0^safe, ΔQ, v)　[B,C,5] -> \\([Q_0^{\\mathrm{safe}};\\Delta Q;v]\\quad[B,C,5]\\)",
+      "fhf: h<sub>fb</sub>　[B,C,D] -> \\(H_{\\mathrm{fb}}\\quad[B,C,D]\\)",
+      "fcat: Concat(H<sub>ctrl</sub>, h<sub>fb</sub>)　[B,C,2D] -> \\([H_{\\mathrm{ctrl}};H_{\\mathrm{fb}}]\\quad[B,C,2D]\\)",
+      "op: G = Sigmoid(·) ⊙ v<br>H<sub>ctrl</sub><sup>fb</sup> = H<sub>ctrl</sub> + G ⊙ h<sub>fb</sub> -> \\(G_{\\mathrm{fb}}=v\\,\\mathrm{sigmoid}(\\cdot)\\)<br>\\(\\widetilde H_{\\mathrm{ctrl}}=H_{\\mathrm{ctrl}}+G_{\\mathrm{fb}}\\odot H_{\\mathrm{fb}}\\)",
+      "hcin: H<sub>ctrl</sub><br>[B,C,D] -> \\(H_{\\mathrm{ctrl}}\\quad[B,C,D]\\)",
+      "hc2: H<sub>ctrl</sub><sup>fb</sup>　[B,C,D]<br>主干输出后注入（图 3-2） -> \\(\\widetilde H_{\\mathrm{ctrl}}\\quad[B,C,D]\\)　主干输出后注入",
+      "N: ΔQ = Q_0^safe − Q<sub>0</sub><sup>pred</sup>；v∈{0,1} 为历史反馈有效标志。<br>P：Bézier 段数；4：每段控制点数；F<sub>max</sub>：最大半平面数。K≤10，ρ=5，η=0.05，ε=10<sup>−3</sup>。 -> ΔQ：安全控制点减原始预测；v：历史反馈有效标志。<br>P：Bézier 段数；Fmax：最大半平面数。最多 10 次内迭代，ρ=5，η=0.05，停止容差 0.001。"
+    ],
+    "svg": "fig3-5.svg",
+    "png": "fig3-5.png",
+    "pdf": "fig3-5.pdf"
+  }
+]

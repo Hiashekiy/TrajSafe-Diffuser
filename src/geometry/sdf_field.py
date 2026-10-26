@@ -34,7 +34,7 @@ TWO FIELDS, ON PURPOSE
     ``_free_mask`` (src/diffusion/sampler.py) counts ``|p| > 1`` as a collision
     while the occupancy SDF says nothing about the crop -- the same class of bug
     that was already measured once in the corridor code (commit bf37aa3,
-    docs/CAMPAIGN_160K8P_RESULTS.md §12.8).
+    docs/历史实验记录_160k8p.md §12.8).
 
 Both are reported per sample (``sdf_*`` from d_occ, ``sdf_full_*`` from the
 combined field) so no reader has to guess which convention a column used.

@@ -1,0 +1,1048 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/28.1.2 Chrome/138.0.7204.243 Electron/37.4.0 Safari/537.36" pages="4">
+  <diagram id="p1-merged" name="1-总图(分廊)">
+    <mxGraphModel dx="553333" dy="317195" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2000" pageHeight="1030" math="1" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="a_g1" parent="1" style="group" value="1.  Feature Encoding　（三路输入编码）" vertex="1">
+          <mxGeometry height="600" width="530" x="-47932" y="-37970" as="geometry" />
+        </mxCell>
+        <mxCell id="7-pL_enXmP9VmTHtVOKl-1" edge="1" parent="1" source="a_occ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="a_cand">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-47863.59" y="-38059.65" />
+              <mxPoint x="-47103" y="-38059.65" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_occ" parent="1" style="ioBox;whiteSpace=wrap" value="Occupancy Map 𝒪&#xa;[B,1,256,256]" vertex="1">
+          <mxGeometry height="110" width="150" x="-47924" y="-37937" as="geometry" />
+        </mxCell>
+        <mxCell id="8GOX180aUVl687o_jwvp-4" edge="1" parent="1" source="a_scene" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_fmap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-8" edge="1" parent="1" source="a_scene" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="a_fgeom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_scene" parent="1" style="trap" value="Scene&#xa;Encoder" vertex="1">
+          <mxGeometry height="76" width="85" x="-47747" y="-37920" as="geometry" />
+        </mxCell>
+        <mxCell id="a_qt" parent="1" style="ioBox;whiteSpace=wrap" value="Noisy Controls \(Q_t\)&#xa;\([B,32,2]\)" vertex="1">
+          <mxGeometry height="110" width="150" x="-47924" y="-37797" as="geometry" />
+        </mxCell>
+        <mxCell id="a_cenc" parent="1" style="trap" value="Control&#xa;Encoder" vertex="1">
+          <mxGeometry height="76" width="85" x="-47747" y="-37780" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fbin" parent="1" style="ioBox;whiteSpace=wrap;fontSize=10" value="$$Q_{prev}^{safe},\ \Delta,\ valid$$&#xa;\([B,32,2]\) , \([B,32,2]\) , [B]" vertex="1">
+          <mxGeometry height="66" width="160" x="-47902" y="-37634" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fbenc" parent="1" style="trap" value="Feedback&#xa;Encoder" vertex="1">
+          <mxGeometry height="76" width="85" x="-47702" y="-37639" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fbgate" parent="1" style="whiteBox;whiteSpace=wrap" value="Gate Injection&#xa;$$F_{fb}$$" vertex="1">
+          <mxGeometry height="54" width="80" x="-47569" y="-37628" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-9" edge="1" parent="1" source="a_sum" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_match">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_sum" parent="1" style="circle" value="+" vertex="1">
+          <mxGeometry height="30" width="30" x="-47407" y="-37717" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fmap" parent="1" style="whiteBox;whiteSpace=wrap" value="Map Feature  \(F_{map}\)&#xa;[B,256,128]" vertex="1">
+          <mxGeometry height="54" width="175" x="-47603" y="-37870" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_fmap_den" edge="1" parent="1" source="a_fmap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="a_den">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fgeom" parent="1" style="whiteBox;whiteSpace=wrap" value="Geometry Feature \(F_{geom}\)&#xa;[B,1024,128]" vertex="1">
+          <mxGeometry height="54" width="175" x="-47603" y="-37945" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fq" parent="1" style="whiteBox;whiteSpace=wrap" value="Control Features \(F_q\)&#xa;\([B,32,128]\)" vertex="1">
+          <mxGeometry height="54" width="150" x="-47600" y="-37769" as="geometry" />
+        </mxCell>
+        <mxCell id="a_tin" parent="1" style="ioBox" value="t" vertex="1">
+          <mxGeometry height="42" width="40" x="-47890" y="-37432" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-14" edge="1" parent="1" source="a_tenc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" target="a_den">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-47285" y="-37411" />
+              <mxPoint x="-47285" y="-37246" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_tenc" parent="1" style="ioBox;whiteSpace=wrap" value="Timestep Emb.&#xa;\(h_t\) [B,128]&#xa;→ 所有 AdaLN 模块" vertex="1">
+          <mxGeometry height="54" width="130" x="-47790" y="-37438" as="geometry" />
+        </mxCell>
+        <mxCell id="a_cand" parent="1" style="whiteBox;whiteSpace=wrap" value="Skeleton Candidates&#xa;$$[B,M,L,2]=[B,4,128,2]$$" vertex="1">
+          <mxGeometry height="70" width="170" x="-47188" y="-37953" as="geometry" />
+        </mxCell>
+        <mxCell id="a_skenc" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Skeleton Encoder&#xa;$$N_S=2$$&#xa;\(H_S\) [B,4,128,128]" vertex="1">
+          <mxGeometry height="73" width="170" x="-47188" y="-37859" as="geometry" />
+        </mxCell>
+        <mxCell id="opfGLFioJF7cXLVKS2w7-2" edge="1" parent="1" source="a_match" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_score">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-46977" y="-37704" />
+              <mxPoint x="-46977" y="-37866" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-3" edge="1" parent="1" source="a_match" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="a_pfh" value="\(R[m^*]\)（C=32 控制点 token）">
+          <mxGeometry relative="1" x="-0.0146" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_match" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="MatchBlock&#xa;$$\mathrm{cross\text{-}attn}(H_{ctrl}\rightarrow H_S[m])$$&#xa;R \([B,4,32,128]\)" vertex="1">
+          <mxGeometry height="80" width="170" x="-47188" y="-37742" as="geometry" />
+        </mxCell>
+        <mxCell id="opfGLFioJF7cXLVKS2w7-3" edge="1" parent="1" source="a_score" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_pick">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_score" parent="1" style="whiteBox;whiteSpace=wrap" value="Topology&#xa;Scores \(\pi\)" vertex="1">
+          <mxGeometry height="46" width="97.5" x="-46943" y="-37886" as="geometry" />
+        </mxCell>
+        <mxCell id="opfGLFioJF7cXLVKS2w7-4" edge="1" parent="1" source="a_pick" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_mstar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_pick" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="TopologyHead&#xa;$$m^*=m^*\,(\mathrm{train})\ /\ \arg\max_m \pi_m\ (\mathrm{infer})$$" vertex="1">
+          <mxGeometry height="61" width="209" x="-46810" y="-37894.5" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-1" edge="1" parent="1" source="a_mstar" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="a_curvedec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-2" edge="1" parent="1" source="a_mstar" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_sq" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_mstar" parent="1" style="whiteBox;whiteSpace=wrap" value="Selected Skeleton \(m^*\)&#xa;$$\Gamma_{m^*},\ H_S[m^*]$$" vertex="1">
+          <mxGeometry height="61" width="219.75" x="-46815.75" y="-37792" as="geometry" />
+        </mxCell>
+        <mxCell id="a_sq" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="SafetyQueryHead&#xa;\(H_{safety}=\mathrm{safety\_query\_head}(H_S[m^*])\)&#xa;\([B,128,128]\)" vertex="1">
+          <mxGeometry height="74" width="234" x="-46548" y="-37798.5" as="geometry" />
+        </mxCell>
+        <mxCell id="a_sell" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Safety Ellipses · EllipseGeometry&#xa;$$q_i^E=h_i^{path}+\mathrm{MLP}_C(\Phi_{xy}(c_i))$$&#xa;center-biased cross-attn(\(C_E\))&#xa;$$B_{ij}=\mathrm{clamp}\!\left(-\bar{\alpha}_t\dfrac{\|c_i-q_j^E\|^2}{2\sigma^2},\,-8,\,0\right)$$&#xa;\(H_{ell}\) \([B,128,128]\)" vertex="1">
+          <mxGeometry height="236.5" width="217" x="-46251" y="-37961" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-10" edge="1" parent="1" source="a_convex" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_corridor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_convex" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Local Safety Ellipses&#xa;EllipseShapeHead&#xa;$$\mathrm{shape}_4=(\log a,\,\log b,\,\cos 2\theta,\,\sin 2\theta)$$&#xa;$$[B,Q,4]=[B,128,4]$$" vertex="1">
+          <mxGeometry height="121" width="251" x="-45716" y="-37903.25" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-4" edge="1" parent="1" source="a_fs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_convex">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-6" edge="1" parent="1" source="a_fs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_xattn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_fs" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Safety Geometry&#xa;$$F_c=H_{ell}$$" vertex="1">
+          <mxGeometry height="60" width="170" x="-45983" y="-37872.75" as="geometry" />
+        </mxCell>
+        <mxCell id="a_xattn" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Cross-Attention / Fusion&#xa;SafetyControlFusion&#xa;$$A_{safe}=H_{path}+\mathrm{CrossAttn}\!\left(\mathrm{AdaLN}(H_{path},h_t),\,H_{ell},\,H_{ell}\right)$$" vertex="1">
+          <mxGeometry height="91" width="334" x="-46065" y="-37669.5" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-12" edge="1" parent="1" source="a_srep" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_den">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_srep" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Fusion MLP（learned）&#xa;$$\mathrm{FusionMLP}([H_{ctrl};\,H_{path};\,A_{safe}])$$&#xa;$$F_s\ [B,32,128]$$" vertex="1">
+          <mxGeometry height="116" width="335" x="-46065" y="-37539" as="geometry" />
+        </mxCell>
+        <mxCell id="mTt_WXmLBuKFYYouFY3E-16" edge="1" parent="1" source="a_den" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="mTt_WXmLBuKFYYouFY3E-14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_den" parent="1" style="whiteBox;whiteSpace=wrap" value="Final Denoiser&#xa;$$\varepsilon_\theta(Q_t,t,F_s)$$&#xa;\(N_F=3\times\) TrajBlock&#xa;+ cross-attn(\(F_{map}\))" vertex="1">
+          <mxGeometry height="120" width="170" x="-47248.5" y="-37276" as="geometry" />
+        </mxCell>
+        <mxCell id="a_bd" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="Boundary Decoder&#xa;（fixed · zero-param）&#xa;\(Q_{final}\) \([B,32,2]\)&#xa;endpoints exact" vertex="1">
+          <mxGeometry height="100" width="140" x="-46867.5" y="-37266" as="geometry" />
+        </mxCell>
+        <mxCell id="a_alm" parent="1" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" value="ALM Correction&#xa;bspline_alm_correct（每反向步 1 次）&#xa;内层 inner_steps=6（首次激活 8）· 优化变量 = 32 控制点" vertex="1">
+          <mxGeometry height="100" width="140" x="-46642.5" y="-37266" as="geometry" />
+        </mxCell>
+        <mxCell id="a_ddim" parent="1" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" value="DDIM Update&#xa;reverse step&#xa;$$t\rightarrow t-1$$" vertex="1">
+          <mxGeometry height="100" width="130" x="-46309.5" y="-37266" as="geometry" />
+        </mxCell>
+        <mxCell id="a_cache" parent="1" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" value="Feedback Cache&#xa;$$Q_{prev}^{safe},\ \Delta=Q^{safe}-\tilde{Q}_{raw},\ valid$$" vertex="1">
+          <mxGeometry height="62" width="310" x="-46727.5" y="-37135" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-13" edge="1" parent="1" source="a_corridor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.475;exitY=0.941;exitDx=0;exitDy=0;exitPerimeter=0;" target="a_alm">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-45593" y="-37566" />
+              <mxPoint x="-45593" y="-37355" />
+              <mxPoint x="-46572" y="-37355" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_corridor" parent="1" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" value="Safety Corridor（由预测椭圆 \((c_i,\mathrm{shape}_4)\) 生成凸集，间隙沿 \(\Gamma_{m^*}\) 桥接）" vertex="1">
+          <mxGeometry height="46" width="250" x="-45715" y="-37609" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_occ" edge="1" parent="1" source="a_occ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_scene">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_q_ctrl" edge="1" parent="1" source="a_qt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_cenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_ctrl_fq" edge="1" parent="1" source="a_cenc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_fq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_fb_enc" edge="1" parent="1" source="a_fbin" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_fbenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_fb_gate" edge="1" parent="1" source="a_fbenc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_fbgate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_gate_sum" edge="1" parent="1" source="a_fbgate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0" target="a_sum">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-47488" y="-37601" />
+              <mxPoint x="-47432" y="-37601" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_e_fq_sum" edge="1" parent="1" source="a_fq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="a_sum">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_t_enc" edge="1" parent="1" source="a_tin" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_tenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_geom_fc" edge="1" parent="1" source="a_sell" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_fs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_x_rep" edge="1" parent="1" source="a_xattn" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_srep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_bd_mid" edge="1" parent="1" source="a_bd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_alm">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-46684.5" y="-37273.5" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_e_alm_qsafe" edge="1" parent="1" source="a_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="mTt_WXmLBuKFYYouFY3E-18">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-46457.5" y="-37303" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_e_qsafe_traj" edge="1" parent="1" source="mTt_WXmLBuKFYYouFY3E-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_ddim">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-46397.5" y="-37303" as="sourcePoint" />
+            <mxPoint x="-46350.5" y="-37262" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_e_ddim_next" edge="1" parent="1" source="a_ddim" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="mTt_WXmLBuKFYYouFY3E-20">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-46094" y="-37282.5" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_e_alm_cache" edge="1" parent="1" source="a_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" target="a_cache">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_cache_fb" edge="1" parent="1" source="a_cache" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" target="a_fbin">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-47942" y="-37104" />
+              <mxPoint x="-47942" y="-37601" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_e_next_qt" edge="1" parent="1" source="mTt_WXmLBuKFYYouFY3E-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="a_qt">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-46010" y="-37217" />
+              <mxPoint x="-46010" y="-37005" />
+              <mxPoint x="-48000" y="-37005" />
+              <mxPoint x="-48000" y="-37742" />
+            </Array>
+            <mxPoint x="-46270.99999999988" y="-37280" as="sourcePoint" />
+            <mxPoint x="-47914" y="-37742" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="mTt_WXmLBuKFYYouFY3E-12" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;span style=&quot;text-wrap-mode: nowrap;&quot;&gt;$$H_{ctrl}\times\ \mathrm{Skeleton\ Candidates}\ \rightarrow R\rightarrow\pi\rightarrow m^*\ ;\ \mathrm{PathFeatureHead}(R[m^*])=H_{path}$$&lt;/span&gt;" vertex="1">
+          <mxGeometry height="60" width="583" x="-47066" y="-37554" as="geometry" />
+        </mxCell>
+        <mxCell id="mTt_WXmLBuKFYYouFY3E-17" edge="1" parent="1" source="mTt_WXmLBuKFYYouFY3E-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="a_bd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="mTt_WXmLBuKFYYouFY3E-14" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;span style=&quot;font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;$$\hat{x}_{0}=\tilde{Q}_{final}$$&lt;/span&gt;&lt;br style=&quot;padding: 0px; margin: 0px; font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;&lt;span style=&quot;font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;(predicted clean controls)&lt;/span&gt;&lt;br style=&quot;padding: 0px; margin: 0px; font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;&lt;span style=&quot;font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;\([B,32,2]\)&lt;/span&gt;" vertex="1">
+          <mxGeometry height="90.5" width="145" x="-47047.5" y="-37261.25" as="geometry" />
+        </mxCell>
+        <mxCell id="mTt_WXmLBuKFYYouFY3E-18" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;span style=&quot;font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;$$Q^{safe}$$&lt;/span&gt;" vertex="1">
+          <mxGeometry height="27" width="61" x="-46430.5" y="-37229.5" as="geometry" />
+        </mxCell>
+        <mxCell id="mTt_WXmLBuKFYYouFY3E-20" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;span style=&quot;font-size: 11px; text-wrap-mode: nowrap;&quot;&gt;$$Q_{t-1}$$&lt;/span&gt;" vertex="1">
+          <mxGeometry height="26" width="65" x="-46115.5" y="-37229.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8GOX180aUVl687o_jwvp-8" parent="1" style="whiteSpace=wrap;html=1;" value="&lt;span style=&quot;text-wrap-mode: nowrap;&quot;&gt;门控残差：\(h_{ctrl}\leftarrow h_{ctrl}+\sigma(\cdot)\cdot valid\cdot h_{fb}\)&lt;/span&gt;&lt;br style=&quot;text-wrap-mode: nowrap; padding: 0px; margin: 0px;&quot;&gt;&lt;span style=&quot;text-wrap-mode: nowrap;&quot;&gt;\(valid=0\) 时为精确恒等（warmup）&lt;/span&gt;" vertex="1">
+          <mxGeometry height="60" width="434" x="-47897" y="-37542" as="geometry" />
+        </mxCell>
+        <mxCell id="a_pfh" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10" value="PathFeatureHead&#xa;$$H_{path}=\mathrm{PathFeatureHead}(R[m^*])$$" vertex="1">
+          <mxGeometry height="58" width="218" x="-46724" y="-37653" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_pfh_xattn" edge="1" parent="1" source="a_pfh" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" target="a_xattn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_cand_skenc" edge="1" parent="1" source="a_cand" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;" target="a_skenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_skenc_match" edge="1" parent="1" source="a_skenc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;" target="a_match">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e_tenc_match" edge="1" parent="1" source="a_tenc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;" target="a_match">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-47285" y="-37411" />
+              <mxPoint x="-47285" y="-37702" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="h5yz_kjj2D3LZAE4d9TX-1" edge="1" parent="1" source="a_curvedec" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.016;entryY=0.39;entryDx=0;entryDy=0;entryPerimeter=0;" target="a_sell">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_curvedec" parent="1" style="whiteBox;whiteSpace=wrap;fontSize=10;fillColor=#F5F5F5" value="CurveDecoder&#xa;弧长重采样（无参数）· 无 center head / 无 progress head&#xa;$$c_i=\Gamma_{m^*}(s_i),\ s_i=i/(Q-1)$$" vertex="1">
+          <mxGeometry height="59" width="231" x="-46545" y="-37899" as="geometry" />
+        </mxCell>
+        <mxCell id="h5yz_kjj2D3LZAE4d9TX-5" edge="1" parent="1" source="a_sq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.013;entryY=0.843;entryDx=0;entryDy=0;entryPerimeter=0;" target="a_sell">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="IpPIrUw404SPJvEZXpQs-17" edge="1" parent="1" source="a_fgeom" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.012;entryY=0.116;entryDx=0;entryDy=0;entryPerimeter=0;" target="a_sell" value="map K/V \(C_E\)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-47516" y="-37969" />
+              <mxPoint x="-46840" y="-37969" />
+              <mxPoint x="-46840" y="-37934" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s_whiteBox" parent="0" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" value="whiteBox" vertex="1" />
+        <mxCell id="s_ioBox" parent="0" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" value="ioBox" vertex="1" />
+        <mxCell id="s_trap" parent="0" style="shape=trapezoid;perimeter=trapezoidPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;direction=south;verticalAlign=middle;align=center;" value="trap" vertex="1" />
+        <mxCell id="s_circle" parent="0" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;" value="circle" vertex="1" />
+        <mxCell id="s_group" parent="0" style="rounded=0;html=1;dashed=1;dashPattern=8 4;fillColor=none;strokeColor=#7F7F7F;verticalAlign=top;align=left;fontSize=13;fontStyle=1;fontColor=#404040;spacingLeft=8;spacingTop=4;" value="group" vertex="1" />
+        <mxCell id="s_subGroup" parent="0" style="rounded=0;html=1;dashed=1;dashPattern=4 3;fillColor=none;strokeColor=#9E9E9E;verticalAlign=top;align=left;fontSize=11;fontColor=#595959;spacingLeft=6;spacingTop=2;" value="subGroup" vertex="1" />
+        <mxCell id="s_whiteText" parent="0" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#000000;" value="whiteText" vertex="1" />
+        <mxCell id="s_note" parent="0" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#808080;" value="note" vertex="1" />
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p2-bus" name="2-总图(条件总线)">
+    <mxGraphModel dx="0" dy="0" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2000" pageHeight="1030" shadow="0" math="1">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="b_whiteBox" value="whiteBox" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="b_ioBox" value="ioBox" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="b_trap" value="trap" style="shape=trapezoid;perimeter=trapezoidPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;direction=south;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="b_circle" value="circle" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;" vertex="1" parent="0" />
+        <mxCell id="b_group" value="group" style="rounded=0;html=1;dashed=1;dashPattern=8 4;fillColor=none;strokeColor=#7F7F7F;verticalAlign=top;align=left;fontSize=13;fontStyle=1;fontColor=#404040;spacingLeft=8;spacingTop=4;" vertex="1" parent="0" />
+        <mxCell id="b_subGroup" value="subGroup" style="rounded=0;html=1;dashed=1;dashPattern=4 3;fillColor=none;strokeColor=#9E9E9E;verticalAlign=top;align=left;fontSize=11;fontColor=#595959;spacingLeft=6;spacingTop=2;" vertex="1" parent="0" />
+        <mxCell id="b_busShape" value="busShape" style="shape=process;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;size=0.06;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="b_whiteText" value="whiteText" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#000000;" vertex="1" parent="0" />
+        <mxCell id="b_note" value="note" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#808080;" vertex="1" parent="0" />
+        <mxCell id="b_backdrop" value="" style="rounded=0;fillColor=#FFFFFF;strokeColor=none;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2000" height="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="b_legend" value="Legend: 实线方框 = 网络中被训练 / 固定的模块　·　灰色虚线框 = 仅推理期　·　条件总线（窄条）汇总去噪器的全部条件输入，只有一条主线进入 denoiser" style="note" vertex="1" parent="1">
+          <mxGeometry x="420" y="972" width="1180" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="b_g1" value="1.  Feature Encoding　（三路输入编码）" style="group" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="530" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="b_occ" value="Occupancy Map 𝒪&#xa;[B,1,256,256]" style="ioBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="45" y="52" width="150" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="b_scene" value="Scene&#xa;Encoder" style="trap" vertex="1" parent="1">
+          <mxGeometry x="215" y="70" width="85" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="b_qt" value="Noisy Controls \(Q_t\)&#xa;\([B,32,2]\)" style="ioBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="45" y="192" width="150" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="b_cenc" value="Control&#xa;Encoder" style="trap" vertex="1" parent="1">
+          <mxGeometry x="215" y="210" width="85" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fbg" value="Historical Safety Feedback（仅 feedback.enabled）" style="subGroup" vertex="1" parent="1">
+          <mxGeometry x="45" y="322" width="455" height="168" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fbin" value="$$Q_{prev}^{safe},\ \Delta,\ valid$$&#xa;\([B,32,2]\) , \([B,32,2]\) , [B]" style="ioBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="60" y="356" width="160" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fbenc" value="Feedback&#xa;Encoder" style="trap" vertex="1" parent="1">
+          <mxGeometry x="235" y="351" width="85" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fbgate" value="Gate Injection&#xa;$$F_{fb}$$" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="345" y="362" width="80" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fbnote" value="门控残差：\(h_{ctrl}\leftarrow h_{ctrl}+\sigma(\cdot)\cdot valid\cdot h_{fb}\)" style="note" vertex="1" parent="1">
+          <mxGeometry x="50" y="452" width="450" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="b_sum" value="+" style="circle" vertex="1" parent="1">
+          <mxGeometry x="515" y="228" width="30" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fmap" value="Map Feature  \(F_{map}\)&#xa;[B,256,128]" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="325" y="52" width="175" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fgeom" value="Geometry Feature \(F_{geom}\)&#xa;[B,1024,128]" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="325" y="120" width="175" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_fgeom_sell" value="map K/V \(C_E\)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" parent="1" source="b_fgeom" target="b_sell" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fq" value="Control Features \(F_q\)&#xa;\([B,32,128]\)" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="360" y="236" width="150" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="b_tin" value="t" style="ioBox" vertex="1" parent="1">
+          <mxGeometry x="45" y="530" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="b_tenc" value="Timestep Emb.&#xa;\(h_t\) [B,128]&#xa;→ 所有 AdaLN 模块" style="ioBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="110" y="525" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="b_g2" value="2.  Skeleton Matching　（骨架匹配与拓扑选择）" style="group" vertex="1" parent="1">
+          <mxGeometry x="560" y="20" width="630" height="560" as="geometry" />
+        </mxCell>
+        <mxCell id="b_cand" value="Skeleton Candidates&#xa;$$[B,M,L,2]=[B,4,128,2]$$" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="590" y="100" width="170" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="b_skenc" value="Skeleton Encoder&#xa;$$N_S=2$$&#xa;\(H_S\) [B,4,128,128]" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="590" y="420" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="b_tdots" value="⋮" style="whiteText;fontSize=16" vertex="1" parent="1">
+          <mxGeometry x="590" y="296" width="170" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="b_match" value="MatchBlock&#xa;$$\mathrm{cross\text{-}attn}(H_{ctrl}\rightarrow H_S[m])$$&#xa;R \([B,4,32,128]\)" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="590" y="490" width="170" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_match_fq2" value="\(R[m^*]\)（C=32 控制点 token）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" parent="1" source="b_match" target="b_fq2" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_score" value="Topology&#xa;Scores \(\pi\)" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="800" y="130" width="70" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="b_pick" value="TopologyHead&#xa;$$m^*=m^*\,(\mathrm{train})\ /\ \arg\max_m \pi_m\ (\mathrm{infer})$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="770" y="330" width="160" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="b_mstar" value="Selected Skeleton \(m^*\)&#xa;$$\Gamma_{m^*},\ H_S[m^*]$$" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="960" y="185" width="200" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="b_g3" value="3.  Safety Geometry Generation　（安全椭圆生成链路）" style="group" vertex="1" parent="1">
+          <mxGeometry x="1170" y="20" width="470" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="b_anchors" value="Skeleton Anchors&#xa;$$c_i=\Gamma_{m^*}\!\left(\tfrac{i}{Q-1}\right)$$&#xa;弧长重采样 · fixed progress buffer（无 center/progress head）&#xa;$$[B,Q,2]=[B,128,2]$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1260" y="80" width="150" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="b_sq" value="SafetyQueryHead&#xa;\(H_{safety}=\mathrm{safety\_query\_head}(H_S[m^*])\)&#xa;\([B,128,128]\)" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1260" y="330" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_sell" value="Safety Ellipses · EllipseGeometry&#xa;$$q_i^E=h_i^{path}+\mathrm{MLP}_C(\Phi_{xy}(c_i))$$&#xa;center-biased cross-attn(\(C_E\))&#xa;$$B_{ij}=\mathrm{clamp}\!\left(-\bar{\alpha}_t\dfrac{\|c_i-q_j^E\|^2}{2\sigma^2},\,-8,\,0\right)$$&#xa;\(H_{ell}\) \([B,128,128]\)" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1430" y="80" width="200" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="b_convex" value="Local Safety Ellipses&#xa;EllipseShapeHead&#xa;$$\mathrm{shape}_4=(\log a,\,\log b,\,\cos 2\theta,\,\sin 2\theta)$$&#xa;$$[B,Q,4]=[B,128,4]$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1440" y="330" width="190" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="b_g4" value="4.  Safety Feature Fusion（安全特征融合）" style="group" vertex="1" parent="1">
+          <mxGeometry x="1690" y="20" width="280" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fs" value="Safety Geometry&#xa;$$F_c=H_{ell}$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1685" y="80" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="b_fq2" value="Path Feature&#xa;$$H_{path}=\mathrm{PathFeatureHead}(R[m^*])$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1685" y="170" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="b_xattn" value="Cross-Attention / Fusion&#xa;SafetyControlFusion&#xa;$$A_{safe}=H_{path}+\mathrm{CrossAttn}\!\left(\mathrm{AdaLN}(H_{path},h_t),\,H_{ell},\,H_{ell}\right)$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1670" y="250" width="200" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="b_srep" value="Fusion MLP（learned）&#xa;$$\mathrm{FusionMLP}([H_{ctrl};\,H_{path};\,A_{safe}])$$&#xa;$$F_s\ [B,32,128]$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1670" y="380" width="200" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="b_bus" value="Condition Bus　（\(F_s,\ h_t,\ F_{map}\ \rightarrow\) 进入 Final Denoiser 的全部条件）" style="busShape;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="40" y="590" width="960" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="b_g5" value="5.  Safety-Guided Denoising　（去噪生成轨迹链路 · reverse diffusion step）" style="group;strokeColor=#B03A2E;fontColor=#B03A2E" vertex="1" parent="1">
+          <mxGeometry x="30" y="650" width="1850" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="b_den" value="Final Denoiser&#xa;$$\varepsilon_\theta(Q_t,t,F_s)$$&#xa;\(N_F=3\times\) TrajBlock&#xa;+ cross-attn(\(F_{map}\))" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="440" y="700" width="170" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="b_x0" value="$$\hat{x}_{0}=\tilde{Q}_{final}$$&#xa;(predicted clean controls)&#xa;\([B,32,2]\)" style="whiteText;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="630" y="710" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_bd" value="Boundary Decoder&#xa;（fixed · zero-param）&#xa;\(Q_{final}\) \([B,32,2]\)&#xa;endpoints exact" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="780" y="700" width="140" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="b_tmid" value="S → G" style="note" vertex="1" parent="1">
+          <mxGeometry x="945" y="734" width="80" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="b_alm" value="ALM Correction&#xa;bspline_alm_correct（每反向步 1 次）&#xa;内层 inner_steps=6（首次激活 8）· 优化变量 = 32 控制点" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="1065" y="700" width="140" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="b_qsafe" value="$$Q^{safe}$$" style="whiteText;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="1230" y="734" width="60" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="b_tsafe" value="S → G" style="note" vertex="1" parent="1">
+          <mxGeometry x="1320" y="734" width="80" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="b_ddim" value="DDIM Update&#xa;reverse step&#xa;$$t\rightarrow t-1$$" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="1430" y="700" width="130" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="b_qnext" value="$$Q_{t-1}$$" style="whiteText;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="1585" y="734" width="70" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="b_cache" value="Feedback Cache&#xa;$$Q_{prev}^{safe},\ \Delta=Q^{safe}-\tilde{Q}_{raw},\ valid$$" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="1030" y="830" width="310" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="b_corridor" value="Safety Corridor（由预测椭圆 \((c_i,\mathrm{shape}_4)\) 生成凸集，间隙沿 \(\Gamma_{m^*}\) 桥接）" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="1480" y="840" width="250" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="b_bandnote" value="虚线框 = 推理期扩展（不改网络 / checkpoint / 训练损失）；训练链只到 Boundary Decoder 的 \(Q_{final}\)" style="note" vertex="1" parent="1">
+          <mxGeometry x="470" y="934" width="900" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_occ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_occ" target="b_scene">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_scene_map" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_scene" target="b_fmap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_scene_geom" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_scene" target="b_fgeom">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="312" y="108" />
+              <mxPoint x="312" y="147" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_q_ctrl" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_qt" target="b_cenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_ctrl_fq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_cenc" target="b_fq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_fb_enc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_fbin" target="b_fbenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_fb_gate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_fbenc" target="b_fbgate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_gate_sum" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0" edge="1" parent="1" source="b_fbgate" target="b_sum">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="474" y="389" />
+              <mxPoint x="530" y="389" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_fq_sum" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_fq" target="b_sum">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_t_enc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_tin" target="b_tenc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_cand_score" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_cand" target="b_score">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="780" y="148" />
+              <mxPoint x="780" y="200" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_score_pick" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_score" target="b_pick">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="835" y="300" />
+              <mxPoint x="760" y="300" />
+              <mxPoint x="760" y="375" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_pick_m" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_pick" target="b_mstar">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="950" y="375" />
+              <mxPoint x="950" y="230" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_m_anchor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_mstar" target="b_anchors">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1185" y="230" />
+              <mxPoint x="1185" y="135" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_m_sq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_mstar" target="b_sq">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1060" y="310" />
+              <mxPoint x="1298" y="310" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_sq_ell" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0" edge="1" parent="1" source="b_sq" target="b_sell">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1425" y="370" />
+              <mxPoint x="1480" y="370" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_ell_shape" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_sell" target="b_convex">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_anchor_ell" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0" edge="1" parent="1" source="b_anchors" target="b_sell">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1415" y="135" />
+              <mxPoint x="1415" y="113" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_geom_fc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_sell" target="b_fs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_fc_x" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_fs" target="b_xattn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_fq2_x" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_fq2" target="b_xattn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_x_rep" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_xattn" target="b_srep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_bus_ht" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_tenc" target="b_bus">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="175" y="590" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_bus_fmap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_fmap" target="b_bus">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="412" y="580" />
+              <mxPoint x="412" y="590" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_bus_srep" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_srep" target="b_bus">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1770" y="520" />
+              <mxPoint x="960" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_bus_den" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_bus" target="b_den">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_den_x0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_den" target="b_x0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_x0_bd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_x0" target="b_bd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_bd_mid" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_bd" target="b_tmid">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_mid_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_tmid" target="b_alm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_alm_qsafe2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_alm" target="b_qsafe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_qsafe_traj" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_qsafe" target="b_tsafe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_traj_ddim" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_tsafe" target="b_ddim">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_ddim_next" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_ddim" target="b_qnext">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_alm_cache" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="b_alm" target="b_cache">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e_convex_corridor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="b_convex" target="b_corridor">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1600" y="910" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_corridor_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0" edge="1" parent="1" source="b_corridor" target="b_alm">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1260" y="863" />
+              <mxPoint x="1260" y="800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_cache_fb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_cache" target="b_fbin">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="20" y="870" />
+              <mxPoint x="20" y="389" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b_e_next_qt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="b_qnext" target="b_qt">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1620" y="920" />
+              <mxPoint x="1560" y="920" />
+              <mxPoint x="1560" y="247" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p3-encode" name="3-拆图a-预测与安全几何">
+    <mxGraphModel dx="0" dy="0" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2000" pageHeight="1030" shadow="0" math="1">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="c_whiteBox" value="whiteBox" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="c_ioBox" value="ioBox" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="c_trap" value="trap" style="shape=trapezoid;perimeter=trapezoidPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;direction=south;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="c_circle" value="circle" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;" vertex="1" parent="0" />
+        <mxCell id="c_group" value="group" style="rounded=0;html=1;dashed=1;dashPattern=8 4;fillColor=none;strokeColor=#7F7F7F;verticalAlign=top;align=left;fontSize=13;fontStyle=1;fontColor=#404040;spacingLeft=8;spacingTop=4;" vertex="1" parent="0" />
+        <mxCell id="c_subGroup" value="subGroup" style="rounded=0;html=1;dashed=1;dashPattern=4 3;fillColor=none;strokeColor=#9E9E9E;verticalAlign=top;align=left;fontSize=11;fontColor=#595959;spacingLeft=6;spacingTop=2;" vertex="1" parent="0" />
+        <mxCell id="c_whiteText" value="whiteText" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#000000;" vertex="1" parent="0" />
+        <mxCell id="c_note" value="note" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#808080;" vertex="1" parent="0" />
+        <mxCell id="c_backdrop" value="" style="rounded=0;fillColor=#FFFFFF;strokeColor=none;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2000" height="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="c_title" value="拆图 a ｜ 一次前向预测：占据图 → 场景编码 → 骨架匹配与拓扑选择 → 安全椭圆生成（不含 sampler / ALM）" style="whiteText;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="14" width="1800" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="c_legend" value="Legend: 实线方框 = 被训练 / 固定（零参数）的模块　·　C = 32 控制点　·　Q = 128 安全 query   ——   下一张（page 4）接着画去噪与推理期闭环" style="note" vertex="1" parent="1">
+          <mxGeometry x="420" y="964" width="1180" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_g1" value="1.  Feature Encoding　（占据图 → 场景特征）" style="group" vertex="1" parent="1">
+          <mxGeometry x="30" y="60" width="500" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="c_occ" value="Occupancy Map 𝒪&#xa;[B,1,256,256]" style="ioBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="70" y="150" width="150" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_scene" value="Scene&#xa;Encoder" style="trap" vertex="1" parent="1">
+          <mxGeometry x="255" y="167" width="85" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fmap" value="Map Feature  \(F_{map}\)&#xa;[B,256,128]" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="365" y="110" width="150" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fgeom" value="Geometry Feature \(F_{geom}\)&#xa;[B,1024,128]" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="365" y="220" width="150" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_fgeom_sell" value="map K/V \(C_E\)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" parent="1" source="c_fgeom" target="c_sell" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_g2" value="2.  Skeleton Matching　（骨架匹配 → 拓扑选择 \(m^*\)）" style="group" vertex="1" parent="1">
+          <mxGeometry x="560" y="60" width="620" height="560" as="geometry" />
+        </mxCell>
+        <mxCell id="c_cand" value="Skeleton Candidates&#xa;$$[B,M,L,2]=[B,4,128,2]$$" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="600" y="140" width="170" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="c_tdots" value="⋮" style="whiteText;fontSize=16" vertex="1" parent="1">
+          <mxGeometry x="600" y="336" width="170" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="c_skenc" value="Skeleton Encoder&#xa;$$N_S=2$$&#xa;\(H_S\) [B,4,128,128]" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="600" y="375" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="c_match" value="MatchBlock&#xa;$$\mathrm{cross\text{-}attn}(H_{ctrl}\rightarrow H_S[m])$$&#xa;R \([B,4,32,128]\)" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="600" y="470" width="170" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_match_fq2" value="\(R[m^*]\)（C=32 控制点 token）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" parent="1" source="c_match" target="c_fq2" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_score" value="Topology&#xa;Scores \(\pi\)" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="830" y="165" width="70" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="c_pick" value="TopologyHead&#xa;$$m^*=m^*\,(\mathrm{train})\ /\ \arg\max_m \pi_m\ (\mathrm{infer})$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="790" y="380" width="160" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="c_mstar" value="Selected Skeleton \(m^*\)&#xa;$$\Gamma_{m^*},\ H_S[m^*]$$" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="980" y="220" width="180" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="c_note2" value="输入 \(H_{ctrl}=F_q\)（控制特征），见 page 4" style="note" vertex="1" parent="1">
+          <mxGeometry x="600" y="562" width="400" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_g3" value="3.  Safety Geometry Generation　（安全椭圆生成）" style="group" vertex="1" parent="1">
+          <mxGeometry x="1170" y="60" width="470" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="c_anchors" value="Skeleton Anchors&#xa;$$c_i=\Gamma_{m^*}\!\left(\tfrac{i}{Q-1}\right)$$&#xa;弧长重采样 · fixed progress buffer&#xa;$$[B,Q,2]=[B,128,2]$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1200" y="150" width="160" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_sq" value="SafetyQueryHead&#xa;\(H_{safety}=\mathrm{safety\_query\_head}(H_S[m^*])\)&#xa;\([B,128,128]\)" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1200" y="390" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c_sell" value="Safety Ellipses · EllipseGeometry&#xa;$$q_i^E=h_i^{path}+\mathrm{MLP}_C(\Phi_{xy}(c_i))$$&#xa;center-biased cross-attn(\(C_E\))&#xa;$$B_{ij}=\mathrm{clamp}\!\left(-\bar{\alpha}_t\dfrac{\|c_i-q_j^E\|^2}{2\sigma^2},\,-8,\,0\right)$$&#xa;\(H_{ell}\) \([B,128,128]\)" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1440" y="150" width="160" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_convex" value="Local Safety Ellipses&#xa;EllipseShapeHead&#xa;$$\mathrm{shape}_4=(\log a,\,\log b,\,\cos 2\theta,\,\sin 2\theta)$$&#xa;$$[B,Q,4]=[B,128,4]$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1440" y="390" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c_geomnote" value="无 center head / 无 progress head" style="note" vertex="1" parent="1">
+          <mxGeometry x="1200" y="506" width="420" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_g4" value="4.  Safety Feature Fusion　（\(F_c,\ F_q\rightarrow F_s\)）" style="group" vertex="1" parent="1">
+          <mxGeometry x="1690" y="60" width="280" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fs" value="Safety Geometry&#xa;$$F_c=H_{ell}$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1670" y="80" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fq2" value="Path Feature&#xa;$$H_{path}=\mathrm{PathFeatureHead}(R[m^*])$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1670" y="170" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="c_xattn" value="Cross-Attention / Fusion&#xa;SafetyControlFusion&#xa;$$A_{safe}=H_{path}+\mathrm{CrossAttn}\!\left(\mathrm{AdaLN}(H_{path},h_t),\,H_{ell},\,H_{ell}\right)$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1670" y="260" width="200" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_srep" value="Fusion MLP（learned）&#xa;$$\mathrm{FusionMLP}([H_{ctrl};\,H_{path};\,A_{safe}])$$&#xa;$$F_s\ [B,32,128]$$" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1670" y="390" width="200" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_occ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="c_occ" target="c_scene">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_scene_map" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="c_scene" target="c_fmap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_scene_geom" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="c_scene" target="c_fgeom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_cand_score" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="c_cand" target="c_score">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="810" y="188" />
+              <mxPoint x="810" y="235" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_score_pick" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="c_score" target="c_pick">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="865" y="340" />
+              <mxPoint x="775" y="340" />
+              <mxPoint x="775" y="425" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_pick_m" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="c_pick" target="c_mstar">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="965" y="425" />
+              <mxPoint x="965" y="265" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_m_anchor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="c_mstar" target="c_anchors">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1200" y="265" />
+              <mxPoint x="1200" y="205" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_m_sq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="c_mstar" target="c_sq">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1070" y="370" />
+              <mxPoint x="1288" y="370" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_sq_ell" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0" edge="1" parent="1" source="c_sq" target="c_sell">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1425" y="430" />
+              <mxPoint x="1480" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_ell_shape" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="c_sell" target="c_convex">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_anchor_ell" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0" edge="1" parent="1" source="c_anchors" target="c_sell">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1415" y="205" />
+              <mxPoint x="1415" y="183" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="c_e_geom_fc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="c_sell" target="c_fs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_fc_x" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="c_fs" target="c_xattn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_fq2_x" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="c_fq2" target="c_xattn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_e_x_rep" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="c_xattn" target="c_srep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p4-denoise" name="4-拆图b-去噪与闭环">
+    <mxGraphModel dx="0" dy="0" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2000" pageHeight="1030" shadow="0" math="1">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="d_whiteBox" value="whiteBox" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="d_ioBox" value="ioBox" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="d_trap" value="trap" style="shape=trapezoid;perimeter=trapezoidPerimeter;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;direction=south;verticalAlign=middle;align=center;" vertex="1" parent="0" />
+        <mxCell id="d_circle" value="circle" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=1;fontSize=11;fontColor=#000000;" vertex="1" parent="0" />
+        <mxCell id="d_group" value="group" style="rounded=0;html=1;dashed=1;dashPattern=8 4;fillColor=none;strokeColor=#7F7F7F;verticalAlign=top;align=left;fontSize=13;fontStyle=1;fontColor=#404040;spacingLeft=8;spacingTop=4;" vertex="1" parent="0" />
+        <mxCell id="d_subGroup" value="subGroup" style="rounded=0;html=1;dashed=1;dashPattern=4 3;fillColor=none;strokeColor=#9E9E9E;verticalAlign=top;align=left;fontSize=11;fontColor=#595959;spacingLeft=6;spacingTop=2;" vertex="1" parent="0" />
+        <mxCell id="d_whiteText" value="whiteText" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#000000;" vertex="1" parent="0" />
+        <mxCell id="d_note" value="note" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#808080;" vertex="1" parent="0" />
+        <mxCell id="d_backdrop" value="" style="rounded=0;fillColor=#FFFFFF;strokeColor=none;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2000" height="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="d_title" value="拆图 b ｜ 反向扩散一步：条件（来自 page 3）→ 控制去噪 → 端点修正 → ALM 安全修正 → DDIM 更新 → 反馈回灌" style="whiteText;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="14" width="1800" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="d_legend" value="Legend: 实线方框 = 训练链上的模块　·　灰色虚线框 = 仅推理期扩展（不改网络 / checkpoint / 训练损失）　·　C = 32 控制点" style="note" vertex="1" parent="1">
+          <mxGeometry x="420" y="964" width="1180" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="d_gA" value="1.  Condition Inputs　（来自 page 3：预测与安全几何）" style="group" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="600" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="d_qt" value="Noisy Controls \(Q_t\)&#xa;\([B,32,2]\)" style="ioBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="70" y="120" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="d_tenc" value="Timestep Emb.&#xa;\(h_t\) [B,128]&#xa;→ 所有 AdaLN 模块" style="ioBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="270" y="120" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="d_fin" value="$$F_q,\ F_{map},\ F_{geom},\ F_s$$&#xa;（控制 / 场景 / 几何 / 安全特征）" style="ioBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="450" y="130" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="d_fbin" value="+ 上一轮 \(Q_{prev}^{safe},\ \Delta,\ valid\)&#xa;（feedback.enabled 时才存在）" style="ioBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="450" y="230" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="d_gB" value="2.  Learned Denoising　（训练链）" style="group" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="900" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="d_den" value="Final Denoiser&#xa;$$\varepsilon_\theta(Q_t,t,F_s)$$&#xa;\(N_F=3\times\) TrajBlock&#xa;+ cross-attn(\(F_{map}\))" style="whiteBox;whiteSpace=wrap" vertex="1" parent="1">
+          <mxGeometry x="90" y="390" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="d_x0" value="$$\hat{x}_{0}=\tilde{Q}_{final}$$&#xa;(predicted clean controls)&#xa;\([B,32,2]\)" style="whiteText;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="310" y="400" width="150" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="d_bd" value="Boundary Decoder&#xa;（fixed · zero-param）&#xa;\(Q_{final}\) \([B,32,2]\)&#xa;endpoints exact" style="whiteBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="500" y="400" width="150" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="d_out" value="\(Q_{final}\) \([B,32,2]\)&#xa;（轨迹曲线 B_128 · \(Q_{final}\)）" style="ioBox;whiteSpace=wrap;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="700" y="400" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="d_gC" value="3.  Inference-time Safety Correction　（推理期扩展）" style="group;strokeColor=#B03A2E;fontColor=#B03A2E" vertex="1" parent="1">
+          <mxGeometry x="40" y="650" width="1810" height="290" as="geometry" />
+        </mxCell>
+        <mxCell id="d_alm" value="ALM Correction&#xa;bspline_alm_correct（每反向步 1 次）&#xa;内层 inner_steps=6（首次激活 8）· 优化变量 = 32 控制点" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="100" y="720" width="160" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="d_corr" value="Safety Corridor&#xa;（由预测椭圆 \((c_i,\mathrm{shape}_4)\) 生成凸集 / 间隙沿 \(\Gamma_{m^*}\) 桥接 / 冻结）" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="330" y="740" width="230" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="d_cache" value="Feedback Cache&#xa;$$Q_{prev}^{safe},\ \Delta=Q^{safe}-\tilde{Q}_{raw},\ valid$$" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="640" y="740" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="d_ddim" value="DDIM Update&#xa;reverse step&#xa;$$t\rightarrow t-1$$" style="whiteBox;dashed=1;whiteSpace=wrap;fontSize=10;fontColor=#333333" vertex="1" parent="1">
+          <mxGeometry x="1520" y="720" width="150" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="d_qsafe" value="$$Q^{safe}$$" style="whiteText;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="1290" y="758" width="70" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="d_qnext" value="$$Q_{t-1}$$" style="whiteText;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="1690" y="758" width="70" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="d_bandnote" value="ALM / corridor / cache / DDIM 只发生在推理期；feedback.enabled 时 Feedback Cache 会被回灌到下一页的第三路输入" style="note" vertex="1" parent="1">
+          <mxGeometry x="100" y="880" width="900" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_qt_den" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="d_qt" target="d_den">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="150" y="360" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_ht_den" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="d_tenc" target="d_den">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="340" y="360" />
+              <mxPoint x="340" y="380" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_fin_den" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="d_fin" target="d_den">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="535" y="380" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_fbin_den" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="d_fbin" target="d_den">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="535" y="310" />
+              <mxPoint x="535" y="380" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_den_x0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="d_den" target="d_x0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_x0_bd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="d_x0" target="d_bd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_bd_out" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1" edge="1" parent="1" source="d_bd" target="d_out">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_out_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="d_out" target="d_alm">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="780" y="500" />
+              <mxPoint x="780" y="560" />
+              <mxPoint x="180" y="560" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_corr_alm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="d_corr" target="d_alm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_alm_qsafe" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="d_alm" target="d_qsafe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_qsafe_ddim" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="d_qsafe" target="d_ddim">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_alm_cache" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0" edge="1" parent="1" source="d_alm" target="d_cache">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="180" y="850" />
+              <mxPoint x="770" y="850" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_ddim_next" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0" edge="1" parent="1" source="d_ddim" target="d_qnext">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e_cache_fb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0" edge="1" parent="1" source="d_cache" target="d_fbin">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="940" y="770" />
+              <mxPoint x="940" y="40" />
+              <mxPoint x="600" y="40" />
+              <mxPoint x="600" y="120" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="d_e_next_qt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;strokeColor=#000000;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0" edge="1" parent="1" source="d_qnext" target="d_qt">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1725" y="930" />
+              <mxPoint x="150" y="930" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

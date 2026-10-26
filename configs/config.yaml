@@ -30,7 +30,7 @@ env:
 
 data:
   dataset: "carla_v1"
-  root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_v1"
+  root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/raw/80m"
   processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_processed"
   batch_size: 16
   num_workers: 0
@@ -98,7 +98,7 @@ bspline:
   degree: 3
   num_controls: 32
   curve_points: 128
-  knots: "D:/ProjectDirectory/Neural-IRISDiffuser/data/carla_v1/bspline_knots.npy"
+  knots: "D:/ProjectDirectory/Neural-IRISDiffuser/data/raw/80m/bspline_knots.npy"
   endpoint_constrained: true
 
 # --- ellipse label generation (scripts/data/carla/02_build_ellipse_labels.py)
@@ -109,7 +109,7 @@ ellipse_label:
   # The safe ellipse is TINY (semi-axes <= local_radius = 0.25 m = 0.8 cells),
   # so 48 boundary + 2x12 interior samples already cover every cell the ellipse
   # can touch; 8 binary steps give a ~0.4 % axis resolution.  The exact same
-  # safety criterion as scripts/data/03_build_ellipse_labels.py is used.
+  # safety criterion as scripts/data/carla/02_build_ellipse_labels.py is used.
   boundary_points: 48
   interior_rings: 2
   interior_angles: 12

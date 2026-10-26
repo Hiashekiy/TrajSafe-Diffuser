@@ -1,0 +1,6 @@
+# Main paper method: modified network, direct output after the final ALM step.
+base: configs/ablation_hpath_without.yaml
+alm:
+  final_project: false
+train:
+  ckpt_dir: outputs/paper_ral/A/ckpt

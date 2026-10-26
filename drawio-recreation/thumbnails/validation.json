@@ -1,0 +1,12 @@
+{
+  "updated_positions": 10,
+  "native_cells": 448,
+  "shared_map": true,
+  "selected_equals_candidate_2": true,
+  "representative_control_points": 17,
+  "convex_corridor_regions": 51,
+  "collision_sampling_step_max": 0.25,
+  "diagram_raster_images": 0,
+  "note": "Illustrative geometry; native draw.io PNG inspected, SVG exported from draw.io. Not planner output or a safety proof.",
+  "drawio_native_export_verified": true
+}

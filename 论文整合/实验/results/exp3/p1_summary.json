@@ -1,0 +1,73 @@
+{
+  "split": "val",
+  "tasks": 60,
+  "table": [
+    {
+      "config": "I2",
+      "n_calls": 120,
+      "iterations_mean": 2.0,
+      "iterations_p95": 2.0,
+      "at_budget_pct": 25.833333333333332,
+      "tol_reached_pct": 74.16666666666667,
+      "violation_before_mean": 0.0157879953582375,
+      "violation_after_mean": 0.0045632305864074995,
+      "alm_ms_per_call_cold": 168.4975499975
+    },
+    {
+      "config": "I4",
+      "n_calls": 120,
+      "iterations_mean": 4.0,
+      "iterations_p95": 4.0,
+      "at_budget_pct": 15.833333333333334,
+      "tol_reached_pct": 84.16666666666667,
+      "violation_before_mean": 0.014146460158545834,
+      "violation_after_mean": 0.0011938431921566667,
+      "alm_ms_per_call_cold": 23.012625010000004
+    },
+    {
+      "config": "I6",
+      "n_calls": 120,
+      "iterations_mean": 6.0,
+      "iterations_p95": 6.0,
+      "at_budget_pct": 12.5,
+      "tol_reached_pct": 87.5,
+      "violation_before_mean": 0.012619738342479168,
+      "violation_after_mean": 0.000570139971855,
+      "alm_ms_per_call_cold": 34.568150005
+    },
+    {
+      "config": "I8",
+      "n_calls": 120,
+      "iterations_mean": 8.0,
+      "iterations_p95": 8.0,
+      "at_budget_pct": 5.833333333333333,
+      "tol_reached_pct": 94.16666666666667,
+      "violation_before_mean": 0.012658428400445836,
+      "violation_after_mean": 0.00045123503852442505,
+      "alm_ms_per_call_cold": 36.2942000225
+    },
+    {
+      "config": "I10",
+      "n_calls": 120,
+      "iterations_mean": 9.466666666666667,
+      "iterations_p95": 10.0,
+      "at_budget_pct": 6.666666666666667,
+      "tol_reached_pct": 93.33333333333333,
+      "violation_before_mean": 0.012519492333045834,
+      "violation_after_mean": 0.00044910429664250004,
+      "alm_ms_per_call_cold": 43.819125
+    },
+    {
+      "config": "Default",
+      "n_calls": 120,
+      "iterations_mean": 8.466666666666667,
+      "iterations_p95": 10.0,
+      "at_budget_pct": 6.666666666666667,
+      "tol_reached_pct": 93.33333333333333,
+      "violation_before_mean": 0.012658428400445836,
+      "violation_after_mean": 0.00039521114281609166,
+      "alm_ms_per_call_cold": 39.133875005
+    }
+  ],
+  "note": "60 validation tasks, one seed; timings include cold CUDA start-up (only 2 chunks) and are therefore not the reported cost"
+}

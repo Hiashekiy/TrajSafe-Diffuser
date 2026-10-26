@@ -1,0 +1,5 @@
+config,safety_cond,history_feedback,alm_builds_feedback,alm_safety_update,collision_pct,clearance_m,detour_ratio,nrmse_pct,collisions,n,clearance_valid_n
+A0: Baseline,False,False,False,False,61.19047619,2.898615093,1.089613084,13.2015032,771,1260,489
+A1: + Safety,True,False,False,False,25.15873016,3.120276527,1.227824707,7.910876163,317,1260,943
+A2: + Feedback,True,True,True,False,3.333333333,3.224575012,1.315381916,8.734332029,42,1260,1218
+A3: Full Model,True,True,True,True,0,3.255214393,1.324630506,8.759011274,0,1260,1260

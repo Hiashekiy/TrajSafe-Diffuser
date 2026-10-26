@@ -1,0 +1,94 @@
+[
+  {
+    "index": 0,
+    "sample_id": 1001,
+    "selected_idx": 1,
+    "learned": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.07255076759382062
+    },
+    "fixed_circle": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.06987558302925757
+    },
+    "fixed_ellipse": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.073964866443178
+    }
+  },
+  {
+    "index": 1,
+    "sample_id": 1002,
+    "selected_idx": 0,
+    "learned": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.08608009540569103
+    },
+    "fixed_circle": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.08089055960335774
+    },
+    "fixed_ellipse": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.0846786887076014
+    }
+  },
+  {
+    "index": 2,
+    "sample_id": 1003,
+    "selected_idx": 1,
+    "learned": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.08388721235213277
+    },
+    "fixed_circle": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.07744448271428539
+    },
+    "fixed_ellipse": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.08444608061455129
+    }
+  },
+  {
+    "index": 3,
+    "sample_id": 1004,
+    "selected_idx": 0,
+    "learned": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.07886252706005524
+    },
+    "fixed_circle": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.07220248940006851
+    },
+    "fixed_ellipse": {
+      "valid": true,
+      "base_cells": 128,
+      "bridge_cells": 0,
+      "area_mean_scene": 0.07524974949448596
+    }
+  }
+]
