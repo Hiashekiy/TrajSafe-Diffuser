@@ -58,6 +58,15 @@ MODELS = {
     # Only checkpoints that still exist after the 2026-10 cleanup.  The campaign
     # arms (A_oneshot / B1 / B2 / REF_160k8 / RAW160 / K4P_oneshot) and their
     # output dirs were deleted together with the 160k8p / 160raw data caches.
+    # v4 (2026-10-26): ONE 16x16 map memory (the 32x32 fine-geometry decoder is
+    # gone), feedback carrying ONLY the correction (Delta + valid), and the
+    # single continuous Bezier convex-hull safety loss.  200 ep, best_task ep78
+    # (test: rmse 9.68 m / 0 collisions, 420 samples, 3 seeds).
+    "V4_map16_c48": {
+        "config": "configs/config_160k4p_c48_v4_map16.yaml",
+        "ckpt_dir": "outputs/models/v4_map16_c48/ckpt",
+        "label": "V4_map16 · 16×16 单地图特征 + Δ修正反馈 + 统一 L_safe（best_task ep78）",
+    },
     "K4P_c48_oneshot": {
         "config": "configs/config_160k4p_c48_oneshot.yaml",
         "ckpt_dir": "outputs/models/oneshot_k4p_c48/ckpt",
@@ -66,12 +75,17 @@ MODELS = {
 }
 # ``best`` is deliberately NOT offered for the campaign arms: their val-total
 # best (epoch 7-26) is an overfit-topology artifact, ``best_task`` is the model
-# that is actually deployed.
-CKPT_KINDS = ("best_task",)   # latest.pt was pruned in the 2026-10 cleanup
+# that is actually deployed.  v4 ships both: ``latest`` is its FINAL state (ep199)
+# and is perfectly usable, so it is offered as well.
+CKPT_KINDS = {
+    "V4_map16_c48": ("best_task", "latest"),
+    "K4P_c48_oneshot": ("best_task",),
+}
 CHECKPOINTS = {
     "%s:%s" % (run, kind): os.path.join(ROOT, spec["ckpt_dir"],
                                         "%s.pt" % kind)
-    for run, spec in MODELS.items() for kind in CKPT_KINDS
+    for run, spec in MODELS.items()
+    for kind in CKPT_KINDS.get(run, ("best_task",))
 }
 DEFAULT_CONFIG = os.path.join(ROOT, "configs", "config_160k8p.yaml")
 

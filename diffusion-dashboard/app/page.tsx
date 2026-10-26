@@ -43,31 +43,24 @@ const API = 'http://localhost:8765';
 // (/sample) instead of being baked into this bundle, so every one of the 5820
 // tasks is reachable, not just a pre-selected page of them.
 const SPLITS = ['train', 'val', 'test'] as const;
-const DEFAULT_DATASET = '160k8p';
+const DEFAULT_DATASET = '160m-k4p-c48';
 const EMPTY_SAMPLE: Sample = { key: '—', split: 'test', maze: 'carla_0000', datasetId: 0, condition: [[0, 0], [0, 0]], groundTruth: { P: [] }, map: { resolution: 256, wallRuns: [] } };
 
 // Model ids MUST match ``CHECKPOINTS`` in engine_carla.py ("<run>:<kind>").
-// A/B2 were trained WITH the historical safety feedback, B1 without (control
-// arm), REF is the old 160k8 (k=8) baseline kept for continuity.  All of them
-// are displayed on the 160k8p cache (DASH_CONFIG).
+// Only the checkpoints that still exist on disk are listed: the v4 arm
+// (16x16 map + Delta-only feedback + the single continuous safety loss) and the
+// v3 A-C48 arm (same cache, same recipe, 32x32 geometry memory).  Both are
+// displayed on the 160m-k4p-c48 cache (DASH_CONFIG / DATASETS).
 const models = [
-  { id: 'A_oneshot:best_task', name: 'A · 一步到位 feedback · best_task(ep50)', source: 'campaign_a_oneshot · 从零直接开 feedback（58 ep）' },
-  { id: 'A_oneshot:latest', name: 'A · 一步到位 feedback · latest(ep57)', source: 'campaign_a_oneshot · 墙钟截断时的最后状态' },
-  { id: 'B2_feedback:best_task', name: 'B2 · 基座+feedback 微调 · best_task(ep36)', source: 'campaign_b2_feedback · 100 ep 基座后再微调 37 ep' },
-  { id: 'B2_feedback:latest', name: 'B2 · 基座+feedback 微调 · latest(ep62)', source: 'campaign_b2_feedback · 最后状态' },
-  { id: 'B1_base:best_task', name: 'B1 · 基座（无 feedback） · best_task(ep24)', source: 'campaign_b1_base · 对照臂，feedback 关闭' },
-  { id: 'B1_base:latest', name: 'B1 · 基座（无 feedback） · latest(ep99)', source: 'campaign_b1_base · 最后状态' },
-  { id: 'REF_160k8:best_task', name: 'REF · 旧 160k8 best_task(ep175)', source: 'bspline_carla_160k8 · 跨缓存参考' },
-  { id: 'REF_160k8:latest', name: 'REF · 旧 160k8 latest(ep264)', source: 'bspline_carla_160k8 · 最后状态' },
-  { id: 'RAW160_oneshot:best_task', name: 'RAW160 · 腐蚀前数据集重训 · best_task(ep59)', source: 'oneshot_raw160 · 只换数据集（k=0），与 A 单变量对照' },
-  { id: 'RAW160_oneshot:latest', name: 'RAW160 · 腐蚀前数据集重训 · latest(ep64)', source: 'oneshot_raw160 · 最后状态' },
-  { id: 'K4P_oneshot:best_task', name: 'K4P · k=4 腐蚀数据集重训 · best_task(ep98)', source: 'oneshot_k4p · 200 ep，自由面积 0.279 的自训模型（5/420）' },
-  { id: 'K4P_oneshot:latest', name: 'K4P · k=4 腐蚀数据集重训 · latest(ep200)', source: 'oneshot_k4p · 最后状态（拓扑项已过拟合，不建议用）' },
+  // v4（2026-10-26）：单一 16×16 地图特征 + 只回传修正量(Δ)+valid 的反馈 +
+  // 统一连续安全损失 L_safe。训练 200 ep，best_task=ep78（test 420 样本 × 3 seed：
+  // rmse 9.68 m、碰撞 0），latest=ep199。数据仍需 160m-k4p-c48 缓存。
+  { id: 'V4_map16_c48:best_task', name: 'V4_map16 · 16×16 单地图 + Δ反馈 + 统一 L_safe · best_task(ep78)', source: 'v4_map16_c48 · 200 ep / 5.4 h · test 420×3seed：rmse 9.68 m / 碰撞 0（推荐）' },
+  { id: 'V4_map16_c48:latest', name: 'V4_map16 · 同一模型 · latest(ep199)', source: 'v4_map16_c48 · 最终状态（与 best_task 差距很小，可直接对比）' },
   // C=32 -> 48 controls, same k=4 cache / same recipe.  请配 160k4p_c48 缓存
   // （只有那个缓存的 GT 控制点是 48 点）。test 9/420（ALM 开）不如 K4P 的 5/420，
   // 但 7 个碰撞全在 Town10HD 同一场景；Town01 上反而更好，详见 §12。
   { id: 'K4P_c48_oneshot:best_task', name: 'K4P_c48 · 48 控制点重训 · best_task(ep55)', source: 'oneshot_k4p_c48 · 200 ep / 7.4 h，需配 160k4p_c48 缓存（test 9/420，集中在 Town10HD）' },
-  { id: 'K4P_c48_oneshot:latest', name: 'K4P_c48 · 48 控制点重训 · latest(ep200)', source: 'oneshot_k4p_c48 · 最后状态（不建议用，拓扑项已过拟合）' },
 ];
 const mazeNames: Record<string, string> = { umaze: 'U-Maze', medium: 'Medium', large: 'Large' };
 const mazeLabel = (key: string): string => mazeNames[key] ?? key.replace('carla_', 'CARLA #');
