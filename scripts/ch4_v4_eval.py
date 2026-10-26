@@ -35,13 +35,17 @@ A_CFG = "configs/config_160k4p_c48_oneshot.yaml"
 A_CKPT = "outputs/models/oneshot_k4p_c48/ckpt/best_task.pt"
 V4_CFG = "configs/config_160k4p_c48_v4_map16.yaml"
 V4_CKPT = "outputs/models/v4_map16_c48/ckpt/best_task.pt"
+L1_CFG = "configs/config_160k4p_c48_v4_map16_l1.yaml"
+L1_CKPT = "outputs/models/v4_map16_c48_l1/ckpt/best_task.pt"
 
 # the exact switch set of the campaign's "Full" row
 FULL_EXTRA = [["--feedback", "on"], ["--final-project", "on"]]
 
+#: (tag, method name, config, checkpoint) -- the tag is what --only matches
 ROWS = [
-    ("Full (A-C48+ALM+FB+Proj)", A_CFG, A_CKPT),
-    ("Full (v4-map16+ALM+FB+Proj)", V4_CFG, V4_CKPT),
+    ("v3", "Full (A-C48+ALM+FB+Proj)", A_CFG, A_CKPT),
+    ("v4", "Full (v4-map16+ALM+FB+Proj)", V4_CFG, V4_CKPT),
+    ("l1", "Full (v4-map16-L1+ALM+FB+Proj)", L1_CFG, L1_CKPT),
 ]
 
 
@@ -54,15 +58,13 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=16)
     ap.add_argument("--out-dir", default="outputs/chapter4_v4/runs")
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--only", default=None,
-                    help="limit to one row by its name prefix (v3|v4)")
+    ap.add_argument("--only", default=None, nargs="+",
+                    help="limit to rows by tag (v3 / v4 / l1)")
     args = ap.parse_args()
 
-    for name, config, ckpt in ROWS:
-        if args.only:
-            tag = "v4" if "v4" in name else "v3"
-            if tag != args.only:
-                continue
+    for tag, name, config, ckpt in ROWS:
+        if args.only and tag not in args.only:
+            continue
         if not os.path.exists(os.path.join(ROOT, ckpt)):
             print("[v4-eval] MISSING checkpoint %s -- skipping %s"
                   % (ckpt, name), flush=True)

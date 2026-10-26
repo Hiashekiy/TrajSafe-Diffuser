@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """Compare the v3 (A-C48) and v4 chapter-4 "Full" test runs, same protocol.
 
 Reads ``outputs/chapter4_v4/runs/*.json`` (+ ``*.jsonl`` for the paired,
@@ -21,6 +21,7 @@ OUT = os.path.join(ROOT, "outputs", "chapter4_v4", "COMPARE_v3_vs_v4.md")
 
 V3 = "Full (A-C48+ALM+FB+Proj)"
 V4 = "Full (v4-map16+ALM+FB+Proj)"
+L1 = "Full (v4-map16-L1+ALM+FB+Proj)"
 
 #: aggregate keys reported in the table, in reading order
 KEYS = [
@@ -115,6 +116,7 @@ def paired_diff(method_a: str, method_b: str, key: str = "rmse_m") -> dict:
 def main() -> int:
     v3 = load_runs(NEW, V3)
     v4 = load_runs(NEW, V4)
+    l1 = load_runs(NEW, L1)
     arch = load_runs(ARCH, V3)
     if not v3 or not v4:
         raise SystemExit("missing runs: v3=%d v4=%d (run scripts/ch4_v4_eval.py "
@@ -122,45 +124,45 @@ def main() -> int:
 
     lines = []
     add = lines.append
-    add("# v3 (A-C48) vs v4 (map16+Δ-feedback+safe) -- 同协议 test 评测")
+    add("# v3 (A-C48) vs v4 (map16+Δ反馈+L_safe) vs v4-L1（主干 1 层）-- 同协议 test 评测")
     add("")
     add("协议：`scripts/eval_chapter4.py`，split=test **420** 样本，chunk=32，"
         "steps=16，warmup=3，guidance=`alm`，`--feedback on --final-project on`，"
-        "seed 0/1/2。两列都用**同一份代码版本下的各自架构**：v3 行在 "
+        "seed 0/1/2。三列都用**各自架构的原生代码**：v3 行在 "
         "`git worktree`（commit 74d6140，即 v4 改造前存档）里用 v3 代码跑，"
-        "v4 行在当前分支（c1d97bf）跑；数据根同为 "
+        "v4 / v4-L1 行在当前分支跑；数据根同为 "
         "`data/processed/160m-k4p-c48`。")
     add("")
     add("- v3: `outputs/models/oneshot_k4p_c48/ckpt/best_task.pt` + "
-        "`configs/config_160k4p_c48_oneshot.yaml`")
+        "`configs/config_160k4p_c48_oneshot.yaml`（主干 8 层，7.52 M）")
     add("- v4: `outputs/models/v4_map16_c48/ckpt/best_task.pt` + "
-        "`configs/config_160k4p_c48_v4_map16.yaml`")
+        "`configs/config_160k4p_c48_v4_map16.yaml`（主干 8 层，6.52 M）")
+    add("- v4-L1: `outputs/models/v4_map16_c48_l1/ckpt/best_task.pt` + "
+        "`configs/config_160k4p_c48_v4_map16_l1.yaml`（主干 **1 层**，3.98 M）")
     add("")
-    add("## 主表（mean ± std over seeds %d/%d）"
-        % (len(v3), len(v4)))
+    add("## 主表（mean ± std over seeds）")
     add("")
-    add("| 指标 | v3 A-C48 | v4 map16 | 变化 |")
+    add("| 指标 | v3 A-C48 (8层) | v4 map16 (8层) | v4-L1 (1层) |")
     add("|---|---|---|---|")
     for key, label, kind, digits in KEYS:
-        a, b = stat(v3, key), stat(v4, key)
-        delta = ""
-        if a and b and kind in ("m", "ms") and abs(a[0]) > 1e-12:
-            pct = 100.0 * (b[0] - a[0]) / a[0]
-            delta = "%+.*f (%+.1f%%)" % (digits, b[0] - a[0], pct)
-        elif a and b and kind == "rate":
-            delta = "%+.2f pp" % (100.0 * (b[0] - a[0]))
         add("| %s | %s | %s | %s |"
-            % (label, fmt(a, kind, digits), fmt(b, kind, digits), delta))
+            % (label, fmt(stat(v3, key), kind, digits),
+               fmt(stat(v4, key), kind, digits),
+               fmt(stat(l1, key), kind, digits)))
     add("")
 
-    p = paired_diff(V3, V4)
-    if p:
-        add("## 逐样本配对检验（420 条 test 样本，seed 0，配对量 = RMSE_v4 - RMSE_v3）")
+    for label_a, label_b, method_a, method_b in (
+            ("v4 - v3", "RMSE_v4 - RMSE_v3", V3, V4),
+            ("L1 - v4", "RMSE_L1 - RMSE_v4", V4, L1)):
+        p = paired_diff(method_a, method_b)
+        if not p:
+            continue
+        add("## 逐样本配对检验（420 条 test 样本，seed 0，配对量 = %s）" % label_b)
         add("")
-        add("| n | 均值差 | 标准差 | 95% CI | 中位差 | v4 更好 | v4 更差 | 持平 |")
-        add("|---|---|---|---|---|---|---|---|")
-        add("| %d | %+.3f m | %.3f | ±%.3f | %+.3f | %d | %d | %d |"
-            % (p["n"], p["mean"], p["sd"], p["ci95"], p["p50"],
+        add("| 对比 | n | 均值差 | 标准差 | 95% CI | 中位差 | 后者更好 | 后者更差 | 持平 |")
+        add("|---|---|---|---|---|---|---|---|---|")
+        add("| %s | %d | %+.3f m | %.3f | ±%.3f | %+.3f | %d | %d | %d |"
+            % (label_a, p["n"], p["mean"], p["sd"], p["ci95"], p["p50"],
                p["better"], p["worse"], p["same"]))
         add("")
 
