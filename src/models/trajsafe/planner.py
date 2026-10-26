@@ -10,13 +10,13 @@ Skeleton / ellipse geometry queries (``model.num_safety_queries``).
 
 Forward chain (``model.control_space: true``)::
 
-    C_G, C_E = SceneCNN(occ)
+    C_G      = SceneCNN(occ)                           # the ONE map memory (16x16)
     h_t      = TimeEmbedding(t)
 
     Q_t   = hard_control_endpoints(Q_t, cond)          # exact curve endpoints
     H_ctrl = ControlEncoder(Q_t)                       # [B,C,D]
     H_ctrl = ControlBackbone(H_ctrl, C_G, h_t)         # [B,C,D]
-    H_fb   = FeedbackEncoder([Q0_safe_prev, Delta_prev, valid])   # optional
+    H_fb   = FeedbackEncoder([Delta_prev, valid])      # optional, NO clean curve
     H_ctrl = FeedbackFusion(H_ctrl, H_fb, valid)       # gated residual
     Q~_coarse = Head_Q(H_ctrl)                         # [B,C,2]
     Q_coarse  = BoundaryDecoder(Q~_coarse)             # exact endpoints
@@ -29,7 +29,7 @@ Forward chain (``model.control_space: true``)::
 
     H_Gamma = SafetyQueryHead(H_S[m])                  # [B,Q,D]  Q = L
     c_i     = Gamma_m(s_i),  s_i = i/(Q-1)             # fixed, no head
-    H_ell   = EllipseGeometry(H_Gamma, c, C_E, h_t, ab)   # [B,Q,D]
+    H_ell   = EllipseGeometry(H_Gamma, c, C_G, h_t, ab)   # [B,Q,D]
     shape4  = EllipseShapeHead(H_ell, h_t)                # [B,Q,4]
 
     A_safe = SafetyControlFusion(H_path, H_ell, h_t)   # [B,C,D] cross attention
@@ -122,8 +122,6 @@ class TrajSafePlanner(nn.Module):
         self.map_res = int(model_cfg.get("map_res", 256))
         self.global_res = int(model_cfg.get("global_mem_res",
                                             model_cfg.get("mem_res", 16)))
-        self.geo_mem_res = int(model_cfg.get("geo_mem_res", 32))
-        self.geo_decode_res = model_cfg.get("geo_decode_res")
         dropout = float(model_cfg.get("dropout", 0.0))
         head_hidden = int(model_cfg.get("head_hidden", 256))
         coord_hidden = int(model_cfg.get("coord_hidden",
@@ -165,10 +163,7 @@ class TrajSafePlanner(nn.Module):
         self.traj_to_control = TrajectoryToControlHead(self.bspline)
 
         self.scene_cnn = SceneCNN(
-            d_model=self.d_model, res=self.map_res, global_res=self.global_res,
-            geo_decode_res=(int(self.geo_decode_res) if self.geo_decode_res
-                            else None),
-            geo_mem_res=self.geo_mem_res)
+            d_model=self.d_model, res=self.map_res, global_res=self.global_res)
 
         # ---- the three encodings -----------------------------------------
         self.spatial_pe = Sinusoidal2DPositionEmbedding(self.d_model)
@@ -239,7 +234,7 @@ class TrajSafePlanner(nn.Module):
         if self.safety_features_enabled:
             self.ellipse_geometry = EllipseGeometry(
                 self.d_model, self.num_heads, self.spatial_pe,
-                geo_mem_res=self.geo_mem_res, geo_sigma=geo_sigma,
+                map_res=self.global_res, geo_sigma=geo_sigma,
                 geo_bias_clip=geo_bias_clip, hidden=coord_hidden, dropout=dropout,
                 center_encoding=self.center_encoding_enabled)
             self.ellipse_shape_head = EllipseShapeHead(
@@ -266,18 +261,11 @@ class TrajSafePlanner(nn.Module):
 
     # ------------------------------------------------------------------ scene
     def scene_tokens(self, occ: torch.Tensor):
-        """occ [B,1,R,R] -> C_G [B,N_G,D], C_E [B,N_E,D] or None."""
-        enc = self.scene_cnn(occ)
-        gf = enc["global"].flatten(2).transpose(1, 2)
-        grid_g = scene_grid_centres(self.global_res, gf.device, dtype=gf.dtype)
-        c_g = gf + self.spatial_pe(grid_g)[None]
-        c_e = None
-        if enc["geometry"] is not None:
-            zf = enc["geometry"].flatten(2).transpose(1, 2)
-            grid_e = scene_grid_centres(self.geo_mem_res, zf.device,
-                                        dtype=zf.dtype)
-            c_e = zf + self.spatial_pe(grid_e)[None]
-        return c_g, c_e
+        """occ [B,1,R,R] -> C_G [B,N_G,D] (16x16, the ONLY map feature)."""
+        feat = self.scene_cnn(occ)
+        flat = feat.flatten(2).transpose(1, 2)
+        grid = scene_grid_centres(self.global_res, flat.device, dtype=flat.dtype)
+        return flat + self.spatial_pe(grid)[None]
 
     # ------------------------------------------------------------ endpoints
     @staticmethod
@@ -317,34 +305,37 @@ class TrajSafePlanner(nn.Module):
 
     # -------------------------------------------------------------- feedback
     def feedback_features(self, h_ctrl: torch.Tensor,
-                          feedback_control: torch.Tensor | None = None,
                           feedback_delta: torch.Tensor | None = None,
                           feedback_valid: torch.Tensor | None = None):
         """Build ``(h_fb [B,C,D] | None, valid [B])`` from the previous step.
 
-        ``feedback_control`` / ``feedback_delta`` are ``[B,C,2]`` and
-        ``feedback_valid`` is ``[B]`` (``[B,1]`` / ``[B,C,1]`` are accepted).
-        Any missing argument means "no reliable history": the valid flag is 0
-        and the fusion becomes the identity (plain diffusion behaviour), which
-        is what the sampler's warm-up phase needs.  Invalid rows are zeroed
-        BEFORE the encoder, so stale tensors can never leak into the network.
+        The feedback carries the CORRECTION ONLY:
+
+            ``feedback_delta [B,C,2]``   ``Q0_safe_prev - Q0_raw_prev``
+            ``feedback_valid [B]``       1 = the previous ALM passed verification
+
+        The corrected clean polygon ``Q0_safe_prev`` is deliberately NOT an
+        input.  Handing the finished safe trajectory back would make the next
+        step a copy target (and would leak the ALM output into the diffusion
+        state); the network is told how much the ALM moved the prediction and
+        whether that correction was verified, nothing else.  A missing/invalid
+        argument means "no reliable history": the valid flag is 0 and the fusion
+        becomes the identity (plain diffusion behaviour), which is what the
+        sampler's warm-up phase needs.  Invalid rows are zeroed BEFORE the
+        encoder, so stale tensors can never leak into the network.
         """
         if not self.feedback_enabled or self.feedback_encoder is None:
             return None, None
         B, C, D = h_ctrl.shape
         dev, dt = h_ctrl.device, h_ctrl.dtype
 
-        def _coords(x, name):
-            if x is None:
-                return torch.zeros(B, C, 2, device=dev, dtype=dt)
-            x = x.to(device=dev, dtype=dt)
-            if x.shape != (B, C, 2):
-                raise ValueError("%s must be [%d,%d,2], got %s"
-                                 % (name, B, C, tuple(x.shape)))
-            return x
-
-        control = _coords(feedback_control, "feedback_control")
-        delta = _coords(feedback_delta, "feedback_delta")
+        if feedback_delta is None:
+            delta = torch.zeros(B, C, 2, device=dev, dtype=dt)
+        else:
+            delta = feedback_delta.to(device=dev, dtype=dt)
+            if delta.shape != (B, C, 2):
+                raise ValueError("feedback_delta must be [%d,%d,2], got %s"
+                                 % (B, C, tuple(delta.shape)))
         if feedback_valid is None:
             valid = torch.zeros(B, device=dev, dtype=dt)
         else:
@@ -352,9 +343,8 @@ class TrajSafePlanner(nn.Module):
             valid = (v.amax(dim=1) if v.shape[1] > 0
                      else torch.zeros(B, device=dev)).to(dt)
         keep = valid[:, None, None]
-        control = control * keep
         delta = delta * keep
-        features = torch.cat([control, delta, keep.expand(B, C, 1)], dim=-1)
+        features = torch.cat([delta, keep.expand(B, C, 1)], dim=-1)
         return self.feedback_encoder(features), valid
 
     @staticmethod
@@ -402,7 +392,6 @@ class TrajSafePlanner(nn.Module):
                     candidate_xy: torch.Tensor, candidate_mask: torch.Tensor,
                     geometry: torch.Tensor, geometry_lengths: torch.Tensor,
                     select_index: torch.Tensor | None = None,
-                    feedback_control: torch.Tensor | None = None,
                     feedback_delta: torch.Tensor | None = None,
                     feedback_valid: torch.Tensor | None = None):
         """One full forward pass of the diffusion model (mode aware).
@@ -416,24 +405,22 @@ class TrajSafePlanner(nn.Module):
         masked out of every loss, and their output degenerates to the coarse
         polygon.
 
-        ``feedback_control`` [B,C,2] / ``feedback_delta`` [B,C,2] /
-        ``feedback_valid`` [B] are the PREVIOUS reverse step's ALM result
-        (``Q0_safe_prev`` / ``Q0_safe_prev - Q0_raw_prev`` / verification flag).
-        All three default to ``None``, which means "no history": the feedback
-        branch is gated off and the network runs exactly as the plain diffusion
-        model (warm-up, evaluation of an old checkpoint, ablation A).
+        ``feedback_delta`` [B,C,2] / ``feedback_valid`` [B] are the PREVIOUS
+        reverse step's ALM CORRECTION (``Q0_safe_prev - Q0_raw_prev``) and its
+        verification flag.  The corrected polygon itself is never passed in.
+        Both default to ``None``, which means "no history": the feedback branch
+        is gated off and the network runs exactly as the plain diffusion model
+        (warm-up, evaluation of an old checkpoint, ablation A).
         """
         if self.control_space:
             return self.forward_controls(
                 q_t, occ, cond, t, ab, candidate_xy, candidate_mask,
                 geometry, geometry_lengths, select_index=select_index,
-                feedback_control=feedback_control,
                 feedback_delta=feedback_delta, feedback_valid=feedback_valid)
         return self.forward_curve_tokens(
             q_t, occ, cond, t, ab, candidate_xy, candidate_mask,
             geometry, geometry_lengths, select_index=select_index,
-            feedback_control=feedback_control, feedback_delta=feedback_delta,
-            feedback_valid=feedback_valid)
+            feedback_delta=feedback_delta, feedback_valid=feedback_valid)
 
     # --------------------------------------------------- control-token chain
     def forward_controls(self, q_t: torch.Tensor, occ: torch.Tensor,
@@ -443,7 +430,6 @@ class TrajSafePlanner(nn.Module):
                          geometry: torch.Tensor,
                          geometry_lengths: torch.Tensor,
                          select_index: torch.Tensor | None = None,
-                         feedback_control: torch.Tensor | None = None,
                          feedback_delta: torch.Tensor | None = None,
                          feedback_valid: torch.Tensor | None = None):
         """Control-space chain: C control tokens, Q safety geometry queries.
@@ -472,7 +458,7 @@ class TrajSafePlanner(nn.Module):
         with torch.no_grad():
             p_t = self.bspline.decode_controls(q_t)
 
-        c_g, c_e = self.scene_tokens(occ)
+        c_g = self.scene_tokens(occ)
         h_t = self.time_pe(t.to(dev))
 
         # ---- control backbone -------------------------------------------
@@ -484,7 +470,7 @@ class TrajSafePlanner(nn.Module):
         # path feature, safety cross attention, fusion MLP, final denoiser) -
         # this is a full fine-tune, not an inference-time bolt-on.
         h_fb, fb_valid = self.feedback_features(
-            h_ctrl, feedback_control, feedback_delta, feedback_valid)
+            h_ctrl, feedback_delta, feedback_valid)
         if h_fb is not None:
             h_ctrl = self.feedback_fusion(h_ctrl, h_fb, fb_valid)
 
@@ -519,7 +505,7 @@ class TrajSafePlanner(nn.Module):
             fallback = self._resample_curve(coarse, Q)
             center = torch.where(has_cand[:, None, None], center, fallback)
 
-            h_ell, a_e = self.ellipse_geometry(h_gamma, center, c_e, h_t, ab)
+            h_ell, a_e = self.ellipse_geometry(h_gamma, center, c_g, h_t, ab)
             shape = self.ellipse_shape_head(h_ell, h_t)
 
             # ---- safety -> control cross attention + fusion ----------------
@@ -617,7 +603,6 @@ class TrajSafePlanner(nn.Module):
                              geometry: torch.Tensor,
                              geometry_lengths: torch.Tensor,
                              select_index: torch.Tensor | None = None,
-                             feedback_control: torch.Tensor | None = None,
                              feedback_delta: torch.Tensor | None = None,
                              feedback_valid: torch.Tensor | None = None):
         """Pre-refactor chain: the network runs on the decoded 128-point curve.
@@ -638,7 +623,7 @@ class TrajSafePlanner(nn.Module):
         q_t = self.hard_control_endpoints(q_t, cond)
         p_t = self.bspline.decode_controls(q_t)
 
-        c_g, c_e = self.scene_tokens(occ)
+        c_g = self.scene_tokens(occ)
         h_t = self.time_pe(t.to(dev))
 
         h_traj = self.encode_trajectory(p_t, c_g, h_t)          # [B,H,D]
@@ -668,7 +653,7 @@ class TrajSafePlanner(nn.Module):
                 "false removes.  This model must run on the CONTROL-token chain "
                 "(model.control_space = true); check what made the checkpoint "
                 "resolve to the legacy architecture.")
-        h_ell, a_e = self.ellipse_geometry(h_path, center, c_e, h_t, ab)
+        h_ell, a_e = self.ellipse_geometry(h_path, center, c_g, h_t, ab)
         shape = self.ellipse_shape_head(h_ell, h_t)
 
         f = self.fusion_mlp(h_traj, h_path, h_ell)

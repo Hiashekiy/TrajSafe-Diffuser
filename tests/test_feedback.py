@@ -1,9 +1,11 @@
-"""Historical safety feedback (上一轮 ALM 的安全修正作为下一步的条件).
+"""Historical safety feedback (上一轮 ALM 的修正量作为下一步的条件).
 
 Contract pinned down here:
 
   * ``FeedbackEncoder`` / ``FeedbackFusion`` shapes and the gate semantics:
     ``valid = 0`` is the EXACT identity, ``valid = 1`` moves the features;
+  * the feedback is the CORRECTION ONLY (``Delta`` + ``valid``): the corrected
+    polygon ``Q0_safe_prev`` is never an input, in training or in sampling;
   * a zero-initialised model is bit-identical with and without feedback, so an
     old checkpoint keeps its exact behaviour and the sampler's warm-up phase is
     untouched;
@@ -12,8 +14,9 @@ Contract pinned down here:
     inference ALM projects onto, including the per-cell mask semantics;
   * ``feedback_step`` implements design-note section 4 (already-safe / corrected
     / failed-never-overwrites);
-  * ``L_fbsafe`` is zero inside the corridor and grows outside it;
-    ``L_curve`` is zero for a straight decoded curve and grows when it wiggles.
+  * ``L_safe`` (the ONE continuous safety loss) is zero inside the corridor and
+    grows outside it, in BOTH training stages; ``L_curve`` is zero for a straight
+    decoded curve and grows when it wiggles.
 """
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ from src.diffusion.sampler import feedback_step
 from src.geometry.bspline import BSplineCodec
 from src.geometry.bspline_constraints import (build_constraint_pack_from_regions,
                                               build_constraint_pack)
-from src.losses.losses import (curve_smoothness_loss, feedback_safety_loss,
+from src.losses.losses import (continuous_safety_loss, curve_smoothness_loss,
                                pack_max_violation, pack_violation)
 from src.models.trajsafe.feedback import FeedbackEncoder, FeedbackFusion
 
@@ -48,9 +51,9 @@ def test_feedback_fusion_is_an_exact_identity_when_invalid():
 
 def test_feedback_encoder_zero_init_is_exactly_zero():
     enc = FeedbackEncoder(8, hidden=4, zero_init=True)
-    assert torch.equal(enc(torch.randn(2, 5, 5)), torch.zeros(2, 5, 8))
+    assert torch.equal(enc(torch.randn(2, 5, 3)), torch.zeros(2, 5, 8))
     enc2 = FeedbackEncoder(8, hidden=4, zero_init=False)
-    assert not torch.allclose(enc2(torch.randn(2, 5, 5)), torch.zeros(2, 5, 8))
+    assert not torch.allclose(enc2(torch.randn(2, 5, 3)), torch.zeros(2, 5, 8))
 
 
 def _forward(model, b, select_index=None, **kwargs):
@@ -73,7 +76,6 @@ def test_zero_init_model_is_bit_identical_with_and_without_feedback():
     with torch.no_grad():
         base = _forward(model, b)
         fed = _forward(model, b,
-                       feedback_control=torch.randn(2, 8, 2),
                        feedback_delta=torch.randn(2, 8, 2),
                        feedback_valid=torch.ones(2, dtype=torch.bool))
     assert torch.equal(base["control"], fed["control"])
@@ -89,8 +91,7 @@ def test_trained_feedback_condition_changes_the_prediction_and_gets_gradient():
                        feedback={"enabled": True, "hidden": 16,
                                  "zero_init": False})
     model.train()
-    fb = dict(feedback_control=torch.randn(2, 8, 2),
-              feedback_delta=0.1 * torch.randn(2, 8, 2),
+    fb = dict(feedback_delta=0.1 * torch.randn(2, 8, 2),
               feedback_valid=torch.ones(2, dtype=torch.bool))
     out = _forward(model, b, **fb)
     out["control"].pow(2).mean().backward()
@@ -112,12 +113,31 @@ def test_feedback_shape_validation():
                        rel_bias_len=8, d_model=32,
                        feedback={"enabled": True, "hidden": 16})
     try:
-        _forward(model, b, feedback_control=torch.zeros(2, 5, 2),
+        _forward(model, b, feedback_delta=torch.zeros(2, 5, 2),
                  feedback_valid=torch.ones(2, dtype=torch.bool))
     except ValueError as exc:
-        assert "feedback_control" in str(exc)
+        assert "feedback_delta" in str(exc)
     else:                                                   # pragma: no cover
-        raise AssertionError("a wrong control shape must be refused")
+        raise AssertionError("a wrong delta shape must be refused")
+
+
+def test_the_corrected_polygon_is_not_a_forward_pass_argument():
+    """``Q0_safe_prev`` must not even be expressible as an input."""
+    import inspect
+
+    from train import feedback_rollout
+    b = tiny_batch(B=2, H=8, M=3, L=8)
+    model = tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
+                       rel_bias_len=8, d_model=32,
+                       feedback={"enabled": True, "hidden": 16})
+    params = set(inspect.signature(model.forward_all).parameters)
+    assert "feedback_delta" in params and "feedback_valid" in params
+    assert "feedback_control" not in params
+    assert "feedback_control" not in set(
+        inspect.signature(feedback_rollout).parameters)
+    # the encoder really only sees [dx, dy, valid]
+    from src.models.trajsafe.feedback import FEEDBACK_INPUT_DIM
+    assert FEEDBACK_INPUT_DIM == 3
 
 
 # ------------------------------------------------- constraint pack (offline)
@@ -192,7 +212,7 @@ def test_invalid_corridor_row_is_fully_masked_and_masked_out_of_the_loss():
     q = torch.cat([_straight_controls(codec),
                    _straight_controls(codec, offset=(0.0, 0.5))])
     assert float(pack_max_violation(q, pack)[1]) == 0.0
-    loss = feedback_safety_loss(q, pack, sample_mask=pack.num_pieces > 0)
+    loss = continuous_safety_loss(q, pack, sample_mask=pack.num_pieces > 0)
     assert float(loss) == 0.0                    # the only violating row is masked
 
 
@@ -244,58 +264,56 @@ def test_feedback_step_implements_section_4():
     has_pack = torch.ones(1, dtype=torch.bool)
 
     # (1) warm-up: not guided -> no feedback at all
-    c, d, v, st = feedback_step(zero, zero, empty_v,
-                                torch.zeros(1, dtype=torch.bool),
-                                has_pack, torch.zeros(1), torch.zeros(1),
-                                raw, safe, 1e-3)
+    d, v, st = feedback_step(zero, empty_v, torch.zeros(1, dtype=torch.bool),
+                             has_pack, torch.zeros(1), torch.zeros(1),
+                             raw, safe, 1e-3)
     assert not bool(v[0]) and st["accepted"] == 0
 
-    # (2) the ALM had to correct a violation -> Q0_safe / Delta
-    c, d, v, st = feedback_step(c, d, v, guided, has_pack,
-                                torch.tensor([0.2]), torch.tensor([0.0]),
-                                raw, safe, 1e-3)
+    # (2) the ALM had to correct a violation -> Delta only
+    d, v, st = feedback_step(d, v, guided, has_pack,
+                             torch.tensor([0.2]), torch.tensor([0.0]),
+                             raw, safe, 1e-3)
     assert bool(v[0]) and st["accepted"] == 1 and st["already_safe"] == 0
-    assert torch.equal(c, safe) and torch.equal(d, safe - raw)
+    assert torch.equal(d, safe - raw)
 
     # (3) the raw prediction was already safe -> delta = 0, no correction
-    c2, d2, v2, st = feedback_step(zero, zero, empty_v, guided, has_pack,
-                                   torch.tensor([0.0]), torch.tensor([0.0]),
-                                   raw, raw, 1e-3)
+    d2, v2, st = feedback_step(zero, empty_v, guided, has_pack,
+                               torch.tensor([0.0]), torch.tensor([0.0]),
+                               raw, raw, 1e-3)
     assert bool(v2[0]) and st["already_safe"] == 1
-    assert torch.equal(c2, raw) and torch.equal(d2, torch.zeros_like(d2))
+    assert torch.equal(d2, torch.zeros_like(d2))
 
     # (4) a FAILING ALM must never overwrite the last verified feedback
-    c3, d3, v3, st = feedback_step(
-        c, d, v, guided, has_pack, torch.tensor([0.2]), torch.tensor([0.5]),
+    d3, v3, st = feedback_step(
+        d, v, guided, has_pack, torch.tensor([0.2]), torch.tensor([0.5]),
         raw, torch.full_like(safe, 2.0), 1e-3)
     assert bool(v3[0]) and st["rejected"] == 1
-    assert torch.equal(c3, c) and torch.equal(d3, d)
+    assert torch.equal(d3, d)
 
     # (5) no corridor at all -> nothing is trusted
-    c4, d4, v4, _ = feedback_step(empty_v.new_zeros(1, 3, 2),
-                                  empty_v.new_zeros(1, 3, 2), empty_v, guided,
-                                  torch.zeros(1, dtype=torch.bool),
-                                  torch.zeros(1), torch.zeros(1), raw, safe,
-                                  1e-3)
+    d4, v4, _ = feedback_step(empty_v.new_zeros(1, 3, 2), empty_v, guided,
+                              torch.zeros(1, dtype=torch.bool),
+                              torch.zeros(1), torch.zeros(1), raw, safe,
+                              1e-3)
     assert not bool(v4[0])
 
 
 # ------------------------------------------------------------------- losses
-def test_feedback_safety_loss_zero_inside_and_gradient_outside():
+def test_continuous_safety_loss_zero_inside_and_gradient_outside():
     codec = BSplineCodec(degree=3, num_controls=8, curve_points=32,
                          knots_path="auto", endpoint_constrained=False)
     A, b, mask, anchors = _tube_regions(half=0.10)
     pack = build_constraint_pack_from_regions(codec, A[None], b[None],
                                               mask[None], anchors=anchors)
     inside = _straight_controls(codec).requires_grad_(True)
-    inside_loss = feedback_safety_loss(inside, pack)
+    inside_loss = continuous_safety_loss(inside, pack)
     assert float(inside_loss.detach()) == 0.0
     inside_loss.backward()
     # relu() at 0 has zero derivative: a feasible polygon gets no gradient
     assert torch.equal(inside.grad, torch.zeros_like(inside.grad))
 
     outside = _straight_controls(codec, offset=(0.0, 0.2)).requires_grad_(True)
-    loss = feedback_safety_loss(outside, pack)
+    loss = continuous_safety_loss(outside, pack)
     assert float(loss.detach()) > 0.1
     loss.backward()
     assert bool(torch.isfinite(outside.grad).all())
@@ -398,7 +416,7 @@ def test_training_two_step_rollout_runs_backprops_and_fills_the_second_step():
         fb_cfg={"rollout": True, "drop_prob": 0.0})
     assert stats2["fb_valid_rate"] == 1.0
     assert stats2["fb_delta_norm"] == 0.0         # already safe -> no correction
-    assert float(raw2["Lfbsafe"].detach()) == 0.0
+    assert float(raw2["Lsafe"].detach()) == 0.0
     assert torch.isfinite(total2).all()
 
     # warm-up simulation: the whole batch is forced back to "no history"
@@ -406,7 +424,7 @@ def test_training_two_step_rollout_runs_backprops_and_fills_the_second_step():
         batch2, model, schedule, lcfg, "cpu", alm_cfg=alm_cfg,
         fb_cfg={"rollout": True, "simulate_warmup": True})
     assert stats3["fb_valid_rate"] == 0.0
-    assert torch.isfinite(raw3["Lfbsafe"]).all()
+    assert torch.isfinite(raw3["Lsafe"]).all()
 
 
 def test_rollout_timesteps_never_use_the_last_step_for_the_two_step_rollout():
@@ -441,7 +459,7 @@ def test_empty_pack_is_a_differentiable_zero_and_never_raises():
     q = _straight_controls(codec, offset=(0.0, 0.5)).requires_grad_(True)
     assert float(pack_max_violation(q, pack).detach()) == 0.0
     assert float(pack_violation(q, pack, reduction="mean").detach()) == 0.0
-    loss = feedback_safety_loss(q, pack)
+    loss = continuous_safety_loss(q, pack)
     assert float(loss.detach()) == 0.0
     loss.backward()                                # graph-connected zero
     assert torch.equal(q.grad, torch.zeros_like(q.grad))
@@ -513,7 +531,7 @@ def test_training_rollout_survives_a_batch_without_any_corridor():
     assert set(LOSS_KEYS) <= set(raw)
     assert stats["fb_valid_rate"] == 0.0
     assert stats["fb_mean_violation"] == 0.0
-    assert float(raw["Lfbsafe"].detach()) == 0.0
+    assert float(raw["Lsafe"].detach()) == 0.0
     assert float(raw["Lcurve"].detach()) >= 0.0
     assert torch.isfinite(total).all()
     for part in stats["loss_parts"]:

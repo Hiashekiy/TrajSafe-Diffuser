@@ -6,8 +6,8 @@
 # 与 A-C48（config_160k4p_c48_oneshot.yaml -> outputs/models/oneshot_k4p_c48）唯一的
 # 差异是 train.feedback.rollout: true -> false：
 #   训练时不再跑「两步真实 rollout」（第一步前向 -> 真实 ALM -> 真实 DDIM ->
-#   反馈 -> 第二步前向），因此也没有 Lfbsafe / Lcurve 这两项反馈损失
-#   （train.py 在 rollout=false 时把 raw1["Lfbsafe"]=raw1["Lcurve"]=0）。
+#   反馈 -> 第二步前向），因此也没有第二步的 Lsafe / Lcurve 两项
+#   （train.py 在 rollout=false 时把 raw1["Lcurve"]=0；L_safe 仍由第一阶段提供）。
 #
 # model.feedback.enabled 仍保持 true：FeedbackEncoder / FeedbackFusion 模块照建。
 # rollout=false 时 feedback_valid 恒为 0、反馈输入恒为 0，而 FeedbackFusion 的门控

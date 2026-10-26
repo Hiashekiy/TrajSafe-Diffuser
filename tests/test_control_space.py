@@ -10,8 +10,8 @@ as the number of Skeleton / ellipse "safety" queries.  These tests pin down:
   * ``SafetyControlFusion`` starts as the identity (zero-init output);
   * the two forward chains dispatch on ``model.control_space``;
   * checkpoint detection / flexible loading across the refactor;
-  * the new 7 exported losses and their exact zero points;
-  * every parameter receives a gradient from the full 8-term loss.
+  * the exact exported losses and their zero points;
+  * every parameter receives a gradient from the full loss.
 """
 from __future__ import annotations
 
@@ -268,7 +268,8 @@ def test_control_losses_have_the_expected_zero_points():
 def test_loss_exports_are_exactly_the_new_terms():
     expected = {"control_x0_loss", "control_smoothness_loss",
                 "boundary_control_loss", "topology_ce", "ellipse_shape_loss",
-                "ellipse_iou_loss", "ellipse_safety_loss"}
+                "ellipse_iou_loss", "continuous_safety_loss", "pack_violation",
+                "pack_max_violation", "curve_smoothness_loss"}
     import src.losses as losses_pkg
     assert set(losses_pkg.__all__) == expected
     namespace = {}
@@ -281,7 +282,19 @@ def test_loss_exports_are_exactly_the_new_terms():
 
 
 # ----------------------------------------------------------------- gradients
-def test_every_parameter_receives_a_gradient_from_the_eight_term_loss():
+def _box_pack(codec, batch, half=0.30):
+    """A 4-cell box corridor in scene units (the offline layout, no geometry)."""
+    from src.geometry.bspline_constraints import build_constraint_pack_from_regions
+    cells = 4
+    A = torch.tensor([[0.0, 1.0], [0.0, -1.0], [1.0, 0.0], [-1.0, 0.0]])
+    A = A[None, None].expand(batch, cells, 4, 2).contiguous()
+    b = torch.full((batch, cells, 4), float(half))
+    mask = torch.ones(batch, cells, dtype=torch.bool)
+    return build_constraint_pack_from_regions(
+        codec, A, b, mask, anchors=torch.linspace(0.0, 1.0, cells))
+
+
+def test_every_parameter_receives_a_gradient_from_the_full_loss():
     torch.manual_seed(0)
     model = tiny_model()
     b = tiny_batch(B=2, H=model.num_controls, L=model.num_safety_queries)
@@ -292,9 +305,8 @@ def test_every_parameter_receives_a_gradient_from_the_eight_term_loss():
     has_cand = b["has_candidate"]
     ws, wg = model.boundary_decoder.weights(q0.shape[1])
 
-    l_safe, _, _ = losses.ellipse_safety_loss(
-        ell["center"], ell["a"], ell["b"], ell["theta"], b["occ"],
-        raster_res=32, sample_mask=has_cand)
+    pack = _box_pack(model.bspline, q0.shape[0])
+    l_safe = losses.continuous_safety_loss(out["control"], pack)
     raw = {
         "Lctrl": losses.control_x0_loss(out["q_raw_final"], q0),
         "Lcoarse": losses.control_x0_loss(out["q_coarse_raw"], q0),

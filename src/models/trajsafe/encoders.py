@@ -72,7 +72,7 @@ class SkeletonEncoder(nn.Module):
         S   = SkeletonTransformer_{N_S}(S^0)     # pre-norm MHA + FFN
         H_S = LN_out(S)
 
-    The transformer never sees h_t, C_G or C_E.
+    The transformer never sees h_t or C_G.
     """
 
     def __init__(self, d_model: int, num_heads: int, spatial_pe: nn.Module,

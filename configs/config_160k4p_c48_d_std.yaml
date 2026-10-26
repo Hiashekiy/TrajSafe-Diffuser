@@ -19,8 +19,9 @@
 #     -> 连 FeedbackEncoder / FeedbackFusion 都不建（历史安全反馈彻底不存在）
 #   train.feedback.rollout: false
 #     -> 训练侧不跑反馈 rollout
-#   loss.lambda_{shape,iou,safe,alm,feedback_safe,curve_smooth}: 0
+#   loss.lambda_{shape,iou,safe,curve_smooth}: 0
 #     -> 没有任何安全区域 / 走廊 / 反馈监督项；只剩轨迹回归、拓扑、平滑、端点
+#        （lambda_safe = 0 同时把唯一的连续安全损失 L_safe 关掉）
 #
 # 推理期对 D-C48 一律使用 guidance=none|penalty|projection|primal_dual|alm_sdf，
 # 且 feedback_history=off、final_project=off（四种 SDF 基线与 Diffusion 行）。
@@ -46,6 +47,4 @@ loss:
   lambda_shape: 0.0
   lambda_iou: 0.0
   lambda_safe: 0.0
-  lambda_alm: 0.0
-  lambda_feedback_safe: 0.0
   lambda_curve_smooth: 0.0

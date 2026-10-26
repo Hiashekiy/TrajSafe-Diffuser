@@ -1,0 +1,53 @@
+# ============================================================
+# config_160k4p_c48_v4_map16 —— v4 改造（在 v3 基础上）
+#
+# 三个改动（相对 config_160k4p_c48_oneshot.yaml / v3-skeleton-dynamic）：
+#
+# 1) 地图特征只保留一份 16×16。
+#    SceneCNN 不再构建精细几何解码器（删掉 geo_decode_res / geo_mem_res、
+#    _UpFuse 与 32×32 的 C_E）。控制主干与椭圆/安全几何的交叉注意力读的是
+#    【同一份】16×16 地图特征 C_G（src/models/common/scene_cnn.py,
+#    src/models/trajsafe/planner.py::scene_tokens）。
+#
+# 2) 修正反馈只回传「修正量 + 有效标签」。
+#    每个控制点的反馈输入从 5 维 [x_safe, y_safe, dx, dy, valid] 降到 3 维
+#    [dx, dy, valid]：Q0_safe_prev 本身不再作为网络输入（避免下一步变成
+#    "抄 ALM 输出"）。训练侧 train.py::feedback_rollout 与采样侧
+#    src/diffusion/sampler.py::feedback_step 都只维护 Delta。
+#
+# 3) 安全损失统一为连续安全损失 L_safe。
+#    L_safe = 控制多边形对整个连续 B 样条约束包的 Bezier 凸包违反量
+#    （src/losses/losses.py::continuous_safety_loss，与推理期 ALM 投影的是
+#    同一个 BSplineConstraintPack）。第一阶段（第一次前向）与第二阶段
+#    （带修正反馈的第二次前向）都用它、权重同为 lambda_safe。
+#    已删除的两个安全损失：椭圆occupancy软IoU+CVaR项（原 L_safe）与
+#    解码曲线走廊穿透项（原 L_alm）；原 L_fbsafe 被 L_safe 的第二步复用取代。
+#
+# 数据：data/processed/160m-k4p-c48（C=48 控制点，160 m / 256 px 窗口）。
+# 训练起点：从零训练（架构改动涉及反馈输入维度与地图解码器，不热启动 v3 权重）。
+# ============================================================
+base: "configs/config_160k4p_c48_oneshot.yaml"
+
+data:
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/processed/160m-k4p-c48"
+
+model:
+  num_controls: 48                     # C: cubic B-spline control polygon
+  global_mem_res: 16                   # the ONLY map memory (16x16)
+
+bspline:
+  num_controls: 48
+
+loss:
+  # 唯一的训练期安全项（第一阶段 + 第二阶段同一权重）
+  lambda_safe: 0.15
+
+train:
+  epochs: 200
+  max_hours: 11.0
+  ckpt_dir: "outputs/models/v4_map16_c48/ckpt"
+  feedback:
+    rollout: true                      # 第二阶段：真实 ALM + DDIM + 修正量反馈
+    drop_prob: 0.25                    # 模拟 warmup / 无走廊样本
+    step2_weight: 0.5
+    topology: "expert"

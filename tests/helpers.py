@@ -22,7 +22,7 @@ SCENES_ROOT = os.path.join(REPO_ROOT, "data", "scenes")
 def tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
                rel_bias_len=8, d_model=32, traj_blocks=2, skeleton_blocks=1,
                final_blocks=1, control_space=True, horizon=None,
-               map_res=64, global_res=8, geo_res=16, **extra):
+               map_res=64, global_res=8, geo_res=None, **extra):
     """Tiny ``TrajSafePlanner`` for tests, valid for BOTH forward chains.
 
     The three token counts are written consistently into the model and the
@@ -34,7 +34,9 @@ def tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
     Backwards compatible keyword names kept for the rest of the suite:
     ``horizon=`` is the decoded curve density (``curve_points``), plus the
     historical ``d_model`` / ``traj_blocks`` / ``skeleton_blocks`` /
-    ``final_blocks`` / ``map_res`` / ``global_res`` / ``geo_res``.
+    ``final_blocks`` / ``map_res`` / ``global_res``.  ``geo_res`` is accepted and
+    IGNORED: the model has a single 16x16-scale map memory now, so there is no
+    fine-geometry resolution left to configure.
     """
     if horizon is not None:
         curve_points = int(horizon)
@@ -51,8 +53,7 @@ def tiny_model(num_controls=8, curve_points=8, num_safety_queries=8,
                d_model=d_model, num_heads=4,
                traj_blocks=traj_blocks, skeleton_blocks=skeleton_blocks,
                final_blocks=final_blocks, ffn_dim=64, map_res=map_res,
-               global_mem_res=global_res, geo_decode_res=geo_res,
-               geo_mem_res=geo_res // 2, coord_hidden=32, head_hidden=32,
+               global_mem_res=global_res, coord_hidden=32, head_hidden=32,
                dropout=0.0, assert_shapes=True)
     cfg.update(extra)
     bspline_cfg = dict(degree=3, num_controls=nc, curve_points=cp, knots="auto")

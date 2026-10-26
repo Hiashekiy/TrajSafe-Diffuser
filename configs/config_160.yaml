@@ -82,9 +82,7 @@ model:
   final_blocks: 3                      # Final Control Denoiser N_F
   ffn_dim: 512
   map_res: 256
-  global_mem_res: 16                   # C_G 16x16
-  geo_decode_res: 64                   # fine-geometry decoder output
-  geo_mem_res: 32                      # C_E 32x32
+  global_mem_res: 16                   # C_G 16x16 -- the ONLY map memory
   geo_sigma: 0.25
   geo_bias_clip: 8.0
   dropout: 0.0
@@ -155,13 +153,10 @@ loss:
   lambda_topology: 0.25
   lambda_shape: 0.08
   lambda_iou: 0.25
+  # The ONE continuous safety loss (Bezier convex-hull violation of the control
+  # polygon against the frozen corridor pack the ALM projects onto); used in
+  # BOTH training stages.  0 disables it.
   lambda_safe: 0.15
-  # Training-time ALM: penalty on the DECODED curve for lying outside the
-  # precomputed safety corridor, measured as a distance in SCENE units
-  # (1 unit = 80 m here).  0 disables the term.  The corridor comes from
-  # scripts/data/carla_full/04_build_alm_constraints.py; samples whose
-  # corridor never closed are masked out (~57 % of train, 74 % of val).
-  lambda_alm: 0.3
   ellipse_safe_res: 64
   ellipse_mask_tau: 10.0
   ellipse_safe_chunk: 32

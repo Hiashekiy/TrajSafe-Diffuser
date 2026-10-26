@@ -4,21 +4,19 @@ The diffusion state is the C-control B-spline polygon, and the inference loop is
 
     Q0_raw(t)  ->  ALM  ->  Q0_safe(t)  ->  DDIM  ->  q_{t-1}
 
-The network is blind to what the ALM just did: the next reverse step only sees
-``q_{t-1}``, so it can (and does) re-predict a curve that violates the very
-corridor the ALM just projected into.  This module gives the denoiser an explicit
-memory of the previous step::
+``Q0_safe_prev`` is deliberately NOT an input: handing the finished clean
+trajectory back would turn the next reverse step into a copy task.  Only the
+CORRECTION the ALM applied is remembered::
 
-    feedback_control [B,C,2]   Q0_safe_prev   (or Q0_raw_prev when it was safe)
     feedback_delta   [B,C,2]   Q0_safe_prev - Q0_raw_prev
     feedback_valid   [B]       1 = the previous ALM result passed verification
 
-so every control token carries the 5-vector ``[x, y, dx, dy, valid]``.
+so every control token carries the 3-vector ``[dx, dy, valid]``.
 
 Two modules, both deliberately tiny:
 
 ``FeedbackEncoder``
-    per-control MLP ``5 -> hidden -> d_model``.  The feedback is indexed by the
+    per-control MLP ``3 -> hidden -> d_model``.  The feedback is indexed by the
     control polygon itself (one vector per control point), so no Transformer /
     attention is needed: token ``i`` of the feedback stream only ever describes
     control ``i``.
@@ -47,12 +45,12 @@ import torch.nn as nn
 
 __all__ = ["FeedbackEncoder", "FeedbackFusion", "FEEDBACK_INPUT_DIM"]
 
-# [x_safe, y_safe, dx, dy, valid]
-FEEDBACK_INPUT_DIM = 5
+# [dx, dy, valid] -- the correction only, never the corrected polygon
+FEEDBACK_INPUT_DIM = 3
 
 
 class FeedbackEncoder(nn.Module):
-    """Per-control MLP over ``[x, y, dx, dy, valid]`` -> ``[B,C,d_model]``."""
+    """Per-control MLP over ``[dx, dy, valid]`` -> ``[B,C,d_model]``."""
 
     def __init__(self, d_model: int, hidden: int = 64, zero_init: bool = True,
                  dropout: float = 0.0):
@@ -70,7 +68,7 @@ class FeedbackEncoder(nn.Module):
             nn.init.zeros_(last.bias)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        """features [B,C,5] -> h_fb [B,C,D]."""
+        """features [B,C,3] -> h_fb [B,C,D]."""
         if features.shape[-1] != FEEDBACK_INPUT_DIM:
             raise ValueError("feedback features must be [B,C,%d], got %s"
                              % (FEEDBACK_INPUT_DIM, tuple(features.shape)))

@@ -117,7 +117,7 @@ class JointCrossAttention(_MHABase):
 
 
 class GeometryCrossAttention(_MHABase):
-    """Fine-geometry cross attention: Q = ellipse tokens, K/V = C_E (32x32).
+    """Fine-geometry cross attention: Q = ellipse tokens, K/V = map tokens (16x16).
 
     An optional noise-aware spatial bias [B,1,H,G] (clamped, <=0) is added to
     the scores and broadcasts over all heads.

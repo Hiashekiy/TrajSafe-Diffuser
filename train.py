@@ -7,21 +7,29 @@
       + lam_topo   L_topo
       + lam_shape  L_shape
       + lam_iou    L_iou
-      + lam_safe   L_safe
-      + lam_alm    L_alm      (decoded curve vs the offline ALM corridor)
-      + lam_fbsafe L_fbsafe   (CONTINUOUS Bezier corridor violation of the
-                               SECOND (feedback-conditioned) raw prediction)
+      + lam_safe   L_safe     (CONTINUOUS Bezier convex-hull violation)
       + lam_curve  L_curve    (2nd/3rd differences of the DECODED curve)
+
+``L_safe`` is the ONE safety loss: the exact Bezier convex-hull violation
+(``src.losses.losses.continuous_safety_loss``) of the clean control polygon
+against the frozen corridor pack the inference ALM projects onto.  It is applied
+identically to BOTH training stages - the first forward and the
+feedback-conditioned second forward - so there is a single definition of
+"unsafe" in the loop.  The former occupancy-rasterisation ellipse penalty and
+the decoded-curve corridor penalty no longer exist.
 
 Historical safety feedback (``model.feedback.enabled`` + ``train.feedback``)
 adds a real two-step rollout per batch, exactly mirroring inference::
 
     q_t --network--> Q0_raw(t) --ALM--> Q0_safe(t) --DDIM--> q_s
-        --feedback (Q0_safe, Delta, valid)--> network --> Q0_raw(s) --> LOSS
+        --feedback (Delta, valid)--> network --> Q0_raw(s) --> LOSS
 
 The first stage runs under ``no_grad`` and the loss is computed on the SECOND
 network's OWN raw output: the network can never learn to let the ALM clean up
-after it.  There is deliberately NO distillation term ``Q_next ~ Q_safe_prev``.
+after it.  The feedback handed to the second forward is the CORRECTION ONLY
+(``Delta = Q0_safe(t) - Q0_raw(t)`` plus the verification flag); the corrected
+polygon ``Q0_safe(t)`` itself is never fed back.  There is deliberately NO
+distillation term ``Q_next ~ Q_safe_prev``.
 
 The diffusion state is the C-control polygon Q_t (``control_gt``, C from the
 config).  The network runs on the control tokens themselves; NO decoded
@@ -64,28 +72,25 @@ from src.models.trajsafe import TrajSafePlanner
 from src.datasets.carla_spline_dataset import make_loader, make_collate
 from src.geometry.ellipse_raster import ellipse_soft_mask
 from src.geometry.ellipse_shape import shape4_to_abtheta
-from src.losses.losses import (alm_corridor_loss, boundary_control_loss,
+from src.losses.losses import (boundary_control_loss, continuous_safety_loss,
                                control_smoothness_loss, control_x0_loss,
                                curve_smoothness_loss, ellipse_iou_loss,
-                               ellipse_safety_loss, ellipse_shape_loss,
-                               feedback_safety_loss, pack_violation,
-                               topology_ce)
+                               ellipse_shape_loss, pack_violation, topology_ce)
 from src.models.trajsafe.boundary import boundary_targets
 
 LOSS_KEYS = ["Lctrl", "Lcoarse", "Lsmooth", "Lboundary", "Ltopo", "Lshape",
-             "Liou", "Lsafe", "Lalm", "Lfbsafe", "Lcurve"]
+             "Liou", "Lsafe", "Lcurve"]
 LOSS_WEIGHT_KEYS = {
     "Lctrl": "lambda_control", "Lcoarse": "lambda_coarse",
     "Lsmooth": "lambda_smooth", "Lboundary": "lambda_boundary",
     "Ltopo": "lambda_topology", "Lshape": "lambda_shape",
-    "Liou": "lambda_iou", "Lsafe": "lambda_safe", "Lalm": "lambda_alm",
-    "Lfbsafe": "lambda_feedback_safe", "Lcurve": "lambda_curve_smooth",
+    "Liou": "lambda_iou", "Lsafe": "lambda_safe",
+    "Lcurve": "lambda_curve_smooth",
 }
 DEFAULT_LOSS_WEIGHTS = {
     "lambda_control": 0.2, "lambda_coarse": 0.5, "lambda_smooth": 0.08,
     "lambda_boundary": 0.2, "lambda_topology": 0.25, "lambda_shape": 0.08,
-    "lambda_iou": 0.25, "lambda_safe": 0.15, "lambda_alm": 0.3,
-    "lambda_feedback_safe": 0.3, "lambda_curve_smooth": 0.1,
+    "lambda_iou": 0.25, "lambda_safe": 0.15, "lambda_curve_smooth": 0.1,
 }
 # Metres per scene unit.  40.0 for the 80 m carla_v1 crop, 80.0 for the 160 m
 # carla_full_160_256 windows.  This is DATA, so it is read from
@@ -229,8 +234,9 @@ def corridor_fit(points: torch.Tensor, cell_a: torch.Tensor, cell_b: torch.Tenso
         violation(p) = min_{valid i} max_f (A_if . p - b_if)
 
     is positive exactly outside the corridor (the same half-space semantics as
-    ``alm_corridor_loss``).  This is a DIAGNOSTIC for the training/inference gap
-    of review item 3: the offline corridor was built on the GT route ``m*``, so
+    ``pack_violation`` / the ALM constraint pack).  This is a DIAGNOSTIC for the
+    training/inference gap of review item 3: the offline corridor was built on
+    the GT route ``m*``, so
     when the second rollout step is routed by the network's own ``argmax(pi)``
     (``train.feedback.topology: "pi"``) this number tells whether that Skeleton
     is still inside the corridor the ALM will project onto.  A value well below
@@ -249,14 +255,35 @@ def corridor_fit(points: torch.Tensor, cell_a: torch.Tensor, cell_b: torch.Tenso
     return float((violation <= 0).to(torch.float32).mean())
 
 
+def build_training_pack(batch, model, alm_cfg, device):
+    """The frozen constraint pack every safety term of this batch uses.
+
+    The offline corridor cache IS a region table, so the training pack is the
+    very same object (exact Bezier extraction + linear inequalities) the
+    inference ALM projects onto - which is why ``L_safe`` and the ALM agree
+    bit-for-bit on what "inside the corridor" means.  Samples whose corridor
+    never closed end up as fully masked rows (``pack.num_pieces == 0``).
+    """
+    cell_a = batch["alm_cell_a"].to(device)
+    cell_b = batch["alm_cell_b"].to(device)
+    cell_valid = batch["alm_cell_valid"].to(device).bool()
+    alm_valid = batch["alm_valid"].to(device).bool()
+    anchors = torch.linspace(0.0, 1.0, cell_valid.shape[1], device=device)
+    return build_constraint_pack_from_regions(
+        model.bspline, cell_a, cell_b, cell_valid, anchors=anchors,
+        device=device, dtype=torch.float32,
+        margin=float(alm_cfg.get("constraint_margin", 0.0)),
+        sample_valid=alm_valid)
+
+
 def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
-                     fb_cfg, alm_cfg):
+                    fb_cfg, alm_cfg, pack):
     """One REAL ALM + DDIM step, then the feedback-conditioned second forward.
 
         Q0_raw(t) = out1["control"]
         Q0_safe(t), lam, stats = ALM(Q0_raw(t), offline corridor pack)
         q_s = DDIM(q_t, Q0_safe(t), t -> t-1)
-        feedback = (Q0_safe(t), Q0_safe(t) - Q0_raw(t), valid)
+        feedback = (Q0_safe(t) - Q0_raw(t), valid)     # correction only
         out2 = network(q_s, feedback)
 
     Everything before the second forward pass is ``no_grad``: the gradients of
@@ -267,7 +294,8 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
     whose ALM output still violates the exact Bezier pack carries no feedback
     (``valid = 0``), exactly like the sampler's section 4.4 rule.  When the raw
     prediction was already feasible the network is told ``delta = 0`` ("you were
-    already safe, no correction was needed").
+    already safe, no correction was needed").  ``Q0_safe(t)`` itself is NEVER
+    passed to the network - only how much it was moved.
 
     ``fb_cfg["topology"]`` selects the Skeleton of the SECOND forward:
 
@@ -281,7 +309,7 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
                                 opt-in experiment (watch ``fb_topo_match`` and
                                 ``fb_valid_rate``), not the default.
 
-    Returns ``(out2, pack, diag)``.
+    Returns ``(out2, diag)``.
     """
     cond = batch["cond"].to(device)
     occ = batch["occupancy"].to(device)
@@ -295,16 +323,6 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
     cell_valid = batch["alm_cell_valid"].to(device).bool()
     alm_valid = batch["alm_valid"].to(device).bool()
     B = q_t.shape[0]
-
-    # the offline corridor cache IS a region table, so the training pack is the
-    # very same object (exact Bezier extraction + linear inequalities) the
-    # inference ALM projects onto
-    anchors = torch.linspace(0.0, 1.0, cell_valid.shape[1], device=device)
-    pack = build_constraint_pack_from_regions(
-        model.bspline, cell_a, cell_b, cell_valid, anchors=anchors,
-        device=device, dtype=torch.float32,
-        margin=float(alm_cfg.get("constraint_margin", 0.0)),
-        sample_valid=alm_valid)
 
     # a correction is only trusted as history when the ALM output passes the
     # exact pack; ``feedback.accept_tol`` (or ``alm.feedback_accept_tol``)
@@ -354,7 +372,6 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
         reliable = has_pack & (after <= tol)
         already_ok = reliable & (before <= tol)
         keep = already_ok[:, None, None]
-        fb_control = torch.where(keep, q0_raw1, q0_safe1)
         fb_delta = torch.where(keep, torch.zeros_like(q0_safe1),
                                q0_safe1 - q0_raw1)
         fb_valid = reliable
@@ -382,8 +399,7 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
     ab_s = schedule.sqrt_alphas_cumprod[s_idx].to(device)
     out2 = model.forward_all(
         q_s, occ, cond, s_idx, ab_s, cand_xy, cm, geo, gl, select_index=select2,
-        feedback_control=fb_control.detach(), feedback_delta=fb_delta.detach(),
-        feedback_valid=fb_valid)
+        feedback_delta=fb_delta.detach(), feedback_valid=fb_valid)
     diag = {
         "feedback_valid": fb_valid,
         "raw_violation": before,
@@ -398,7 +414,7 @@ def feedback_rollout(model, schedule, batch, out1, q_t, t, device,
         "topo_corridor_fit": topo_fit,
         "step_pair": (int(t.min()), int(s_idx.min())),
     }
-    return out2, pack, diag
+    return out2, diag
 
 
 def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
@@ -449,15 +465,43 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
         * boundary_control_loss(out["q_coarse_raw"], q0, cond, ws, wg))
     l_topo = topology_ce(out["topo"]["pi"], best, has_cand)
 
-    # ---- safety-region supervision (absent in D-C48) ----------------------
-    # D-C48 (guide 一.1) is a STANDARD conditional diffusion: it has no ellipse
-    # safety-region representation and no convex corridor, so the shape / IoU /
-    # safety / corridor terms are not merely down-weighted, they are NOT
-    # COMPUTED.  Skipping them matters: the ellipse entries of a D-C48 forward
-    # are zero placeholders, and a term that divides by their (zero) area can
-    # produce NaN, which `0.0 * NaN` would happily inject into the total loss.
+    weights = {k: float(lcfg.get(key, DEFAULT_LOSS_WEIGHTS[key]))
+               for k, key in LOSS_WEIGHT_KEYS.items()}
+
+    # ---- the ONE safety term: continuous Bezier convex-hull violation ------
+    # ``L_safe`` is computed on the clean control polygon the next reverse step
+    # would hand to the ALM, against the SAME frozen pack ``bspline_alm_correct``
+    # projects onto.  It is the only safety supervision in the model, and it is
+    # used identically in stage 1 (below) and stage 2 (the feedback rollout).
+    #
+    # D-C48 (``model.safety_features.enabled = false``, guide 一.1) is a STANDARD
+    # conditional diffusion that may not receive constraint-violation information
+    # at all, so the term is skipped there; with ``lambda_safe = 0`` it is
+    # skipped for every other configuration that disables it too.
     zero_loss = q0.sum() * 0.0
-    safe_mean = safe_cvar = 0.0
+    safety_on = (bool(getattr(model, "safety_features_enabled", True))
+                 and weights["Lsafe"] != 0.0)
+    pack = None
+    l_safe = zero_loss
+    safe_violation = 0.0
+    if (safety_on or rollout) and "alm_cell_a" in batch:
+        pack = build_training_pack(batch, model, alm_cfg, device)
+    if safety_on:
+        l_safe = continuous_safety_loss(
+            out["control"], pack, margin=float(lcfg.get("feedback_margin", 0.0)),
+            sample_mask=pack.num_pieces > 0)
+        active = pack.num_pieces > 0
+        violation = pack_violation(out["control"].detach(), pack,
+                                   reduction="max")
+        safe_violation = (float(violation[active].mean())
+                          if bool(active.any()) else 0.0)
+
+    # ---- ellipse shape / IoU supervision (absent in D-C48) ----------------
+    # D-C48 has no ellipse safety-region representation, so these terms are not
+    # merely down-weighted, they are NOT COMPUTED: the ellipse entries of a
+    # D-C48 forward are zero placeholders, and a term that divides by their
+    # (zero) area can produce NaN, which `0.0 * NaN` would happily inject into
+    # the total loss.
     if getattr(model, "safety_features_enabled", True):
         l_shape = ellipse_shape_loss(ell["shape4"], shape_gt, shape_valid,
                                      has_cand)
@@ -472,54 +516,34 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
         l_iou = ellipse_iou_loss(
             ell["center"], ell["a"], ell["b"], ell["theta"], gt_mask,
             shape_valid, has_cand, raster_res=mask_res, tau=mask_tau)
-        l_safe, safe_mean, safe_cvar = ellipse_safety_loss(
-            ell["center"], ell["a"], ell["b"], ell["theta"], occ,
-            raster_res=mask_res, tau=mask_tau,
-            chunk_size=int(lcfg.get("ellipse_safe_chunk", 32)),
-            cvar_fraction=float(lcfg.get("safe_cvar_fraction", 0.2)),
-            cvar_weight=float(lcfg.get("safe_cvar_weight", 1.0)),
-            sample_mask=has_cand)
-
-        # --- ALM corridor: the TRAINING-TIME counterpart of the inference ALM -
-        # out["final"] is the decoded 128-point curve (B_128 @ Q_final), so the
-        # gradient reaches the control polygon.  The corridor is the same object
-        # bspline_alm_correct() projects onto, precomputed offline; alm_valid
-        # gates out the samples whose corridor never closed.
-        l_alm = alm_corridor_loss(
-            out["final"], batch["alm_cell_a"].to(device),
-            batch["alm_cell_b"].to(device),
-            batch["alm_cell_valid"].to(device).bool(),
-            batch["alm_valid"].to(device).bool())
     else:
-        l_shape = l_iou = l_safe = l_alm = zero_loss
+        l_shape = l_iou = zero_loss
 
     raw1 = {"Lctrl": l_ctrl, "Lcoarse": l_coarse,
             "Lsmooth": l_smooth, "Lboundary": l_boundary, "Ltopo": l_topo,
-            "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe, "Lalm": l_alm,
-            "Lfbsafe": q0.sum() * 0.0, "Lcurve": q0.sum() * 0.0}
-    weights = {k: float(lcfg.get(key, DEFAULT_LOSS_WEIGHTS[key]))
-               for k, key in LOSS_WEIGHT_KEYS.items()}
+            "Lshape": l_shape, "Liou": l_iou, "Lsafe": l_safe,
+            "Lcurve": q0.sum() * 0.0}
     total1 = sum(weights[k] * raw1[k] for k in LOSS_KEYS)
 
     if getattr(model, "safety_features_enabled", True):
         stats = {
-            "safe_mean": float(safe_mean.detach()),
-            "safe_cvar": float(safe_cvar.detach()),
+            "safe_violation": safe_violation,
             "a_mean": float(ell["a"].mean().detach()),
             "b_mean": float(ell["b"].mean().detach()),
         }
     else:
-        stats = {"safe_mean": 0.0, "safe_cvar": 0.0, "a_mean": 0.0, "b_mean": 0.0}
+        stats = {"safe_violation": 0.0, "a_mean": 0.0, "b_mean": 0.0}
 
     # ---- step 2: the historical-safety-feedback rollout -------------------
-    # The SECOND network's OWN raw output is supervised (safety + smoothness +
-    # expert shape).  No distillation term ties it to the ALM output, so the
-    # network cannot learn the shortcut "copy what the ALM did".
+    # The SECOND network's OWN raw output is supervised (safety + smoothness),
+    # with the SAME ``L_safe`` definition as stage 1.  No distillation term ties
+    # it to the ALM output, so the network cannot learn the shortcut "copy what
+    # the ALM did".
     raw = dict(raw1)
     total2 = None
     if rollout:
-        out2, pack, diag = feedback_rollout(model, schedule, batch, out, q_t, t,
-                                            device, fb_cfg, alm_cfg)
+        out2, diag = feedback_rollout(model, schedule, batch, out, q_t, t,
+                                     device, fb_cfg, alm_cfg, pack)
         w2 = float(fb_cfg.get("step2_weight", 1.0))
         raw2 = {
             "Lctrl": w2 * control_x0_loss(out2["q_raw_final"], q0),
@@ -528,16 +552,18 @@ def batch_losses(batch, model, schedule, lcfg, device, alm_cfg=None,
                 boundary_control_loss(out2["q_raw_final"], q0, cond, ws, wg)
                 + float(lcfg.get("boundary_coarse_weight", 0.5))
                 * boundary_control_loss(out2["q_coarse_raw"], q0, cond, ws, wg)),
-            # the polygon the NEXT reverse step would hand to the ALM
-            "Lfbsafe": feedback_safety_loss(
-                out2["control"], pack,
-                margin=float(lcfg.get("feedback_margin", 0.0)),
-                sample_mask=diag["has_pack"]),
             "Lcurve": curve_smoothness_loss(
                 out2["control"], q0, model.bspline.basis,
                 acc_weight=float(lcfg.get("feedback_curve_acc_weight", 0.25)),
                 jerk_weight=float(lcfg.get("feedback_curve_jerk_weight", 1.0))),
         }
+        if safety_on:
+            # the polygon the NEXT reverse step would hand to the ALM: the very
+            # same term, the very same pack, the very same weight as stage 1
+            raw2["Lsafe"] = continuous_safety_loss(
+                out2["control"], pack,
+                margin=float(lcfg.get("feedback_margin", 0.0)),
+                sample_mask=pack.num_pieces > 0)
         for key, value in raw2.items():
             raw[key] = raw1[key] + value
         # only the step-2 terms exist in raw2 (the rest are step-1 only)

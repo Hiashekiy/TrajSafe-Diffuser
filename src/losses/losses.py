@@ -7,14 +7,23 @@
       + lambda_topo   * L_topo
       + lambda_shape  * L_shape
       + lambda_iou    * L_iou
-      + lambda_safe   * L_safe
-      + lambda_fbsafe * L_fbsafe    (continuous Bezier corridor violation of the
-                                     SECOND rollout step's raw prediction)
+      + lambda_safe   * L_safe      (THE continuous safety loss)
       + lambda_curve  * L_curve     (2nd/3rd differences of the DECODED curve)
 
-``L_fbsafe`` / ``L_curve`` are the two terms of the historical-safety-feedback
-two-step rollout (see ``docs/历史安全反馈说明.md``); they are computed
-on ``Q0_raw(s)``, the second network's OWN output after a real ALM + DDIM step.
+``L_safe`` is the ONE safety term of the model, used identically in the first
+stage (the first forward's clean prediction) and in the feedback-conditioned
+second stage of the two-step rollout.  It is the CONTINUOUS Bezier convex-hull
+violation of the control polygon against the frozen corridor pack::
+
+    beta_{l,r} = E_{l,r} Q        (exact cubic Bezier controls of piece l)
+    L_safe = mean_b max  relu(A_f beta_{l,r} - b_f)
+
+so a curve inside the corridor costs exactly 0 and the
+``b_{l,0..3} in R_j => C(u) in R_j for all u in [u_a, u_b]`` implication makes
+this a certificate for the WHOLE B-spline, not a 128-point sampling heuristic.
+The two former occupancy-rasterisation / decoded-curve corridor penalties are
+gone: there is exactly one definition of "unsafe" left in training, and it is
+the same object the inference ALM projects onto.
 
 There is NO ``L_traj``: the decoded 128-point curve never enters the loss, and
 nothing is ever decoded inside the training chain.  ``L_smooth`` is computed on
@@ -37,8 +46,6 @@ No progress target and no centre target exist anywhere in the training chain.
 
 from __future__ import annotations
 
-import math
-
 import torch
 import torch.nn.functional as F
 
@@ -52,11 +59,9 @@ __all__ = [
     "topology_ce",
     "ellipse_shape_loss",
     "ellipse_iou_loss",
-    "ellipse_safety_loss",
-    "alm_corridor_loss",
+    "continuous_safety_loss",
     "pack_violation",
     "pack_max_violation",
-    "feedback_safety_loss",
     "curve_smoothness_loss",
 ]
 
@@ -197,94 +202,8 @@ def ellipse_iou_loss(center: torch.Tensor, a: torch.Tensor, b: torch.Tensor,
     return _masked_mean(per, valid)
 
 
-def ellipse_safety_loss(center, a, b, theta, occ, raster_res=64, tau=10.0,
-                        chunk_size=32, cvar_fraction=0.2, cvar_weight=1.0,
-                        eps=1e-6, sample_mask=None):
-    """Mean + CVaR of ``1 - free-area-fraction`` over the full ellipses.
-
-    ``u_i`` is the unsafe fraction of the complete theoretical soft ellipse and
-    ``L_safe = Mean(u) + lambda_CVaR * CVaR(u)`` exactly as in the report.
-    """
-    if occ.dim() == 3:
-        occ = occ.unsqueeze(1)
-    B, K = center.shape[0], center.shape[1]
-    occ_r = F.adaptive_max_pool2d(occ.float(),
-                                  output_size=(int(raster_res), int(raster_res)))
-    free = 1.0 - occ_r[:, 0, None]
-    cell_area = (2.0 / float(raster_res)) ** 2
-    tau_t = torch.as_tensor(tau, device=occ.device, dtype=occ.dtype)
-    soft_area_factor = F.softplus(tau_t) / tau_t
-    weight = (torch.ones(B, device=center.device) if sample_mask is None
-              else sample_mask.to(center.dtype))
-    unsafe_chunks = []
-    for start in range(0, K, int(chunk_size)):
-        end = min(start + int(chunk_size), K)
-        mask = ellipse_soft_mask(center[:, start:end], a[:, start:end],
-                                 b[:, start:end], theta[:, start:end],
-                                 int(raster_res), float(tau))
-        free_cells = (mask * free).sum(dim=(-1, -2))
-        full_cells = (math.pi * a[:, start:end] * b[:, start:end]
-                      * soft_area_factor / cell_area)
-        free_ratio = (free_cells / (full_cells + eps)).clamp(0.0, 1.0)
-        unsafe_chunks.append(1.0 - free_ratio)
-    unsafe = torch.cat(unsafe_chunks, dim=1)                       # [B,K]
-    weighted = unsafe * weight[:, None]
-    mean = weighted.sum() / weight.sum().clamp_min(1.0) / float(K)
-    tail = max(1, math.ceil(K * float(cvar_fraction)))
-    cvar = torch.topk(weighted, k=tail, dim=1, largest=True,
-                      sorted=False).values.mean(dim=1)
-    cvar = _masked_mean(cvar, weight)
-    return mean + float(cvar_weight) * cvar, mean, cvar
-
-
-def alm_corridor_loss(curve: torch.Tensor, cell_a: torch.Tensor,
-                      cell_b: torch.Tensor, cell_valid: torch.Tensor,
-                      sample_mask: torch.Tensor,
-                      margin: float = 0.0) -> torch.Tensor:
-    """L_alm = penetration depth of the DECODED CURVE into the ALM corridor.
-
-    This is the training-time counterpart of the inference-only ALM: the
-    corridor is the very same object build_safety_corridor() produces and
-    bspline_alm_correct() projects onto, but it is precomputed offline by
-    scripts/data/carla_full/04_build_alm_constraints.py and stored as a
-    half-space pack
-
-        point p is inside cell i  <=>  A_i @ p <= b_i  for every face f
-
-    Because the rows of A are unit-normalised, max_f (A_if . p - b_if) is the
-    signed distance from p to cell i (positive = outside).  Hence
-
-        violation(p) = min_i max_f (A_if . p - b_if)
-
-    is positive exactly when p lies outside EVERY cell, i.e. outside the
-    corridor, and its value is the distance to the nearest cell boundary in
-    SCENE units.  The loss is the mean of relu(violation) over the decoded
-    curve points, so any curve that stays inside the corridor contributes 0.
-
-    Padding: unused faces carry b = +inf so they can never bind, and cells
-    flagged invalid are masked to +inf.  Samples whose corridor never closed
-    are excluded through sample_mask.
-
-    Shapes: curve [B,H,2] . cell_a [B,C,F,2] . cell_b [B,C,F] .
-            cell_valid [B,C] bool . sample_mask [B] bool
-    """
-    nrm = cell_a.norm(dim=-1).clamp_min(1e-9)                     # [B,C,F]
-    signed = (torch.einsum("bcfk,bhk->bhcf", cell_a, curve)
-              - cell_b[:, None])                                  # [B,H,C,F]
-    signed = signed / nrm[:, None]                                # [B,1,C,F]
-    worst_face = signed.amax(dim=-1)                              # [B,H,C]
-    worst_face = worst_face.masked_fill(~cell_valid[:, None, :],
-                                        float("inf"))
-    violation = worst_face.amin(dim=-1)                           # [B,H]
-    # no valid cell at all -> +inf; those samples are masked out anyway, but
-    # nan_to_num keeps a stray inf from poisoning the whole batch gradient
-    violation = torch.nan_to_num(violation, nan=0.0, posinf=0.0, neginf=0.0)
-    per = F.relu(violation - float(margin)).mean(dim=1)           # [B]
-    return _masked_mean(per, sample_mask)
-
-
 # ---------------------------------------------------------------------------
-# historical safety feedback (two-step rollout)
+# the continuous constraint set: the single training-time safety term
 # ---------------------------------------------------------------------------
 
 
@@ -348,17 +267,19 @@ def pack_max_violation(controls: torch.Tensor, pack,
     return pack_violation(controls, pack, margin=margin, reduction="max")
 
 
-def feedback_safety_loss(controls: torch.Tensor, pack,
-                         margin: float = 0.0,
-                         sample_mask: torch.Tensor | None = None,
-                         reduction: str = "mean") -> torch.Tensor:
-    """``L_feedback_safe``: continuous corridor violation of the RAW next step.
+def continuous_safety_loss(controls: torch.Tensor, pack,
+                           margin: float = 0.0,
+                           sample_mask: torch.Tensor | None = None,
+                           reduction: str = "mean") -> torch.Tensor:
+    """``L_safe``: continuous Bezier convex-hull violation (THE safety loss).
 
-    It is applied to the SECOND network prediction of the two-step rollout -
-    ``Q0_raw(s)``, i.e. the polygon the next reverse step would hand to the ALM -
-    so the denoiser itself learns to stay inside the corridor instead of relying
-    on the ALM to clean up after it.  A curve already inside the corridor (and
-    therefore a fixed point of the ALM) contributes exactly 0.
+    Used UNCHANGED in both training stages - the first forward's clean polygon
+    and the feedback-conditioned second forward's clean polygon - so there is a
+    single definition of "unsafe" in the whole training loop, and it is the exact
+    constraint set ``bspline_alm_correct`` projects onto at inference.
+
+    A polygon that is already inside the corridor (and therefore a fixed point
+    of the ALM) contributes exactly 0 and receives no gradient.
     """
     per = pack_violation(controls, pack, margin=margin, reduction="max")
     if reduction == "none":

@@ -94,7 +94,7 @@ class CarlaSplineDataset(Dataset):
         # Half-space form: a point p is inside cell i iff A_i @ p <= b_i for
         # every face.  Face rows are unit-normalised at read time so that
         # A.p - b is a signed distance in SCENE units (see
-        # src.losses.losses.alm_corridor_loss).
+        # src.losses.losses.pack_violation / continuous_safety_loss).
         q_pts = int(self.candidate_xy.shape[2])
         try:
             self.alm_a = _load("alm_cell_a.npy", mmap=True)

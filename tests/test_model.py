@@ -358,23 +358,31 @@ def test_shape_loss_gives_gradient_to_ellipse_head():
     assert float(g.abs().sum()) > 0.0
 
 
-def test_safety_loss_gives_gradient_to_ellipse_shape():
+def test_continuous_safety_loss_gives_gradient_to_the_control_polygon():
+    """The ONE safety term must reach the control polygon.
+
+    The former ellipse-occupancy safety loss is gone; ``L_safe`` is the exact
+    Bezier convex-hull violation against a corridor pack, so its gradient flows
+    into the clean control polygon the ALM would project.
+    """
+    from src.geometry.bspline_constraints import \
+        build_constraint_pack_from_regions
     model = tiny_model()
     b = tiny_batch()
-    # a partial obstacle makes the unsafe fraction depend on a/b/theta
-    b["occ"][:, :, b["occ"].shape[-2] // 2:, :] = 1.0
     out = _forward(model, b)
-    ell = out["ellipse"]
-    model.zero_grad()
-    loss, mean, cvar = losses.ellipse_safety_loss(
-        ell["center"], ell["a"], ell["b"], ell["theta"], b["occ"],
-        sample_mask=b["has_candidate"])
+    cells = 4
+    A = torch.tensor([[0.0, 1.0], [0.0, -1.0], [1.0, 0.0], [-1.0, 0.0]])
+    A = A[None, None].expand(1, cells, 4, 2).contiguous()
+    bb = torch.full((1, cells, 4), 0.05)          # a narrow tube around y = 0
+    mask = torch.ones(1, cells, dtype=torch.bool)
+    pack = build_constraint_pack_from_regions(
+        model.bspline, A, bb, mask, anchors=torch.linspace(0.0, 1.0, cells))
+    control = out["control"][:1].detach().clone().requires_grad_(True)
+    loss = losses.continuous_safety_loss(control, pack)
+    assert torch.isfinite(loss).all()
     loss.backward()
-    grads = [p.grad for p in model.ellipse_shape_head.parameters()
-             if p.grad is not None]
-    assert grads and all(torch.isfinite(g).all() for g in grads)
-    assert any(float(g.abs().sum().detach()) > 0.0 for g in grads)
-    assert float(mean.detach()) >= 0.0 and float(cvar.detach()) >= 0.0
+    assert control.grad is not None and torch.isfinite(control.grad).all()
+    assert float(control.grad.abs().sum()) > 0.0
 
 
 def test_control_space_losses_are_finite():

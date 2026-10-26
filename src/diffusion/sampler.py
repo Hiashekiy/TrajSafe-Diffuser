@@ -41,11 +41,13 @@ returns ``Q0_safe``.  The trailing ``0 -> -1`` transition sets ``q = q0_used``.
 
 Historical safety feedback (only when the model was built with
 ``model.feedback.enabled``): every guided step hands the NEXT forward pass the
-previous step's ALM result,::
+previous step's ALM CORRECTION and its verification flag,::
 
-    feedback_control = Q0_safe_prev          (Q0_raw_prev if it was already safe)
     feedback_delta   = Q0_safe_prev - Q0_raw_prev
     feedback_valid   = the previous ALM output passed the frozen constraint pack
+
+``Q0_safe_prev`` itself is never handed back: the network learns what the ALM
+changed, not a finished safe trajectory to copy.
 
 A step whose ALM still violates the pack is NOT accepted as history: the last
 verified feedback is kept instead (section 4.4 of the design note).  During
@@ -295,25 +297,25 @@ def _dense_decode(codec, q: torch.Tensor, num_points: int) -> torch.Tensor:
     return torch.einsum("pk,bkd->bpd", basis, q)
 
 
-def feedback_step(control: torch.Tensor, delta: torch.Tensor,
-                  valid: torch.Tensor, guided: torch.Tensor,
-                  has_pack: torch.Tensor, before: torch.Tensor,
-                  after: torch.Tensor, raw_step: torch.Tensor,
-                  safe_step: torch.Tensor, tol: float):
+def feedback_step(delta: torch.Tensor, valid: torch.Tensor,
+                  guided: torch.Tensor, has_pack: torch.Tensor,
+                  before: torch.Tensor, after: torch.Tensor,
+                  raw_step: torch.Tensor, safe_step: torch.Tensor, tol: float):
     """Refresh the cross-reverse-step safety feedback (design note section 4).
 
-        raw already inside the corridor  -> (Q0_raw, 0,        1)
-        ALM fixed a violation            -> (Q0_safe, Delta,   1)
-        ALM still violates / not guided  -> keep the previous, verified feedback
+        raw already inside the corridor  -> Delta = 0
+        ALM fixed a violation            -> Delta = Q0_safe - Q0_raw
+        ALM still violates / not guided  -> keep the previous, verified Delta
 
     Only a result that PASSES the frozen, exact constraint pack may become
-    history: a failing ALM never overwrites the last trusted feedback.  Returns
-    ``(control, delta, valid, stats)``.
+    history: a failing ALM never overwrites the last trusted feedback.  The
+    feedback is the CORRECTION ONLY - ``Q0_safe`` itself is never stored, so it
+    can never be handed to the next reverse step.  Returns
+    ``(delta, valid, stats)``.
     """
     reliable = guided & has_pack & (after <= float(tol))
     already_ok = reliable & (before <= float(tol))
     keep = already_ok[:, None, None]
-    ctrl_new = torch.where(keep, raw_step, safe_step)
     delta_new = torch.where(keep, torch.zeros_like(safe_step),
                             safe_step - raw_step)
     keep_valid = reliable[:, None, None]
@@ -322,8 +324,7 @@ def feedback_step(control: torch.Tensor, delta: torch.Tensor,
         "already_safe": int(already_ok.sum()),
         "rejected": int((guided & has_pack & ~reliable).sum()),
     }
-    return (torch.where(keep_valid, ctrl_new, control),
-            torch.where(keep_valid, delta_new, delta),
+    return (torch.where(keep_valid, delta_new, delta),
             valid | reliable, stats)
 
 
@@ -612,13 +613,14 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     }
     exhausted = torch.zeros(B, dtype=torch.bool, device=dev)
 
-    # ---- historical safety feedback (previous reverse step's ALM result) ----
+    # ---- historical safety feedback (previous reverse step's ALM correction) ----
     # Only maintained/consumed when the model was built with
     # ``model.feedback.enabled``; otherwise the sampler is byte-for-byte the old
     # one.  ``feedback_valid = 0`` means "no reliable history" and makes the
     # fusion an exact identity, which is what the warm-up phase relies on.
+    # The state is the CORRECTION ONLY: ``Q0_safe_prev`` is never stored, so the
+    # corrected clean trajectory can never be handed to the next reverse step.
     fb_on = bool(getattr(model, "feedback_enabled", False)) and corridor_on
-    fb_control = torch.zeros(B, C, 2, device=dev, dtype=q.dtype)
     fb_delta = torch.zeros(B, C, 2, device=dev, dtype=q.dtype)
     fb_valid = torch.zeros(B, dtype=torch.bool, device=dev)
     fb_tol = float(alm_cfg.get("feedback_accept_tol",
@@ -638,11 +640,9 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         if not fb_on:
             return {}
         if fb_force_zero:
-            return {"feedback_control": torch.zeros_like(fb_control),
-                    "feedback_delta": torch.zeros_like(fb_delta),
+            return {"feedback_delta": torch.zeros_like(fb_delta),
                     "feedback_valid": torch.zeros_like(fb_valid)}
-        return {"feedback_control": fb_control, "feedback_delta": fb_delta,
-                "feedback_valid": fb_valid}
+        return {"feedback_delta": fb_delta, "feedback_valid": fb_valid}
 
     if alm_enabled and sdf_mode is not None:
         raise ValueError("guidance 'alm' and an SDF mode are mutually exclusive")
@@ -781,14 +781,14 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
         # Only a step whose ALM output PASSES the (frozen, exact) constraint
         # pack becomes history.  When the raw prediction was already feasible the
         # network is told "stay where you are" (delta = 0), otherwise it is told
-        # where the ALM moved it and by how much.  A failing ALM NEVER overwrites
-        # the last verified feedback.
+        # by how much the ALM moved it.  A failing ALM NEVER overwrites the last
+        # verified feedback, and the corrected polygon itself is never stored.
         if (fb_on and not fb_force_zero and step_alm_stats is not None
                 and pack is not None):
             before = step_alm_stats["max_violation_before"]
             after = step_alm_stats["max_violation_after"]
-            fb_control, fb_delta, fb_valid, fb_stats = feedback_step(
-                fb_control, fb_delta, fb_valid, guided, pack.num_pieces > 0,
+            fb_delta, fb_valid, fb_stats = feedback_step(
+                fb_delta, fb_valid, guided, pack.num_pieces > 0,
                 before, after, step_q0_raw, q0_used, fb_tol)
             fb_history["accepted"] += fb_stats["accepted"]
             fb_history["already_safe"] += fb_stats["already_safe"]
@@ -846,7 +846,6 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
                 "feedback_enabled": fb_on,
                 "feedback_valid_in": fb_in_valid.detach().cpu().clone(),
                 "feedback_valid": fb_valid.detach().cpu().clone(),
-                "feedback_control": fb_control.detach().cpu().clone(),
                 "feedback_delta": fb_delta.detach().cpu().clone(),
                 "raw_violation": (step_alm_stats["max_violation_before"]
                                   .detach().cpu().clone()
@@ -920,7 +919,6 @@ def sample(model, schedule, cond, occ, candidate_xy, candidate_mask,
     result["feedback"] = {
         "enabled": fb_on,
         "valid": fb_valid.detach().cpu().clone(),
-        "control": fb_control.detach().cpu().clone(),
         "delta": fb_delta.detach().cpu().clone(),
         "history": dict(fb_history),
     }

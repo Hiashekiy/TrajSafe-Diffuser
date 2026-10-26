@@ -2,7 +2,7 @@
 
     e_i^c = MLP_C(Phi_xy(c_i))
     q_i^E = h_i^path + e_i^c
-    A^E   = CenterBiasedCrossAttention(AdaLN(q^E, h_t), C_E, B_geo)
+    A^E   = CenterBiasedCrossAttention(AdaLN(q^E, h_t), C_G, B_geo)
     H_ell = q^E + A^E
 
 ``h_i^path`` is the ``PathFeatureHead`` output (the renamed former MLP_prog).
@@ -11,6 +11,9 @@ Skeleton queries = ``model.num_safety_queries``): there is no centre head and
 no learned progress.  The query feature ``h_i^path`` is the output of
 ``safety_query_head`` on the SELECTED Skeleton tokens (the safety branch lives
 on the Q geometry queries, the trajectory branch on the C control tokens).
+
+``C_G`` is the model's ONE 16x16 map memory (the same tensor the control
+backbone consumes); there is no separate 32x32 fine-geometry memory.
 
 The spatial bias uses the *diffusion strength* exactly as specified:
 
@@ -35,15 +38,15 @@ __all__ = ["EllipseGeometry"]
 
 
 class EllipseGeometry(_MHABase):
-    """Center embedding + one center-biased cross-attention into C_E."""
+    """Center embedding + one center-biased cross-attention into the map tokens."""
 
     def __init__(self, d_model: int, num_heads: int, spatial_pe: nn.Module,
-                 geo_mem_res: int = 32, geo_sigma: float = 0.25,
+                 map_res: int = 16, geo_sigma: float = 0.25,
                  geo_bias_clip: float = 8.0, hidden: int = 256,
                  dropout: float = 0.0, center_encoding: bool = True):
         super().__init__(d_model, num_heads, dropout)
         self.spatial_pe = spatial_pe
-        self.geo_mem_res = int(geo_mem_res)
+        self.map_res = int(map_res)
         self.geo_sigma = float(geo_sigma)
         self.geo_bias_clip = float(geo_bias_clip)
         self.center_encoding = bool(center_encoding)
@@ -53,8 +56,8 @@ class EllipseGeometry(_MHABase):
         self.kv = nn.Linear(d_model, 2 * d_model)
 
     def _geo_bias(self, center: torch.Tensor, ab: torch.Tensor) -> torch.Tensor:
-        """center [B,H,2], ab [B] = sqrt(alpha_bar) -> bias [B,1,H,N_E]."""
-        grid = scene_grid_centres(self.geo_mem_res, center.device,
+        """center [B,H,2], ab [B] = sqrt(alpha_bar) -> bias [B,1,H,N_map]."""
+        grid = scene_grid_centres(self.map_res, center.device,
                                   dtype=center.dtype)
         dist2 = ((center[:, :, None, :] - grid[None, None, :, :]) ** 2).sum(-1)
         strength = (ab.to(center.dtype) ** 2)[:, None, None]
@@ -62,7 +65,7 @@ class EllipseGeometry(_MHABase):
         return bias.clamp(-self.geo_bias_clip, 0.0)[:, None]
 
     def forward(self, h_path: torch.Tensor, center: torch.Tensor,
-                geo_mem: torch.Tensor | None, h_t: torch.Tensor,
+                map_tokens: torch.Tensor | None, h_t: torch.Tensor,
                 ab: torch.Tensor | None):
         """h_path [B,H,D], center [B,H,2] -> (H_ell [B,H,D], A_E or None)."""
         # h_path here is the selected route's H_Gamma safety query, not the
@@ -70,10 +73,10 @@ class EllipseGeometry(_MHABase):
         q_e = h_path
         if self.center_encoding:
             q_e = q_e + self.mlp_c(self.spatial_pe(center))
-        if geo_mem is None:
-            # The report defines A^E = 0 when C_E is unavailable.
+        if map_tokens is None:
+            # The report defines A^E = 0 when the map memory is unavailable.
             return q_e, None
         bias = self._geo_bias(center, ab) if ab is not None else None
-        k, v = self.kv(geo_mem).chunk(2, dim=-1)
+        k, v = self.kv(map_tokens).chunk(2, dim=-1)
         att = self.attend(self.q(self.adaln(q_e, h_t)), k, v, bias)
         return q_e + att, att

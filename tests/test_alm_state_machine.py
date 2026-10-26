@@ -86,12 +86,9 @@ class StubPlanner(nn.Module):
 
     def forward_all(self, q, occ, cond, t, ab, candidate_xy, candidate_mask,
                     geometry, geometry_lengths, select_index=None,
-                    feedback_control=None, feedback_delta=None,
-                    feedback_valid=None):
+                    feedback_delta=None, feedback_valid=None):
         if self.feedback_enabled:
             self.feedback_log.append({
-                "control": (None if feedback_control is None
-                            else feedback_control.detach().clone()),
                 "delta": (None if feedback_delta is None
                           else feedback_delta.detach().clone()),
                 "valid": (None if feedback_valid is None
@@ -401,7 +398,7 @@ def test_trace_carries_everything_the_dashboard_needs():
     for key in ("t", "s", "q", "q0_raw", "q0_safe", "p_raw", "p_safe",
                 "alm_active", "alm_stats", "frozen_topology_idx", "guided",
                 "selected_idx", "pi", "ellipse_center", "ellipse_shape4",
-                "feedback_valid", "feedback_control", "feedback_delta",
+                "feedback_valid", "feedback_delta",
                 "raw_violation", "alm_correction", "curve_smoothness_raw",
                 "curve_smoothness_safe"):
         assert key in step, key
@@ -434,7 +431,6 @@ def test_feedback_is_zero_in_warmup_and_carries_the_previous_step():
     for entry in log[:warmup]:
         assert entry["valid"] is not None
         assert not bool(entry["valid"].any())
-        assert float(entry["control"].abs().max()) == 0.0
         assert float(entry["delta"].abs().max()) == 0.0
     # the LAST reverse forward consumed exactly what the sampler published at the
     # end of the second-to-last reverse step
@@ -442,13 +438,10 @@ def test_feedback_is_zero_in_warmup_and_carries_the_previous_step():
         assert entry["valid"] is not None
     last, prev = log[-1], out["trace"][-2]
     assert torch.equal(last["valid"].cpu(), prev["feedback_valid"])
-    assert torch.allclose(last["control"].cpu(), prev["feedback_control"])
     assert torch.allclose(last["delta"].cpu(), prev["feedback_delta"])
-    # the first guided step is verified, and publishes Q0_safe / Delta for the
-    # NEXT forward pass
+    # the first guided step is verified, and publishes Delta for the NEXT forward
     step = out["trace"][warmup]
     assert bool(step["feedback_valid"][0])
-    assert torch.allclose(step["feedback_control"], step["q0_safe"])
     assert torch.allclose(step["feedback_delta"],
                           step["q0_safe"] - step["q0_raw"])
     assert out["feedback"]["history"]["accepted"] >= 1

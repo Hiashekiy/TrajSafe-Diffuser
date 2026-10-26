@@ -18,8 +18,7 @@ sys.path.insert(0, ROOT)
 from src.utils.config import load_config, num_controls, num_safety_queries
 from src.models.trajsafe import TrajSafePlanner
 from src.losses.losses import (boundary_control_loss, control_smoothness_loss,
-                               control_x0_loss, ellipse_safety_loss,
-                               ellipse_shape_loss)
+                               control_x0_loss, ellipse_shape_loss)
 
 
 def main():
@@ -104,10 +103,11 @@ def main():
                     + boundary_control_loss(out["q_raw_final"], p0, cond, ws, wg))
             loss = loss + ellipse_shape_loss(ell["shape4"], shape_gt, valid,
                                              has_cand)
-            safe, _, _ = ellipse_safety_loss(
-                ell["center"], ell["a"], ell["b"], ell["theta"], occ,
-                sample_mask=has_cand)
-            return loss + safe
+            # NOTE: the safety term of this profile is the continuous Bezier
+            # convex-hull loss, which needs a constraint pack; it is left out
+            # here because the timing profile only exercises the shared
+            # trajectory/shape graph.
+            return loss
 
         total_loss, t_loss = timed(_losses)
         _, t_bwd = timed(lambda: (total_loss.backward(),

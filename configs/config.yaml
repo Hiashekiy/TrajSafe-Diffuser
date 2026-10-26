@@ -71,9 +71,7 @@ model:
   final_blocks: 3                      # Final Control Denoiser N_F
   ffn_dim: 512
   map_res: 256
-  global_mem_res: 16                   # C_G 16x16
-  geo_decode_res: 64                   # fine-geometry decoder output
-  geo_mem_res: 32                      # C_E 32x32
+  global_mem_res: 16                   # C_G 16x16 -- the ONLY map memory
   geo_sigma: 0.25
   geo_bias_clip: 8.0
   dropout: 0.0

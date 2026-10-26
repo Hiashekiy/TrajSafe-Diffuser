@@ -86,8 +86,8 @@ def test_dc48_has_no_safety_region_and_no_feedback_modules():
 def test_dc48_config_disables_every_safety_loss():
     cfg = load_config(D_CFG)
     loss = cfg["loss"]
-    for key in ("lambda_shape", "lambda_iou", "lambda_safe", "lambda_alm",
-                "lambda_feedback_safe", "lambda_curve_smooth"):
+    for key in ("lambda_shape", "lambda_iou", "lambda_safe",
+                "lambda_curve_smooth"):
         assert float(loss[key]) == 0.0, key
     assert cfg["train"]["feedback"]["rollout"] is False
     assert cfg["model"]["safety_features"]["enabled"] is False
@@ -136,7 +136,6 @@ def test_dc48_ignores_the_shared_feedback_api_arguments():
                                   geometry, lengths)
         fed = model.forward_all(
             q_t, occ, cond, t, ab, candidate_xy, mask, geometry, lengths,
-            feedback_control=torch.rand(B, C, 2) * 4 - 2,
             feedback_delta=torch.rand(B, C, 2) * 4 - 2,
             feedback_valid=torch.ones(B, dtype=torch.bool))
     for key in ("control", "q_raw_final", "final", "q_coarse", "H_clean"):

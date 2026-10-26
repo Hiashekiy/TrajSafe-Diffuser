@@ -14,6 +14,4 @@ loss:
   lambda_shape: 0.0
   lambda_iou: 0.0
   lambda_safe: 0.0
-  lambda_alm: 0.0
-  lambda_feedback_safe: 0.0
   lambda_curve_smooth: 0.0
