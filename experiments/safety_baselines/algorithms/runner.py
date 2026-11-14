@@ -48,8 +48,17 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None,
             from experiments.safety_baselines.adapters.sc48_control import SC48ControlTask
             Task=SC48ControlTask;extra=dict(task_extra or {})
         elif cfg.get('state_adapter')=='safety_points':
-            from experiments.safety_baselines.adapters.safety_point_task import SafetyPointTask
-            Task=SafetyPointTask;extra=dict(task_extra or {})
+            from experiments.safety_baselines.adapters.safety_point_task import (
+                SafetyPointTask, SafetySegmentPointTask)
+            extra=dict(task_extra or {})
+            # `segment_constraints_for` must be honoured here too, otherwise PDM silently
+            # runs the vertex-only variant while the evaluator measures the whole curve
+            # (2026-11-14 review: every waypoint free, segments crossing walls).
+            if method in cfg.get('segment_constraints_for',[]):
+                Task=SafetySegmentPointTask
+                extra['margin']=cfg.get('segment_circle_margin_scene',0.)
+            else:
+                Task=SafetyPointTask
         elif cfg.get('state_adapter')=='physical_trajectory':
             from experiments.safety_baselines.adapters.physical_trajectory import PhysicalTrajectoryTask
             Task=PhysicalTrajectoryTask
