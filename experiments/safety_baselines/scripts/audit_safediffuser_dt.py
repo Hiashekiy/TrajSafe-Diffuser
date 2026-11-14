@@ -22,7 +22,7 @@ from experiments.safety_baselines.algorithms.runner import run_method
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_aligned_t256.json')
+    ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_paper_t256.json')
     ap.add_argument('--indices',default='0,81,163,244,326')
     ap.add_argument('--methods',default='RoS-diffuser,ReS-diffuser,TVS-diffuser')
     ap.add_argument('--substeps',default='1,16')

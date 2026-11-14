@@ -16,7 +16,7 @@ from experiments.safety_baselines.models.map_only_points import load_point_basel
 from experiments.safety_baselines.models.point_data import PointDataset
 from experiments.safety_baselines.adapters.point_sampler import sample_points
 from experiments.safety_baselines.adapters.point_evaluator import evaluate_points
-from experiments.safety_baselines.algorithms.runner import run_method,METHODS,derived_seed
+from experiments.safety_baselines.algorithms.runner import run_method,METHODS,derived_seed,initial_noise
 
 def aggregate(records,methods):
     out={}
@@ -38,11 +38,13 @@ def aggregate(records,methods):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_aligned_t16.json')
+    ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_paper_t256.json')
     ap.add_argument('--indices',default='frozen20',help="'frozen20' or comma separated validation indices")
     ap.add_argument('--methods',default='all')
     ap.add_argument('--seeds',default='0')
     ap.add_argument('--out-dir',default=None)
+    ap.add_argument('--split',default='val',choices=['val','test'],help='val is used for checkpoint selection; test is the final protocol')
+    ap.add_argument('--ddim-steps',type=int,default=16,help='DDIM steps for the unconstrained baseline (match the budget of the loops under review)')
     a=ap.parse_args()
     base=ROOT/'experiments/safety_baselines';cfg=json.loads((ROOT/a.config).read_text(encoding='utf8'))
     indices=cfg['validation_indices'] if a.indices=='frozen20' else [int(v) for v in a.indices.split(',')]
@@ -53,11 +55,11 @@ def main():
     out.mkdir(parents=True,exist_ok=True)
     ckpt=ROOT/cfg['checkpoint'];model,ck=load_point_baseline(ckpt,'cuda');d=ck['config']['diffusion']
     schedule=NoiseSchedule(d['timesteps'],d['beta_schedule'],d['beta_start'],d['beta_end']).to('cuda')
-    ds=PointDataset('val',ck['config']['data']['processed_root'])
-    ids=np.load(Path(ck['config']['data']['processed_root'])/'val/sample_id.npy')
+    ds=PointDataset(a.split,ck['config']['data']['processed_root'])
+    ids=np.load(Path(ck['config']['data']['processed_root'])/a.split/'sample_id.npy')
     manifest={'status':'running','checkpoint':cfg['checkpoint'],'checkpoint_hash':hashlib.sha256(ckpt.read_bytes()).hexdigest(),
         'config_path':a.config,'config_hash':hashlib.sha256((ROOT/a.config).read_bytes()).hexdigest(),
-        'split':'val','indices':indices,'seeds':seeds,'methods':methods,'expected_records':len(indices)*len(seeds)*len(methods),
+        'split':a.split,'indices':indices,'seeds':seeds,'methods':methods,'expected_records':len(indices)*len(seeds)*len(methods),
         'completed_records':0,'representation':'direct128points; no spline, lifting or refit','config':cfg,
         'source_hashes':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()
             for folder in ['algorithms','adapters','models'] for p in (base/folder).rglob('*.py')}}
@@ -68,15 +70,16 @@ def main():
             for index in indices:
                 row=ds[index];occ=row['occupancy'][0].numpy();cond=row['cond'].numpy();scene=int(ids[index])
                 for seed in seeds:
+                    init=initial_noise(scene,seed,128);init[[0,-1]]=cond  # paired protocol: one shared start
                     for method in methods:
                         if method=='Diffuser':
                             torch.cuda.synchronize();start=time.perf_counter()
                             q=sample_points(model,schedule,row['occupancy'][None].cuda(),row['cond'][None].cuda(),
-                                seed=derived_seed(scene,seed,method)%(2**31-1))
+                                seed=derived_seed(scene,seed,method)%(2**31-1),init=init,steps=a.ddim_steps)
                             torch.cuda.synchronize()
                             result={'trajectory':q[0].cpu().tolist(),'status':'ok','failure_reason':None,
                                 'wall_time':time.perf_counter()-start,'method':method,'per_step_trace':[]}
-                        else:result=run_method(method,model,schedule,occ,cond,scene,seed,cfg)
+                        else:result=run_method(method,model,schedule,occ,cond,scene,seed,cfg,init_noise=init)
                         p=result['trajectory'];metrics=None
                         if p is not None:
                             if np.asarray(p).shape!=(128,2):raise ValueError('output is not native trajectory points')

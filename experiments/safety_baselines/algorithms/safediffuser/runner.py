@@ -28,11 +28,13 @@ def run(task,method,rng,cfg,budget,trace):
                 extra={'sigma_max':float(sigma.max()),'sigma_min':float(sigma.min()),'sigma_dot_max':float(sigma_dot.max())}
             else:
                 if method=='ReS-diffuser':
-                    if t<=N0 and hard_gamma is None:hard_gamma=legal_gamma(h,(N0+1)*cfg['cbf_dt'],cfg['cbf_epsilon'],cfg['cbf_gamma_floor'])
+                    # Thm 3.5 uses gamma(N0, eps); the hard interval is t<=N0, i.e.
+                    # hard_levels = N0+1 levels (paper's ReS-diffuser-l10 -> 10 levels).
+                    if t<=N0 and hard_gamma is None:hard_gamma=legal_gamma(h,N0*cfg['cbf_dt'],cfg['cbf_epsilon'],cfg['cbf_gamma_floor'])
                     w=cfg['relax_weight'] if t>N0 else 0.
                     used=gamma if hard_gamma is None else hard_gamma
                 else:used=gamma
-                offset=cfg['cbf_epsilon']*(h-used);extra={'gamma':used,'w':w,'hard_interval':bool(w==0)}
+                offset=cfg['cbf_epsilon']*(h-used);extra={'gamma':used,'w':w,'hard_interval':bool(w==0),'hard_levels':int(N0+1)}
             solver=getattr(task,'cbf_solve',None) or cbf_velocity
             v,r,info=solver(desired,J,offset,w,budget,cfg['qp_tol'])
             step=min(cfg['cbf_dt']-elapsed,cfg['cbf_dt']/cfg.get('cbf_substeps',1))

@@ -61,7 +61,7 @@ def ddim_with_correction(model,schedule,occ_t,cond_t,occ,cond,seed,steps=16,corr
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_aligned_t16.json')
+    ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_paper_t256.json')
     ap.add_argument('--indices',default='0,81,163,244,326');ap.add_argument('--seed',type=int,default=0)
     ap.add_argument('--out',default='experiments/safety_baselines/docs/backbone_vs_constraint_audit.json')
     a=ap.parse_args();cfg=json.loads((ROOT/a.config).read_text(encoding='utf8'))

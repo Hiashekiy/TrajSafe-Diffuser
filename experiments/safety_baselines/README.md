@@ -18,12 +18,14 @@ Python 3.12 入口：`python experiments/safety_baselines/run.py --stage S0`。
 |---|---|
 |**七种对比方法怎么实现的（约束作用在哪一层 / 怎么更新 / 约束是什么）**|`docs/comparison_methods_implementation.md`|
 |修复报告与全部证据|`docs/DSH_FIX_REPORT_20261114.md`|
-|**二十案例小批量（256 级基座，当前推荐）**|`scripts/validate_point_methods.py --config configs/seven_native_points_aligned_t256.json`|
-|二十案例小批量（16 级基座，交接时的那一版）|`scripts/validate_point_methods.py --config configs/seven_native_points_aligned_t16.json`|
-|PDM 原文线段约束对照|`scripts/validate_point_methods.py --config configs/seven_native_points_aligned_segment_pdm_t16.json --methods PDM`|
+|**二十案例小批量（论文原样口径：PDM 用 App.C.3 整段线段约束）**|`scripts/validate_point_methods.py --config configs/seven_native_points_paper_t256.json`|
+|二十案例小批量（全顶点诊断口径，八方法可直接比较）|`scripts/validate_point_methods.py --config configs/seven_native_points_vertexall_t256.json`|
+|最终协议应加 `--split test`（val 参与过 checkpoint 选择）|`... --split test`；`--ddim-steps` 可对齐 DDIM 预算|
+|配置生成（所有派生常数由日程与论文值反算，禁止手写）|`scripts/make_aligned_configs.py`|
 |采样器/基座无约束兼容性门|`scripts/audit_sampler_match.py`|
 |线段约束与投影的真实地图审计|`scripts/audit_segment_projection.py`|
 |骨架 vs 约束对象对照（旧修正器表示逻辑，仅诊断）|`scripts/audit_backbone_effect.py`|
+|SafeDiffuser 的 Δτ/子步审计|`scripts/audit_safediffuser_dt.py`|
 |256 级基座重训（~46 min）|`scripts/train_map_only_points.py --run-id map_only_points_t256_e100 --config configs/map_only_points_l1_final8_e100_t256.json`|
 
 **为什么要 256 级**：waypoint 间距 0.95 m，而 16 级 cosine 日程的最低训练噪声是 8.77 m/坐标，任何以 p_0 收尾的采样器必然交付 13× 锯齿折线；256 级把它降到 1.10 m（下限 1.56 m）。论证与前后对照见修复报告 §3.0/§3.1/§4b。

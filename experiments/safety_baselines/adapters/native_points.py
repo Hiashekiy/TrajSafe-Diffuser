@@ -25,6 +25,13 @@ class NativePointTask:
         return p
     def points(self,x):return self.unpack(x)
     def initial(self,rng,particles=1,ve=False):
+        # `initial_override` (VP-space noise, set by the paired-protocol runner) makes
+        # every method start from the same trajectory noise vector.
+        override=getattr(self,'initial_override',None)
+        if override is not None and particles==1:
+            noise=np.asarray(override,dtype=float).reshape(-1)
+            if noise.shape!=(self.D,):raise ValueError('initial_override shape mismatch')
+            return (noise*self.sigma[-1] if ve else noise)[None]
         return rng.normal(size=(particles,self.D))*(self.sigma[-1] if ve else 1.)
     @torch.inference_mode()
     def clean(self,x,t,ve=False):

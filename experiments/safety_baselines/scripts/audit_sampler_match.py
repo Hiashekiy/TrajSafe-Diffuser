@@ -41,7 +41,7 @@ class Unconstrained:
         return np.asarray(target,dtype=float).copy(),{'status':'unconstrained_identity'}
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_aligned_t16.json')
+    ap=argparse.ArgumentParser();ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_paper_t256.json')
     ap.add_argument('--indices',default='0,81,163,244,326');ap.add_argument('--seed',type=int,default=42)
     ap.add_argument('--out',default='experiments/safety_baselines/docs/sampler_compatibility_gate.json')
     a=ap.parse_args();cfg=json.loads((ROOT/a.config).read_text(encoding='utf8'))
@@ -76,8 +76,7 @@ def main():
             except Exception as exc:
                 rows.append({'index':index,'diagnostic':label,'error':repr(exc)[:200],'seconds':time.perf_counter()-t0})
         for label,over in [('pdm_paper_ve',{'pdm_step_convention':'paper','pdm_parameterization':'ve'}),
-                           ('pdm_official_ald_ve',{'pdm_step_convention':'official_ald','pdm_parameterization':'ve'}),
-                           ('pdm_official_ald_vp',{'pdm_step_convention':'official_ald','pdm_parameterization':'vp'})]:
+                           ('pdm_official_ald_ve',{'pdm_step_convention':'official_ald','pdm_parameterization':'ve'})]:
             c=dict(cfg,pdm_inner=20,**over);trace=[];t0=time.perf_counter()
             try:
                 x=pdm_run(task,'PDM',np.random.default_rng(a.seed),c,Budget(300),trace)

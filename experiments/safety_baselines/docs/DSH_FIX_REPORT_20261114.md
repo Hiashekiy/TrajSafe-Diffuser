@@ -150,7 +150,38 @@ PDM/CD 这类循环最后一级结束在 `p_0=N(√ᾱ_0 x0, 1-ᾱ_0)` 上，不
 3. **RoS/TVS 没有改善，问题在它们自己的积分参数**：`legal_gamma` 用 `scale=exp(ε·horizon)`，`cbf_epsilon=1.0` 且 `horizon=N·dt`，N 从 16 变 256 后 e^{-256}≈0，γ 直接压到 `cbf_gamma_floor=1.25e-4`；TVS 的 `σ_dot=-initial/(N·dt)` 也被 16× 稀释。这套 ε/horizon 参数是为 16 级写的，**不能平移**。这是下一件要做的事，本轮没有偷偷改它们（改了就是把它们的机制改掉）。
 4. `Projected` 的仅线段碰撞 13/20、`PDM` 18/20 仍是"逐点约束 vs 整段评价"的不一致，与日程无关。
 
+## 4d. 外部审查（2026-11-14）逐条裁决与修复记录
+
+外部审查基于提交 `aba254c`，提出 11 项。逐条核对的裁决如下（✓ = 接受并已修，✗ = 反驳或修正，△ = 部分接受）。
+每一条都在 `tests/test_review_20261114.py` 里有对应回归测试，防止再次回退。
+
+|#|审查意见|裁决|修复|
+|---|---|---|---|
+|1|PDM 的 VP 版把 √ᾱ_t 缩放后的状态投影到**未缩放**的约束集 C，且不跨级换算 y|**✓ 成立**|删除 VP 分支，`pdm_parameterization` 只允许 `ve`（论文坐标），传入 `vp` 直接 `ValueError`。测试 `test_pdm_rejects_a_vp_state`|
+|2|official_ald 的步长系数错 2 倍：应是 γ=δ/2|**✓ 成立**（官方 `x += (δ/2)s + √δ z`）|`level_gamma` 改为 `ε·σ_t²/(2σ_min²)`；测试 `test_official_ald_gamma_is_half_of_delta`|
+|3|主实验没启用 PDM 原文线段约束（`segment_constraints_for: []`）|**✓ 成立**|主配置改名 `seven_native_points_paper_t256.json` 并设 `["PDM"]`；全顶点版本显式改名为 `..._vertexall_t256.json`。测试 `test_paper_config_is_paper_native_...`|
+|4|圆覆盖只查格中心，对角相邻格的角点可能露在外|**✓ 成立**|覆盖判据改为 `‖c_i−c_j‖ + 半格对角 ≤ r_i`（整格），并新增 `covered_corner_fraction` 审计（验证 5 个采样点：4 角 + 中心）；测试 `test_circle_cover_..._SQUARE_not_just_centre`|
+|5|部分投影可能被当成完整可行解交付|**✓ 成立**|PDM 末端级别必须来自精确投影，否则 `SolverFailure`；新增 `pdm_stats`（call 数、partial 数、final_status、final_residual、exact_final）写入每条记录。测试 `test_pdm_records_projection_status_...`|
+|6|256→64 跳级时仍用该级自己的 β，累计 β 只剩 29.7%|**△ 现象成立，处方反驳**|实现两种模式：`cd_beta="level"`（该级自身 β，论文 eq.6 的形式）与 `"interval"`（`β_eff=1−ᾱ_t/ᾱ_next`）。但**不采纳把 interval 当默认**：在 4× 跳级下 β_eff 在高噪声末段可达 β_t 的 2 倍以上，而 1−ᾱ_t 不变，混合比 γ/(1−ᾱ)→≈1，离散化随之失稳（平稳方差发散）。正确做法是**不跳级**：`cd_levels` 设为与基座级数相同（256）。测试 `test_cd_beta_modes_on_a_subsampled_ladder`（同时验证全梯级时两种模式相等）|
+|7|`dual_eta`、`rho` 应是论文值除以 s²(=16384)，当前只除了 s|**✓ 成立**，且与仓库自己的 `test_dual_units_invariance` 自相矛盾|`dual_eta=1e-3/16384=6.10e-8`、`rho=2.5e-4/16384=1.53e-8`，由 `scripts/make_aligned_configs.py` 从日程与论文值推导生成，不再手写。测试 `test_config_dual_parameters_are_the_paper_values_over_scale_squared`|
+|8|PD/ALM 每条记录抽了两次噪声，`trajectory_before` 不是被修正的对象|**✓ 成立**|每次更新只抽一次噪声，同时用于记录与更新。测试 `test_pd_and_alm_use_one_noise_draw_for_record_and_update`（构造零修正 toy，断言更新后的状态与记录的名义状态逐位相等）|
+|9|ReS 的 γ 用了 (N0+1)·Δτ，原文是 γ(N0,ε)|**✓ 成立**|改为 `N0`；trace 里显式记 `hard_levels=N0+1`（=10，对应原文 ReS-DIFFUSER-l10）。测试 `test_res_hard_interval_uses_the_paper_horizon_N0`、`test_safediffuser_trace_declares_hard_interval_length`|
+|10|所有方法没有共享初始噪声（`derived_seed` 含方法名）|**✓ 成立**|新增 `initial_seed/initial_noise`（不含方法名）+ `NativePointTask.initial_override` + `sample_points(init=...)`，八种方法在同一样本上从**同一初始折线**出发（配对比较）。测试 `test_initial_noise_is_shared_by_every_method`|
+|11|TVS 的 σ̇ 符号可疑|**✗ 审查方判断正确，本报告原判断错误**|`j=t+1−elapsed/Δτ` 递减 ⇒ `dσ/dτ=−h0/(NΔτ)`，正是代码里的 `-initial/(N*dt)`，**符号正确**。已删除原 §4c 的"可疑"条目，改为记录该推导|
+|12|跨级需要 `x_{t-1}=√(ᾱ_{t-1}/ᾱ_t)x_t`|**✗ 仅对已被删除的 VP 变体成立**|在 VE 里状态就是 y、跨级不做换算；删除 VP 分支后该问题不存在|
+|13|投影集应随级缩放为 `C_t=√ᾱ_t C`|**✗ 作为"忠实实现"拒绝**|这是"在 VP 坐标里精确重述 VE 算法"的像，但论文本身是在 VE 里把 y 投影到固定的 C。两者选其一必须是 VE（已选）；实现一个随 t 收缩的约束集等于改算法|
+
+**顺带修掉的另一个真 bug**（审查未提，修 #7 时暴露）：`Primal-Dual` / `ALM` 在 `timeouts` 里没有条目，一直静默继承 `timeout_seconds=10.0`；256 级 × 4 粒子下必然超时。现为 300 s，其余 180 s，PDM 900 s。
+
+**仍未处理的协议项**（审查第 五 节，尚未修）：
+- 验证集参与过 `best_task.pt` 选择；最终表应改用 test 划分。`validate_point_methods.py` 已加 `--split test`，但本轮未跑正式 test 表。
+- Diffuser 的采样预算（16 步 DDIM）与各循环（256 级 / 10×20）不同量级。已加 `--ddim-steps` 以便做预算对照，本轮未展开。
+- Ours 尚未进入同一张表（统一路径加密采样 + 同一评价器）。
+
+**本轮修复后的数字**：见 §5.4 与 `results/review_fix_vertexall_t256/`。与 §4b 的差异全部来自本节 #2/#7/#8/#10 的修正，不是调参。
+
 ## 4c. SafeDiffuser 三种的逐条原文核对（回答"实现是否有问题"）
+
 
 对 ICLR-2025 SafeDiffuser 原文 eq (5)–(13)、Thm 3.4/3.5/3.6 逐条核对，结论：**公式层是忠实的，问题出在原文没有的两个步长旋钮。**
 
@@ -158,18 +189,48 @@ PDM/CD 这类循环最后一级结束在 `p_0=N(√ᾱ_0 x0, 1-ᾱ_0)` 上，不
 
 - 可控形式 (6) `τ̇=ν` 与 QP (13) `min‖ν−(τ^j−τ^{j+1})/Δτ‖² s.t.(8)` → 代码 `desired=(nominal−x)/cbf_dt` + `J v + ε(h−γ) ≥ 0`，且 `cbf_dt=1` 与 QP 目标里的 Δτ 一致；
 - Thm 3.4 的 γ 条件 `γ ≥ max_k|γ−b_k|e^{−εN}` 解出来正是 `max(−min(h)/(e^{εN}−1), max(h)/(e^{εN}+1))`，与 `legal_gamma` 逐项相同；
-- ReS 的 `w(j)=0 (j≤N0)`（对应原文 ReS-DIFFUSER-l10 的最后 11 步硬约束）、`hard_steps=10 → N0=9`；
+- ReS 的 `w(j)=0 (j≤N0)`（对应原文 ReS-DIFFUSER-l10：最后 10 步硬约束，即 t=9…0）、`hard_steps=10 → N0=9`；
 - TVS 的 σ 端点条件 `σ(N)≤b(τ^N)`、`σ(0)=0` 由 `initial=min(h,0)` 与 `σ=initial·j/N` 满足。
 
 不在原文里、且已测出有害的部分：
 
 1. **`cbf_max_point_step=0.001953125`（0.156 m/微步）**：它把每微步位移掐住，实际积分步长由这个上限而不是 `cbf_substeps` 决定。实测把 `cbf_substeps` 从 16 改成 1：len_ratio 36.59→36.59、转角 112.7°→113.0°、最大侵入 36.9→37.0 m，**完全没变**，只有步数 21.2→11.8、耗时 11.7→6.7 s 变化。因此交接文档里"细化 4×/16× 使侵入降到 0.0548/0.0140 m"的结论**不能由 `cbf_substeps` 解释**（那是旧控制点适配路径下的结论），本报告 §2 里"子步=同一 SDE 的离散细化"对 SafeDiffuser **不成立**，特此更正（对 CD 的 `cd_substeps` 仍成立，见 §4b）。
 2. **一阶速度型 barrier + Δτ=1 的数十米位移**：QP 只保证 `∇b·ν ≥ −ε(b−γ)`，而单级实际位移可达数十米（waypoint 间距 0.95 m、障碍格 0.625 m），线性化完全失效。实测 RoS 交付轨迹最大侵入 36.9 m，而每一步的 QP 都自检通过——这就是"每步都可行、交付不可行"的机制。原文用"Δτ 取足够小"回避它，本实现把 Δτ 固定成 1。
-3. **TVS 的 σ̇ 符号**：`tvs_schedule` 返回 `−initial/(N·dt)`，但它自己定义的 `σ(j)=initial·j/N` 的导数是 `initial/N`，两者差一个负号和 dt。若 j 的计数方向与原文相反需要显式换算，目前没有依据。**这一条只是可疑，尚未定论。**
+3. **TVS 的 σ̇ 符号（已核，符号正确）**：`σ(j)=min(h₀,0)·j/N` 中 `j=t+1−elapsed/Δτ` 随逆扩散**递减**，故 `dσ/dτ=−min(h₀,0)/(NΔτ)`，正是 `tvs_schedule` 返回的 `−initial/(N·dt)`。本报告早先把"对 j 求导"和"对 τ 求导"混了，特此更正；不改代码。原文 Maze2D 用 sigmoid 调度，线性 σ 属于满足端点条件的任务适配。
 
 审计脚本：`scripts/audit_safediffuser_dt.py`，输出 `docs/safediffuser_dt_audit.json`。
 
 ## 5. 测试结果
+
+### 5.4 审查修复后的重跑（`results/review_fix_vertexall_t256/`，20 案例，八方法共享初始噪声）
+
+单测：**78 passed**（新增 `tests/test_review_20261114.py` 14 项逐条覆盖 §4d 的修复），3 项 `tmp_path` 因沙箱 ACL 报 error（与代码无关）。
+
+|方法|顶点碰撞|仅线段碰撞|路径碰撞|planning success|RMSE m|最大侵入 m|耗时 s|
+|---|---:|---:|---:|---:|---:|---:|---:|
+|RoS-diffuser|20|0|20|0/20|49.40|36.50|14.4|
+|ReS-diffuser|13|1|14|6/20|20.93|29.69|12.9|
+|TVS-diffuser|20|0|20|0/20|40.04|36.93|13.2|
+|Projected|0|13|13|7/20|23.98|20.30|7.4|
+|Primal-Dual|14|0|14|6/20|28.93|25.85|9.3|
+|ALM|13|0|13|7/20|26.41|25.86|9.3|
+|PDM（全顶点诊断口径）|0|18|18|2/20|24.00|29.95|4.5|
+|Diffuser（无约束）|14|0|14|6/20|19.51|29.07|0.34|
+
+**与 §4b 的对比只说明一件事：算术错误修掉之后结论没有变。** 逐项差异来源已确认：
+1. **Diffuser 基线自己也变了**（顶点碰撞 10→14、success 10→6、RMSE 17.4→19.5），因为 `derived_seed` 不再含方法名、八方法改用同一条初始折线（§4d #10）。这正是"配对比较"应有的样子：旧表里各方法的初始噪声本来就不同。
+2. PDM 的 RMSE 21.4→24.0、ALM 31.6→26.4 等波动来自 γ/2、η/ρ（÷s²）、单次抽取噪声、逐级 cd_levels 的修正，量级都在 ±15% 内 —— 说明这些错误**不是**决定结果的因素。
+3. 决定结果的三件事仍然没变：①基座 σ_min 与 waypoint 间距的关系（§3.1）；②约束对象是顶点而评价是整段（6 个方法的"仅线段碰撞"13–18）；③SafeDiffuser 的 Δτ=1 + 一阶 barrier（顶点碰撞 20/20、侵入 36.9 m）。
+
+**PDM 原文口径（`results/review_fix_paper_pdm_t256/`，VE 状态 + App.C.3 整段线段约束，val 0/81）**：
+
+|案例|圆数|状态|耗时|结果|
+|---|---:|---|---:|---|
+|0|370|**ok**|160 s|顶点/仅线段/路径碰撞 **全为 False**，最大线段残差 0|
+|81|370|failed|164 s|`segment_projection_failed: full_residual=0.10536`|
+
+这是本项目第一次让 PDM 在**论文原样约束集**下产出无碰撞轨迹（160 s/案例），说明修掉 γ/2 与 VE 状态后投影确实能用；但 81 仍失败，覆盖率更高的圆并（249→370 个圆，因覆盖判据改为整格）让投影更难。**PDM 线段口径目前是 1/2 可用，不能进正式表。**
+
 
 ### 5.1 单测
 

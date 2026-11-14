@@ -23,38 +23,49 @@ from experiments.safety_baselines.algorithms.solvers import SolverFailure
 def obstacle_circles(occupancy,extent=2.,margin=0.):
     """Cover the occupied-cell union with circles (PDM App. C.3 composition).
 
-    Radius at a cell centre is its Euclidean distance to the nearest free cell
-    centre, which is >= one cell, hence >= half a cell diagonal: the circle of
-    that radius contains the cell square. Every occupied cell centre is either
-    an accepted centre or within the radius of an earlier accepted circle, so
-    the union covers the whole obstacle footprint (verified, see audit keys).
+    Radius at a cell centre is its distance to the nearest free cell centre plus
+    half a cell diagonal. A cell is marked covered only when its *whole square*
+    fits in an accepted circle, i.e. centre distance + half diagonal <= radius;
+    the earlier version tested the centre alone, which left the corners of a
+    diagonally adjacent cell uncovered. Every occupied cell is either an accepted
+    centre (its own circle always contains its square) or covered under that
+    stricter test, so the union covers the whole obstacle footprint: this is
+    verified on centres *and* cell corners in the audit block below.
     """
     occ=np.asarray(occupancy,dtype=bool)
     if occ.ndim!=2:raise ValueError('occupancy must be 2-D')
-    H,W=occ.shape;dy=extent/H;dx=extent/W
+    H,W=occ.shape;dy=extent/H;dx=extent/W;half_diag=.7072*max(dx,dy)
     ys,xs=np.nonzero(occ)
     cy=-extent/2+(ys+.5)*dy;cx=-extent/2+(xs+.5)*dx
     if len(ys)==0:
-        return np.zeros((0,2)),np.zeros(0),{'occupied_cells':0,'circles':0,'covered_fraction':1.,'cell_scene':float(max(dx,dy)),'free_cells_forbidden_fraction':0.}
+        return np.zeros((0,2)),np.zeros(0),{'occupied_cells':0,'circles':0,'covered_fraction':1.,'covered_corner_fraction':1.,'cell_scene':float(max(dx,dy)),'free_cells_forbidden_fraction':0.}
     edt=distance_transform_edt(occ,sampling=(dy,dx))
-    radius=edt[ys,xs]+.7072*max(dx,dy)   # +half cell diagonal: contains the full cell square
+    radius=edt[ys,xs]+half_diag
     order=np.argsort(-radius,kind='stable')
     covered=np.zeros(len(ys),bool);accepted=np.zeros(len(ys),bool)
     for i in order:
         if covered[i]:continue
         accepted[i]=True
-        covered|=((cx-cx[i])**2+(cy-cy[i])**2)<=radius[i]**2
+        covered|=(np.hypot(cx-cx[i],cy-cy[i])+half_diag)<=radius[i]
     centers=np.stack([cx[accepted],cy[accepted]],axis=1)
     radii=radius[accepted]+float(margin)
-    # Audit: how much *free* space does the circle composition wrongly forbid?
+    # Audit 1: how much *free* space does the circle composition wrongly forbid?
     fy,fx=np.nonzero(~occ);fcy=-extent/2+(fy+.5)*dy;fcx=-extent/2+(fx+.5)*dx
     forbidden=np.zeros(len(fy),bool)
     for (c,r) in zip(centers,radii):forbidden|=((fcx-c[0])**2+(fcy-c[1])**2)<=r*r
+    # Audit 2: is every occupied cell *square* (not just its centre) inside the union?
+    off_x=np.array([-dx/2,dx/2,-dx/2,dx/2,0.])[None,:];off_y=np.array([-dy/2,-dy/2,dy/2,dy/2,0.])[None,:]
+    corners_x=cx[:,None]+off_x;corners_y=cy[:,None]+off_y
+    covered_corner=np.zeros(corners_x.shape,bool)
+    for (c,r) in zip(centers,radii):
+        covered_corner|=((corners_x-c[0])**2+(corners_y-c[1])**2)<=r*r
     audit={'occupied_cells':int(len(ys)),'circles':int(len(centers)),
-        'covered_fraction':float(covered.mean()),'radius_min_scene':float(radii.min()),
+        'covered_fraction':float(covered.mean()),'covered_corner_fraction':float(covered_corner.all(axis=1).mean()),
+        'radius_min_scene':float(radii.min()),
         'radius_max_scene':float(radii.max()),'radius_median_scene':float(np.median(radii)),
-        'cell_scene':float(max(dx,dy)),'padding_scene':float(.7072*max(dx,dy)),
+        'cell_scene':float(max(dx,dy)),'padding_scene':float(half_diag),
         'free_cells_forbidden_fraction':float(forbidden.mean()),
+        'coverage_test':'centre distance + half cell diagonal <= radius (full square)',
         'geometry':'inscribed maximal-disk composition + half-cell-diagonal covering pad',
         'source':'PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)'}
     return centers,radii,audit
@@ -78,18 +89,30 @@ class CircleSegmentConstraints:
         alpha=np.where(squared<1e-24,.5,alpha)
         delta=a+alpha[...,None]*v-self.centers[None]
         dist=np.linalg.norm(delta,axis=-1)
-        return p,alpha,delta,dist
+        # Outward unit direction. When the closest point coincides with the centre
+        # (distance 0) the radial direction is undefined and every first-order step
+        # is a no-op, so fall back to the segment normal with a deterministic sign.
+        unit=np.zeros_like(delta)
+        ok=dist>1e-12
+        unit[ok]=delta[ok]/dist[ok,None]
+        if not ok.all():
+            segv=np.broadcast_to(v,delta.shape)
+            n=np.stack([-segv[...,1],segv[...,0]],axis=-1)
+            nlen=np.linalg.norm(n,axis=-1)
+            n=np.where(nlen[...,None]>1e-15,n/np.maximum(nlen,1e-15)[...,None],np.array([1.,0.]))
+            flip=np.where(n[...,0]+n[...,1]<0,-1.,1.)
+            unit=np.where(ok[...,None],unit,n*flip[...,None])
+        return p,alpha,delta,dist,unit
 
     def values(self,x):
         """g only (no sparse Jacobian); the identity/fast path of the projection."""
-        _,_,_,dist=self._terms(x)
+        _,_,_,dist,_=self._terms(x)
         return (self.radii[None]-dist).reshape(-1)
 
     def constraints(self,x):
         """g[i*M+j] = radius_j - distance(segment_i, centre_j); g<=0 is the paper set."""
-        _,alpha,delta,dist=self._terms(x)
+        _,alpha,delta,dist,unit=self._terms(x)
         g=(self.radii[None]-dist).reshape(-1)
-        unit=delta/np.maximum(dist,1e-15)[...,None]
         da=-(1-alpha)[...,None]*unit;db=-alpha[...,None]*unit
         M=len(self.centers);seg=np.arange(self.num_points-1)
         rows=[];cols=[];values=[]
@@ -109,7 +132,7 @@ class CircleSegmentConstraints:
 
     def near_circles(self,x,band):
         """Circles within `band` of the current polyline; a working set, not the feasible set."""
-        _,_,_,dist=self._terms(x)
+        _,_,_,dist,_=self._terms(x)
         return np.any(dist-self.radii[None]<band,axis=0)
 
     def _sqp(self,target,start,budget,maxiter,tol,penalty_weight=1e3,slack_weight=1e6,trust=0.05,band=1e-3,max_rows=256,qp_eps=1e-6):
@@ -195,7 +218,12 @@ class CircleSegmentConstraints:
                 al=.5 if sq<1e-24 else min(1.,max(0.,float((self.centers[j]-p[i])@v)/sq))
                 dl=p[i]+al*v-self.centers[j];dist=float(np.linalg.norm(dl))
                 if dist>=self.radii[j]-tol:continue
-                u=dl/max(dist,1e-15);w=(1-al)**2+al**2;step=(self.radii[j]-dist+1e-12)/w
+                if dist>1e-12:u=dl/dist
+                else:
+                    n=np.array([-v[1],v[0]]);nl=float(np.linalg.norm(n))
+                    u=n/nl if nl>1e-15 else np.array([1.,0.])
+                    if u[0]+u[1]<0:u=-u
+                w=(1-al)**2+al**2;step=(self.radii[j]-dist+1e-12)/w
                 if i>0:x[2*(i-1):2*i]+=(1-al)*step*u
                 if i+1<H-1:x[2*i:2*i+2]+=al*step*u
         return x,self.residual(x)

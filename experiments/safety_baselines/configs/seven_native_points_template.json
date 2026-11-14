@@ -2,13 +2,11 @@
   "checkpoint": "experiments/safety_baselines/results/map_only_points_l1_final8_e100_20261114_000521/ckpt/best_task.pt",
   "constraint_points": 128,
   "endpoint_tol_m": 0.01,
-  "timeout_seconds": 10.0,
+  "timeout_seconds": 180.0,
   "projection_maxiter": 200,
   "projection_tol_scene": 1e-07,
   "qp_tol": 1e-05,
   "particles": 4,
-  "dual_eta": 7.8e-06,
-  "rho": 1.95e-06,
   "rho_growth": 1.01,
   "dual_constraint_scale": 128.0,
   "cbf_epsilon": 1.0,
@@ -21,13 +19,9 @@
   "radius_scene": 0.0,
   "pdm_levels": 10,
   "pdm_inner": 20,
-  "pdm_parameterization": "vp",
   "pdm_step_convention": "official_ald",
-  "pdm_ald_eps": 0.002,
-  "cd_levels": 64,
   "cd_extra_steps": 64,
   "cd_substeps": 1,
-  "segment_constraints_for": [],
   "segment_circle_margin_scene": 0.0,
   "segment_projection_maxiter": 8,
   "segment_projection_maxiter_final": 40,
@@ -35,11 +29,13 @@
   "state_adapter": "native_points",
   "field_kind": "exact",
   "timeouts": {
-    "Projected": 120.0,
-    "PDM": 900.0,
-    "RoS-diffuser": 120.0,
-    "ReS-diffuser": 120.0,
-    "TVS-diffuser": 120.0
+    "RoS-diffuser": 180.0,
+    "ReS-diffuser": 180.0,
+    "TVS-diffuser": 180.0,
+    "Projected": 180.0,
+    "Primal-Dual": 300.0,
+    "ALM": 300.0,
+    "PDM": 900.0
   },
   "tuning": "no test tuning; every deviation is a declared source-based adaptation",
   "adaptations": {
@@ -50,7 +46,8 @@
     "cd_levels_and_extra": "64 level visits (each trained level repeated ~4x, which is a discretisation refinement of the same per-level Langevin target) plus the paper's 64 extra updates at the lowest trained level.",
     "dual_eta_rho": "paper Appendix C 'large' setting eta_lambda=1e-3, rho=2.5e-4 divided by dual_constraint_scale (128) so that the value entering the scaled constraint rows reproduces the paper's physical step.",
     "rho_growth": "paper only requires c>1; 1.01 is carried over from the previous adaptation and is not from the source",
-    "cbf": "SafeDiffuser continuous-time CBF integrated with dt=1 per level, 16 sub-steps and a per-point step cap; the refinement study is in docs/native_point_integration_convergence.json"
+    "cbf": "SafeDiffuser continuous-time CBF integrated with dt=1 per level, 16 sub-steps and a per-point step cap; the refinement study is in docs/native_point_integration_convergence.json",
+    "timeouts": "180 s per method (300 s for the 4-particle Primal-Dual/ALM, 900 s for PDM with segment projections). 2026-11-14: Primal-Dual/ALM previously had no entry and silently inherited the 10 s default, which they now exceed at 256 levels."
   },
   "validation_selection": "Frozen20 equally spaced validation indices; no outcome selection, no parameter tuning on this run.",
   "validation_indices": [
@@ -74,5 +71,6 @@
     1385,
     1467,
     1549
-  ]
+  ],
+  "_role": "template read by scripts/make_aligned_configs.py; the generated configs are the ones to run"
 }

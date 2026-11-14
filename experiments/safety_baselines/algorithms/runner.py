@@ -11,7 +11,13 @@ SOURCES={m:('SafeDiffuser ICLR2025' if 'diffuser' in m else 'PDM NeurIPS2024' if
 
 def derived_seed(scene_id,seed,method):return int.from_bytes(hashlib.sha256(f'{scene_id}|{seed}|{method}'.encode()).digest()[:8],'little')
 
-def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg):
+def initial_seed(scene_id,seed):return int.from_bytes(hashlib.sha256(f'{scene_id}|{seed}|initial'.encode()).digest()[:8],'little')
+
+def initial_noise(scene_id,seed,num_points=128):
+    """The single trajectory noise vector every method starts from (paired protocol)."""
+    return np.random.default_rng(initial_seed(scene_id,seed)).normal(size=(num_points,2))
+
+def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None):
     started=time.perf_counter();trace=[];trajectory=None;reason=None;status='ok'
     try:
         budget=Budget(cfg.get('timeouts',{}).get(method,cfg['timeout_seconds']))
@@ -38,9 +44,20 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg):
             task.projection_tol=float(cfg.get('segment_projection_tol',1e-6))
         if cfg.get('state_adapter')=='curve_control':
             task.projection_maxiter=cfg['projection_maxiter'];task.projection_tol=cfg['projection_tol_scene']
+        if init_noise is not None:
+            task.initial_override=np.asarray(init_noise,dtype=float)[1:-1].reshape(-1)
         rng=np.random.default_rng(derived_seed(scene_id,seed,method));fn=safe_run if method.endswith('diffuser') else pdm_run if method=='PDM' else cd_run
         value=fn(task,method,rng,cfg,budget,trace);budget.check();trajectory=task.unpack(value)
         if not np.isfinite(trajectory).all():raise RuntimeError('nonfinite_trajectory')
     except (RuntimeError,ValueError,np.linalg.LinAlgError) as exc:status='failed';reason=str(exc);trajectory=None
     torch.cuda.synchronize()
-    return {'trajectory':None if trajectory is None else trajectory.tolist(),'trajectory_before':task.unpack(task.last_nominal).tolist() if 'task' in locals() and hasattr(task,'last_nominal') and np.isfinite(task.last_nominal).all() else None,'status':status,'failure_reason':reason,'wall_time':time.perf_counter()-started,'per_step_trace':trace,'method':method,'source_id':SOURCES[method],'fidelity':'task-adapted','seed_derived':derived_seed(scene_id,seed,method),'internal_state_trajectory':task.points(value).tolist() if status=='ok' and hasattr(task,'points') else None,'internal_max_violation_scene':float(task.constraints(value)[0].max()) if status=='ok' else None}
+    return {'trajectory':None if trajectory is None else trajectory.tolist(),
+        'trajectory_before':task.unpack(task.last_nominal).tolist() if 'task' in locals() and hasattr(task,'last_nominal') and np.isfinite(task.last_nominal).all() else None,
+        'status':status,'failure_reason':reason,'wall_time':time.perf_counter()-started,'per_step_trace':trace,
+        'method':method,'source_id':SOURCES[method],'fidelity':'task-adapted',
+        'seed_derived':derived_seed(scene_id,seed,method),'initial_seed':initial_seed(scene_id,seed),
+        'paired_initial_noise':init_noise is not None,
+        'pdm_projection_stats':getattr(task,'pdm_stats',None),
+        'segment_audit':getattr(task,'segment_audit',None),
+        'internal_state_trajectory':task.points(value).tolist() if status=='ok' and hasattr(task,'points') else None,
+        'internal_max_violation_scene':float(task.constraints(value)[0].max()) if status=='ok' else None}

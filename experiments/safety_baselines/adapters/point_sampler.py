@@ -1,12 +1,14 @@
 """Direct point-space DDIM. The returned tensor is the trajectory itself."""
+import numpy as np
 import torch
 from experiments.safety_baselines.models.map_only_points import pin_endpoints
 from src.diffusion.sampler import pick_times
 
 @torch.no_grad()
-def sample_points(model,schedule,occupancy,cond,seed=0,steps=16):
+def sample_points(model,schedule,occupancy,cond,seed=0,steps=16,init=None):
     torch.manual_seed(seed)
-    points=pin_endpoints(torch.randn(len(cond),model.num_points,2,device=cond.device),cond)
+    start=torch.randn(len(cond),model.num_points,2,device=cond.device) if init is None else torch.as_tensor(np.asarray(init,dtype=np.float32),device=cond.device).reshape(len(cond),model.num_points,2)
+    points=pin_endpoints(start,cond)
     memory=model.encode_scene(occupancy)
     times=pick_times(schedule.num_timesteps,steps)
     pairs=[(t,t-1) for t in range(schedule.num_timesteps-1,-1,-1)] if times is None else [(times[i],times[i-1]) for i in range(len(times)-1,0,-1)]+[(times[0],-1)]
