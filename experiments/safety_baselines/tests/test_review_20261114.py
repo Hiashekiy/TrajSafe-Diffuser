@@ -32,11 +32,10 @@ import pytest
 
 from experiments.safety_baselines.adapters.native_points import NativePointTask
 from experiments.safety_baselines.adapters.paper_segment_constraints import CircleSegmentConstraints, obstacle_circles
-from experiments.safety_baselines.algorithms.constrained_diffusers.runner import effective_beta, level_ladder, run as cd_run
-from experiments.safety_baselines.algorithms.kernels import primal_dual_step
+from experiments.safety_baselines.algorithms.constrained_diffusers.runner import run as cd_run
 from experiments.safety_baselines.algorithms.pdm.runner import level_gamma, run as pdm_run
 from experiments.safety_baselines.algorithms.runner import initial_noise, initial_seed
-from experiments.safety_baselines.algorithms.safediffuser.runner import legal_gamma
+from experiments.safety_baselines.algorithms.pdm.runner import run as pdm_run
 from experiments.safety_baselines.algorithms.solvers import Budget, SolverFailure
 from src.diffusion.schedule import NoiseSchedule
 
@@ -76,72 +75,56 @@ def test_pdm_rejects_a_vp_state():
 
 
 # 3 ---------------------------------------------------------------------------
-def test_pdm_records_projection_status_and_requires_an_exact_final_projection():
+def test_pdm_projects_only_in_the_low_noise_half_and_retries_on_violation():
+    """Official `pgd_diffusion_step` (:557-627): the solver runs for `idx > 5` only, and a
+    failed projection is retried with 15 more Langevin steps instead of being accepted."""
     class Toy:
         D = 1
         ab = np.array([.9, .5])
         betas = np.array([.1, .4])
         sigma = np.sqrt((1 - ab) / ab)
-        partial_projection = True
         projection_tol = 1e-6
+        def __init__(self):
+            self.calls = 0; self.fail_first = False
         def initial(self, rng, particles=1, ve=False): return rng.normal(size=(particles, self.D))
         def score(self, x, t, ve=False): return -np.atleast_2d(x)
         def constraints(self, x): return np.array([-abs(float(np.asarray(x).reshape(-1)[0]))]), np.array([[-1.]])
-        def project(self, target, budget, allow_partial=False):
-            z = np.asarray(target, float).copy();z[...] = 0.      # clamp onto the feasible point
-            if allow_partial:                                     # partial: leaves a small residual
-                z[...] = 1e-4
-                return z, {'status': 'segment_projection_partial', 'residual': 1e-4}
+        def project(self, target, budget):
+            self.calls += 1
+            z = np.asarray(target, float).copy(); z[...] = 0.
+            if self.fail_first and self.calls == 1:
+                return z, {'status': 'solver_failed', 'residual': None, 'violation': True}
             return z, {'status': 'segment_sqp_feasible', 'residual': 0.}
     cfg = {'pdm_inner': 2, 'pdm_levels': 2, 'pdm_parameterization': 've',
            'pdm_step_convention': 'official_ald', 'pdm_ald_eps': 1e-3, 'projection_tol_scene': 1e-6}
     task = Toy(); trace = []
     pdm_run(task, 'PDM', np.random.default_rng(0), cfg, Budget(5), trace)
     stats = task.pdm_stats
-    assert {'projection_calls', 'partial_projections', 'final_status', 'final_residual', 'exact_final'} <= set(stats)
-    assert stats['projection_calls'] == 4 and stats['partial_projections'] == 2
-    assert stats['exact_final'] is True
+    assert {'projection_calls', 'partial_projections', 'final_status', 'final_residual',
+            'exact_final', 'project_from_index'} <= set(stats)
+    # two levels -> threshold round(0.6*2) = 1, so only the second level projects
+    assert stats['project_from_index'] == 1 and stats['projected_levels'] == 1
+    assert stats['projection_calls'] == 2 and stats['exact_final'] is True
+    # and the retry path: one failure costs one retry and 15 extra Langevin steps
+    task = Toy(); task.fail_first = True; trace = []
+    pdm_run(task, 'PDM', np.random.default_rng(0), cfg, Budget(5), trace)
+    assert task.pdm_stats['partial_projections'] == 1
+    assert sum(1 for r in trace if r['kind'] == 'retry_langevin') == 15
 
 
 # 4 ---------------------------------------------------------------------------
-def test_cd_beta_modes_on_a_subsampled_ladder():
-    ab = NoiseSchedule(256, 'squaredcos_cap_v2').alphas_cumprod.numpy()
-    beta = NoiseSchedule(256, 'squaredcos_cap_v2').betas.numpy()
-    ladder = level_ladder(256, 64, 0)
-    assert len(ladder) == 64 and ladder[0] == 255 and ladder[-1] == 0
-    t, t_next = 200, 196
-    b_level = effective_beta(ab, t, t_next, beta[t], 'level')
-    b_interval = effective_beta(ab, t, t_next, beta[t], 'interval')
-    np.testing.assert_allclose(b_level, beta[t])
-    np.testing.assert_allclose(b_interval, 1. - ab[t] / ab[t_next])
-    assert b_interval > b_level          # the skipped levels add noise
-    # on a ladder that visits every trained level the two must coincide
-    full = level_ladder(256, 256, 0)
-    assert full[:3] == [255, 254, 253]
-    np.testing.assert_allclose(effective_beta(ab, 255, 254, beta[255], 'interval'), beta[255], rtol=1e-12)
+# Removed 2026-11-14 with the code it pinned: `cd_beta` level-vs-interval aggregation was
+# our workaround for a subsampled ladder. The official chain walks every trained level and
+# reuses `beta_t` of the level it visits, so there is only one mode left; the ladder shape
+# (including the 200 noiseless revisits of t=1) is pinned in
+# tests/test_official_constrained_diffusers.py.
 
 
 # 5 ---------------------------------------------------------------------------
-class QuietToy:
-    """Toy whose constraint rows are inactive: the correction term is exactly zero."""
-    D = 2
-    betas = np.array([.1, .2, .3, .4])
-    ab = np.array([.9, .7, .4, .1])
-    sigma = np.sqrt((1 - ab) / ab)
-    def initial(self, rng, particles=1, ve=False): return rng.normal(size=(particles, self.D))
-    def score(self, x, t): return -np.atleast_2d(x) * 0.5
-    def constraints(self, x):
-        return np.full(1, -1.0), np.zeros((1, self.D))
-
-
-def test_pd_and_alm_use_one_noise_draw_for_record_and_update():
-    """With a zero correction the updated state must equal the recorded nominal."""
-    for method in ('Primal-Dual', 'ALM'):
-        cfg = {'particles': 2, 'rho': 0.1, 'rho_growth': 1.1, 'dual_eta': 1e-3,
-               'cd_levels': 4, 'cd_extra_steps': 2, 'dual_constraint_scale': 1.0, 'substeps': 1}
-        task = QuietToy(); trace = []
-        x = cd_run(task, method, np.random.default_rng(3), cfg, Budget(5), trace)
-        np.testing.assert_allclose(x, task.last_nominal, rtol=0, atol=1e-12)
+# Removed 2026-11-14: `test_pd_and_alm_use_one_noise_draw_for_record_and_update` pinned our
+# old interleaving of `task.last_nominal` with the Langevin draw. In the official loop the
+# recorded nominal is the posterior mean and the state is `mean + std_t * z`; that relation
+# is pinned in tests/test_official_constrained_diffusers.py instead.
 
 
 # 6 ---------------------------------------------------------------------------
@@ -159,7 +142,8 @@ def test_paper_config_is_paper_native_and_derived_constants_are_consistent():
     cfg = json.loads((CFG_DIR / 'seven_native_points_paper_t256.json').read_text(encoding='utf8'))
     assert cfg['segment_constraints_for'] == ['PDM'], 'PDM must use App.C.3 segment constraints'
     assert cfg['pdm_parameterization'] == 've'
-    assert cfg['cd_beta'] == 'level' and cfg['cd_levels'] == cfg['schedule_facts']['timesteps']
+    assert cfg['cd_levels'] == cfg['schedule_facts']['timesteps']
+    assert 'cd_beta' not in cfg and cfg['sd_hard_levels'] == max(1, round(10 * cfg['cd_levels'] / 1000))
     smin2 = cfg['schedule_facts']['smin2']
     np.testing.assert_allclose(cfg['pdm_ald_eps'] / (2 * smin2), 1. / 6., rtol=1e-6)
 
@@ -184,29 +168,10 @@ def test_segment_through_centre_has_a_usable_gradient_and_escapes():
 
 
 # 9 ---------------------------------------------------------------------------
-def test_res_hard_interval_uses_the_paper_horizon_N0():
-    """gamma is computed with horizon N0 (Thm 3.5); hard_levels is N0+1 levels."""
-    h = np.array([-0.2, 0.1])
-    n0 = 9
-    g_paper = legal_gamma(h, n0, 1.0, 1.25e-4)
-    g_off = legal_gamma(h, n0 + 1, 1.0, 1.25e-4)
-    assert g_paper >= g_off          # a shorter horizon allows a larger gamma
-    assert g_paper >= 1.25e-4 - 1e-18
-
-
-def test_safediffuser_trace_declares_hard_interval_length():
-    from experiments.safety_baselines.algorithms.safediffuser.runner import run as safe_run
-    class Toy:
-        D = 2
-        ab = np.array([.9, .7, .4, .1])
-        betas = np.array([.1, .2, .3, .4])
-        sigma = np.sqrt((1 - ab) / ab)
-        def constraints(self, x): return np.array([-x[0]]), np.array([[-1., 0.]])
-        def clean(self, x, t, ve=False): return np.ones_like(np.atleast_2d(x)) * .5
-    cfg = {'cbf_dt': 1., 'cbf_epsilon': 1., 'cbf_gamma_floor': .001, 'hard_steps': 2,
-           'relax_weight': 100., 'qp_tol': 1e-5, 'cbf_substeps': 1}
-    trace = []; safe_run(Toy(), 'ReS-diffuser', np.random.default_rng(0), cfg, Budget(5), trace)
-    assert all(t.get('hard_levels', 2) == 2 for t in trace)
+# Removed 2026-11-14 together with the implementation it pinned: `legal_gamma` / N0 and
+# the per-level discrete certificate were ours, not SafeDiffuser's. The official
+# correction has no gamma and no certificate; its ReS hard interval is now pinned by
+# tests/test_phase_e_safediffuser.py against the paper's `t >= 10` rule.
 
 
 # 10 --------------------------------------------------------------------------

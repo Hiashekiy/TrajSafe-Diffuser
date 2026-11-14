@@ -12,11 +12,7 @@
   "dual_eta": 1e-05,
   "rho": 1e-05,
   "rho_growth": 1.01,
-  "cbf_epsilon": 1.0,
-  "cbf_dt": 1.0,
-  "cbf_gamma_floor": 0.000125,
   "relax_weight": 100.0,
-  "hard_steps": 10,
   "pdm_inner": 100,
   "radius_scene": 0.0,
   "tuning": "fixed paper parameters with declared scene-unit adaptation; no test tuning",
@@ -36,8 +32,6 @@
   "state_adapter": "native_points",
   "field_kind": "exact",
   "pdm_parameterization": "ve",
-  "cbf_substeps": 16,
-  "cbf_max_point_step": 0.001953125,
   "cd_levels": 64,
   "interpretation": "Native learned waypoint prior, original paper update loops, exact point-space projection/QP; fixed conditioned endpoints. No control mapping, refit or auxiliary residual state.",
   "validation_indices": [
@@ -61,5 +55,9 @@
     1385,
     1467,
     1549
-  ]
+  ],
+  "sd_hard_levels": 3,
+  "sd_tvs_t_bias": 1.28,
+  "sd_apply_below": 3,
+  "sd_tvs_level_scene": 0.125
 }

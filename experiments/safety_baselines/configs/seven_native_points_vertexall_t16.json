@@ -9,19 +9,12 @@
   "particles": 4,
   "rho_growth": 1.01,
   "dual_constraint_scale": 128.0,
-  "cbf_epsilon": 1.0,
-  "cbf_dt": 1.0,
-  "cbf_gamma_floor": 0.000125,
   "relax_weight": 100.0,
-  "hard_steps": 10,
-  "cbf_substeps": 16,
-  "cbf_max_point_step": 0.001953125,
   "radius_scene": 0.0,
   "pdm_levels": 10,
   "pdm_inner": 20,
   "pdm_step_convention": "official_ald",
   "cd_extra_steps": 64,
-  "cd_substeps": 1,
   "segment_circle_margin_scene": 0.0,
   "segment_projection_maxiter": 8,
   "segment_projection_maxiter_final": 40,
@@ -46,7 +39,7 @@
     "cd_levels_and_extra": "64 level visits (each trained level repeated ~4x, which is a discretisation refinement of the same per-level Langevin target) plus the paper's 64 extra updates at the lowest trained level.",
     "dual_eta_rho": "paper Appendix C 'large' setting eta_lambda=1e-3, rho=2.5e-4 divided by dual_constraint_scale (128) so that the value entering the scaled constraint rows reproduces the paper's physical step.",
     "rho_growth": "paper only requires c>1; 1.01 is carried over from the previous adaptation and is not from the source",
-    "cbf": "SafeDiffuser continuous-time CBF integrated with dt=1 per level, 16 sub-steps and a per-point step cap; the refinement study is in docs/native_point_integration_convergence.json",
+    "cbf": "SafeDiffuser official: one QP per level on the sampled next state, h = Lfb + k*b, G = -grad b, Q = I, ReS slack weight 100 outside the hard interval (vendored, algorithms/official/safediffuser.py). No substeps, no certificate, no gate, no step cap.",
     "timeouts": "180 s per method (300 s for the 4-particle Primal-Dual/ALM, 900 s for PDM with segment projections). 2026-11-14: Primal-Dual/ALM previously had no entry and silently inherited the 10 s default, which they now exceed at 256 levels.",
     "checkpoint": "2026-11-14: 冻结基座从 best_task.pt 换成 best.pt。依据：同一 DDIM-256、同一 20 案例、同一初始噪声下 best_task.pt(epoch86) 顶点/路径碰撞 14/20、success 6/20、平均最小净距 -4.1 m；best.pt(epoch79) 为 7/20、13/20、-0.6 m；latest.pt(epoch99) 为 10/20、10/20、-1.9 m。best_task 是训练脚本用 task_score（192 个 val batch 的 rmse+80*顶点碰撞率）选的，改在完整 1550 验证集上该指标会把 latest 排在 best_task 之前，说明 192 样本子集的选择不稳定。审计：results/phase_a_base_model/、docs/base_model_quality_audit.md。旧的 best_task 结果仍可由 git a17a667 与其结果目录复现。",
     "test_indices": "冻结 20 个 test 索引（420 个 test 样本上等距取 20），与 validation_indices 完全不重叠；--split test 只读这一组，越界/重复会被拒绝。",
@@ -55,7 +48,7 @@
     "dual_eta": "paper Appendix C \"large\" eta_lambda=1e-3, divided by dual_constraint_scale^2=16384 because g was scaled by 128 (equivalence: lambda'=lambda/s, eta'=eta/s^2; test_dual_units_invariance).",
     "rho": "paper Appendix C \"large\" rho=2.5e-4 divided by dual_constraint_scale^2=16384 (rho'=rho/s^2).",
     "cd_levels": "every trained level is visited: eq.(6) uses that level's own beta_t, which is only correct when the ladder is not subsampled.",
-    "cd_beta": "level"
+    "cd_beta": "Constrained Diffusers official: correction added to the posterior mean, one multiplier per (row, particle), ladder = range(-200, T) with i<=0 -> t=1 and no noise at t=1 (vendored, algorithms/official/constrained_diffusers.py)."
   },
   "validation_selection": "Frozen20 equally spaced validation indices; no outcome selection, no parameter tuning on this run.",
   "validation_indices": [
@@ -103,17 +96,14 @@
     397,
     419
   ],
-  "cbf_discrete_check": true,
-  "cbf_min_step": 0.0001,
-  "cbf_max_halvings": 8,
-  "cbf_max_rejects": 200,
   "pdm_ald_eps": 0.0040033999,
   "dual_eta": 6.1035e-08,
   "rho": 1.525879e-08,
   "cd_levels": 16,
-  "cd_beta": "level",
   "pdm_parameterization": "ve",
-  "segment_constraints_for": [],
+  "segment_constraints_for": [
+    "PDM"
+  ],
   "training_run": "experiments/safety_baselines/results/map_only_points_l1_final8_e100_20261114_000521",
   "schedule_facts": {
     "timesteps": 16,
@@ -125,5 +115,9 @@
     "dual_eta": 6.1e-08,
     "rho": 1.53e-08,
     "langevin_floor_rmse_m": 12.3988126419
-  }
+  },
+  "sd_hard_levels": 1,
+  "sd_tvs_t_bias": 0.08,
+  "sd_apply_below": 1,
+  "sd_tvs_level_scene": 0.125
 }

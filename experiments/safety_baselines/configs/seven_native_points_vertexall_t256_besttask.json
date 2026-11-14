@@ -9,19 +9,12 @@
   "particles": 4,
   "rho_growth": 1.01,
   "dual_constraint_scale": 128.0,
-  "cbf_epsilon": 1.0,
-  "cbf_dt": 1.0,
-  "cbf_gamma_floor": 0.000125,
   "relax_weight": 100.0,
-  "hard_steps": 10,
-  "cbf_substeps": 16,
-  "cbf_max_point_step": 0.001953125,
   "radius_scene": 0.0,
   "pdm_levels": 10,
   "pdm_inner": 20,
   "pdm_step_convention": "official_ald",
   "cd_extra_steps": 64,
-  "cd_substeps": 1,
   "segment_circle_margin_scene": 0.0,
   "segment_projection_maxiter": 8,
   "segment_projection_maxiter_final": 40,
@@ -46,7 +39,7 @@
     "cd_levels_and_extra": "64 level visits (each trained level repeated ~4x, which is a discretisation refinement of the same per-level Langevin target) plus the paper's 64 extra updates at the lowest trained level.",
     "dual_eta_rho": "paper Appendix C 'large' setting eta_lambda=1e-3, rho=2.5e-4 divided by dual_constraint_scale (128) so that the value entering the scaled constraint rows reproduces the paper's physical step.",
     "rho_growth": "paper only requires c>1; 1.01 is carried over from the previous adaptation and is not from the source",
-    "cbf": "SafeDiffuser continuous-time CBF integrated with dt=1 per level, 16 sub-steps and a per-point step cap; the refinement study is in docs/native_point_integration_convergence.json",
+    "cbf": "SafeDiffuser official: one QP per level on the sampled next state, h = Lfb + k*b, G = -grad b, Q = I, ReS slack weight 100 outside the hard interval (vendored, algorithms/official/safediffuser.py). No substeps, no certificate, no gate, no step cap.",
     "timeouts": "180 s per method (300 s for the 4-particle Primal-Dual/ALM, 900 s for PDM with segment projections). 2026-11-14: Primal-Dual/ALM previously had no entry and silently inherited the 10 s default, which they now exceed at 256 levels.",
     "checkpoint": "best_task.pt（epoch 86，由 task_score 选择）。该权重在 DDIM-256 下 20 案例路径碰撞 14/20、success 6/20；best.pt 为 7/20、13/20。见 docs/base_model_quality_audit.md。"
   },
@@ -73,5 +66,9 @@
     1467,
     1549
   ],
-  "_role": "a17a667 时代的复现口径：冻结基座用 best_task.pt。仅用于复现历史数字，不用于新结论。"
+  "_role": "a17a667 时代的复现口径：冻结基座用 best_task.pt。仅用于复现历史数字，不用于新结论。",
+  "sd_hard_levels": 3,
+  "sd_tvs_t_bias": 1.28,
+  "sd_apply_below": 3,
+  "sd_tvs_level_scene": 0.125
 }

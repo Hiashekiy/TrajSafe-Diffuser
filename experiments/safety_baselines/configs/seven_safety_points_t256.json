@@ -14,27 +14,14 @@
   "dual_eta": 6.1035e-08,
   "rho": 1.525879e-08,
   "rho_growth": 1.01,
-  "cbf_epsilon": 1.0,
-  "cbf_dt": 1.0,
-  "cbf_gamma_floor": 0.000125,
-  "cbf_substeps": 16,
-  "cbf_max_point_step": 0.001953125,
-  "cbf_discrete_check": true,
-  "cbf_min_step": 0.0001,
-  "cbf_max_halvings": 8,
-  "cbf_max_rejects": 200,
-  "cbf_level_retry": 1,
   "relax_weight": 100.0,
-  "hard_steps": 10,
   "pdm_levels": 10,
   "pdm_inner": 20,
   "pdm_parameterization": "ve",
   "pdm_step_convention": "official_ald",
   "pdm_ald_eps": 6.29541e-05,
   "cd_levels": 256,
-  "cd_beta": "level",
   "cd_extra_steps": 64,
-  "cd_substeps": 1,
   "radius_scene": 0.0,
   "field_kind": "exact",
   "segment_constraints_for": [
@@ -105,7 +92,7 @@
     "pdm_step_convention": "official_ald with eps derived so that gamma/sigma^2 = 1/6 (the paper form gives a mixing rate of 1/(2 sigma_T^2), i.e. no movement on this schedule).",
     "pdm_inner": "20 instead of M=100 (PDM App. F permits reducing M).",
     "segment_constraints_for": "PDM only, i.e. the paper-native App.C.3 segment constraint. The other six use per-waypoint free-space rows, which is what their papers define.",
-    "cbf": "dt=1 per level, 16 sub-steps, per-point step cap, discrete certificate per level with bounded retry.",
+    "cbf": "SafeDiffuser official: one QP per level on the sampled next state, h = Lfb + k*b, G = -grad b, Q = I, ReS slack weight 100 outside the hard interval (vendored, algorithms/official/safediffuser.py). No substeps, no certificate, no gate, no step cap.",
     "timeouts": "The safety base costs ~40 ms per forward (skeleton branch), so the loops are ~2.7x the point-model cost; timeouts raised to 1800 s (3600 s for PDM) to keep solver budget, not speed, the binding constraint.",
     "pdm_ald_eps": "T=256 口径：eps 由 gamma/sigma^2=1/6 反算 => eps = 2*sigma_min^2/6 = 6.2954e-05（误用 T=16 的 4.003e-3 会让混合率大 6.4 倍，实测 SGLD 直接发散：长度比 103、rmse 107 m）。"
   },
@@ -118,5 +105,9 @@
     "smin2": 0.0001888623,
     "pdm_ald_eps": 6.29541e-05,
     "langevin_floor_rmse_m": 1.5548112075
-  }
+  },
+  "sd_hard_levels": 3,
+  "sd_tvs_t_bias": 1.28,
+  "sd_apply_below": 3,
+  "sd_tvs_level_scene": 0.125
 }

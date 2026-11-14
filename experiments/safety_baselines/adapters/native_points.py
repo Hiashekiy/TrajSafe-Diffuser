@@ -50,9 +50,18 @@ class NativePointTask:
         clean=self.clean(x,t,ve)
         return -(np.atleast_2d(x)-clean)/self.sigma[t]**2 if ve else -(np.atleast_2d(x)-np.sqrt(self.ab[t])*clean)/(1-self.ab[t])
     def values(self,x):
-        # h-free fast path for the discrete barrier check: returns g = -h (g<=0 feasible),
-        # the same sign convention as the segment task, without building a Jacobian.
+        # Barrier values only (g = -h, g<=0 feasible) without building a Jacobian.
         return -self.map.query(self.unpack(np.asarray(x,dtype=float)))[0]
+
+    def point_barrier(self,x):
+        """Scene side of the per-point CBF: clearance h and grad h for every FREE point.
+
+        The official SafeDiffuser corrections evaluate the barrier at one position per
+        timestep and need exactly this pair (`diffusion.py:459-490` reads it from two
+        hardcoded plate ellipses; here it comes from our occupancy map).
+        """
+        h,grad=self.map.query(self.unpack(np.asarray(x,dtype=float)))
+        return h[1:-1],grad[1:-1]
 
     def constraints(self,x):
         h,grad=self.map.query(self.unpack(x));J=np.zeros((self.H,self.D));i=np.arange(self.H-2)

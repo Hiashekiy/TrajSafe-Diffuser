@@ -36,6 +36,7 @@ class Recorder:
             self.seen = rng.normal(size=(particles, self.D))
         return self.seen.copy()
     def score(self, x, t): return -np.atleast_2d(x) * 0.5 if x.ndim == 2 else -0.5 * x
+    def clean(self, x, t, ve=False): return np.atleast_2d(x) * 0.5     # official loop reads x0
     def constraints(self, x): return np.full(1, -1.0), np.zeros((1, self.D))
 
 

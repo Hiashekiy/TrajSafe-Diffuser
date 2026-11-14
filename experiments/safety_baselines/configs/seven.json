@@ -12,11 +12,7 @@
   "dual_eta": 0.000244140625,
   "rho": 0.000244140625,
   "rho_growth": 1.05,
-  "cbf_epsilon": 1.0,
-  "cbf_dt": 1.0,
-  "cbf_gamma_floor": 0.000125,
   "relax_weight": 100.0,
-  "hard_steps": 10,
   "pdm_inner": 100,
   "radius_scene": 0.0,
   "tuning": "fixed paper parameters with declared scene-unit adaptation; no test tuning",
@@ -29,5 +25,9 @@
   },
   "budget_source": "PDM AppendixF page19 T10 M100; Constrained Diffusers Appendix experimental Maze2D diffusion64+additional64 adapted to base16+additional16; nonlinear solvers may fail before exhausting sampler budget",
   "dual_constraint_scale": 128.0,
-  "validation_selection": "docs/dual_validation_selection_v2.json + v3.json, val only; chosen by success then RMSE; no validation candidate achieved collision-free planning on frozen 10 cases; applicability restricted"
+  "validation_selection": "docs/dual_validation_selection_v2.json + v3.json, val only; chosen by success then RMSE; no validation candidate achieved collision-free planning on frozen 10 cases; applicability restricted",
+  "sd_hard_levels": 3,
+  "sd_tvs_t_bias": 1.28,
+  "sd_apply_below": 3,
+  "sd_tvs_level_scene": 0.125
 }

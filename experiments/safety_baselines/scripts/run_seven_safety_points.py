@@ -17,6 +17,8 @@ from src.diffusion.schedule import NoiseSchedule
 from experiments.safety_baselines.models.safety_points import SafetyPointDiffuser, pin_endpoints
 from experiments.safety_baselines.models.safety_point_data import make_safety_point_loader
 from experiments.safety_baselines.algorithms.runner import run_method, METHODS, initial_seed
+from experiments.safety_baselines.algorithms.official.posterior import (
+    is_noiseless, level_ladder, posterior_coefficients)
 from experiments.safety_baselines.adapters.unified_curve_eval import evaluate_curve, polyline_at_u
 
 INDICES = [0, 81, 163, 244, 326, 407, 489, 570, 652, 733, 815, 896, 978, 1059, 1141,
@@ -40,6 +42,36 @@ def sample_diffuser(model, schedule, batch, device, seed=0):
         nfe += 1
         clean = out['points'].float()
         x = clean if t == 0 else a[t - 1] * clean + s[t - 1] * (x - a[t] * clean) / s[t]
+        x = pin_endpoints(x, batch['cond'])
+    return x[0].cpu().numpy(), nfe
+
+
+@torch.no_grad()
+def sample_ddpm(model, schedule, batch, device, seed=0, extra_steps=64):
+    """Unconstrained baseline on the SAME official ladder the seven safety loops walk.
+
+    `sample_diffuser` above is DDIM-256; the seven loops now follow the release's ancestral
+    chain (`reversed(range(-extra, T))`, no noise at t=1). Comparing them against a DDIM
+    sample mixes two samplers, so this row reproduces the chain with the correction removed
+    — same number of forward passes, same noise draws keyed by seed.
+    """
+    T = schedule.num_timesteps
+    B = batch['cond'].shape[0]
+    torch.manual_seed(seed)
+    x = pin_endpoints(torch.randn(B, model.num_points, 2, device=device), batch['cond'])
+    a = schedule.sqrt_alphas_cumprod.to(device).float()
+    c1, c2, var = posterior_coefficients(schedule.alphas_cumprod.cpu().numpy(),
+                                         schedule.betas.cpu().numpy())
+    nfe = 0
+    for t in level_ladder(T, extra_steps):
+        tv = torch.full((B,), t, device=device, dtype=torch.long)
+        with torch.autocast('cuda', dtype=torch.bfloat16):
+            out = model(x, batch['occupancy'], batch['cond'], tv, a[tv], batch['candidate_xy'],
+                        batch['candidate_mask'], batch['geometry'], batch['geometry_lengths'])
+        nfe += 1
+        clean = out['points'].float()
+        mean = c1[t] * clean + c2[t] * x
+        x = mean if is_noiseless(t) else mean + float(np.sqrt(var[t])) * torch.randn_like(x)
         x = pin_endpoints(x, batch['cond'])
     return x[0].cpu().numpy(), nfe
 
@@ -82,6 +114,10 @@ def main():
             t0 = time.perf_counter()
             if method == 'Diffuser':
                 p, nfe = sample_diffuser(model, schedule, b, device, seed=a.seed + k)
+                status, reason, trace = 'ok', None, []
+            elif method == 'Diffuser-ddpm':
+                p, nfe = sample_ddpm(model, schedule, b, device, seed=a.seed + k,
+                                     extra_steps=int(cfg.get('cd_extra_steps', 0)))
                 status, reason, trace = 'ok', None, []
             else:
                 r = run_method(method, model, schedule, occ, cond, scene, a.seed, cfg, init_noise=init,

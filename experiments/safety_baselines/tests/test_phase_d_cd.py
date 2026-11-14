@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from src.diffusion.schedule import NoiseSchedule
-from experiments.safety_baselines.algorithms.constrained_diffusers.runner import effective_beta, level_ladder
+from experiments.safety_baselines.algorithms.official.posterior import level_ladder, is_noiseless
 
 CONFIGS = Path(__file__).resolve().parents[1] / 'configs'
 
@@ -45,29 +45,25 @@ def test_d2_stationary_variance_matches_the_analytic_formula(v, beta):
     np.testing.assert_allclose(v_inf, beta / (1 - (1 - beta / (2 * v)) ** 2), rtol=1e-12)
 
 
-def test_d2_bias_is_bounded_on_the_256_level_schedule_and_the_two_beta_modes_tie():
+def test_d2_bias_is_bounded_on_the_256_level_schedule():
     s = NoiseSchedule(256, 'squaredcos_cap_v2')
     ab = s.alphas_cumprod.numpy().astype(float); beta = s.betas.numpy().astype(float)
-    ladder = level_ladder(256, 64, 0)
-    worst_interval = max((effective_beta(ab, ladder[i], ladder[i + 1], beta[ladder[i]], 'interval')) /
-                         (4 * (1 - ab[ladder[i]])) for i in range(len(ladder) - 1))
     worst_level = max(beta[t] / (4 * (1 - ab[t])) for t in range(256))
-    assert worst_interval < 0.30 and worst_level < 0.30      # beta/(4v) stays <= 1/4
-    # both modes give the same worst-case inflation, so "interval diverges" is wrong
-    assert abs(1 / (1 - worst_interval) - 1 / (1 - worst_level)) < 0.01
-    assert 1 / (1 - worst_interval) <= 4 / 3 + 1e-6
+    assert worst_level < 0.30      # beta/(4v) stays <= 1/4
+    assert 1 / (1 - worst_level) <= 4 / 3 + 1e-6
 
 
-def test_d2_subsampled_ladder_would_need_substeps_to_keep_the_bias_down():
-    """interval beta is larger; with cd_substeps=K the step is beta/K, bias shrinks accordingly."""
-    s = NoiseSchedule(256, 'squaredcos_cap_v2')
-    ab = s.alphas_cumprod.numpy().astype(float); beta = s.betas.numpy().astype(float)
-    t, nxt = 4, 0
-    v = 1 - ab[t]; b_int = effective_beta(ab, t, nxt, beta[t], 'interval')
-    v_inf_full = v / (1 - b_int / (4 * v))
-    v_inf_sub = v / (1 - (b_int / 4) / (4 * v))
-    assert v_inf_full > v_inf_sub            # refinement reduces the bias
-    assert v_inf_full / v <= 4 / 3 + 1e-6
+def test_d1_the_official_ladder_visits_every_level_and_repeats_t1_noiselessly():
+    """`reversed(range(-200, T))` with `i<=0 -> 1` (:503-510) and `nonzero_mask = (t != 1)` (:479)."""
+    ladder = level_ladder(256, 200)
+    assert len(ladder) == 256 + 200
+    assert ladder[:3] == [255, 254, 253]               # walks DOWN from T-1
+    assert ladder[-1] == 1 and ladder.count(1) == 202
+    assert set(ladder) == set(range(1, 256))           # t=0 is never visited
+    assert not any(is_noiseless(t) for t in ladder[:54])   # noisy while descending
+    assert all(is_noiseless(t) for t in ladder[-202:])     # and silent for every revisit
+    plain = level_ladder(256, 0)
+    assert plain[:3] == [255, 254, 253] and plain[-2:] == [1, 1] and len(plain) == 256
 
 
 @pytest.mark.parametrize('name', ['seven_native_points_paper_t256.json',
@@ -75,18 +71,19 @@ def test_d2_subsampled_ladder_would_need_substeps_to_keep_the_bias_down():
 def test_d1_main_configs_visit_every_trained_level(name):
     cfg = json.loads((CONFIGS / name).read_text(encoding='utf8'))
     assert cfg['cd_levels'] == cfg['schedule_facts']['timesteps'] == 256
-    assert cfg['cd_beta'] == 'level'
+    assert 'cd_beta' not in cfg          # only one mode left: the level the ladder visits
 
 
 def test_d3_multiplier_units_follow_the_squared_rule():
-    """g'=s*g with lambda'=lambda/s, eta'=eta/s^2, rho'=rho/s^2 keeps PD/ALM identical."""
-    from experiments.safety_baselines.algorithms.kernels import primal_dual_step, alm_step
+    """g'=s*g with lambda'=lambda/s, lr'=lr/s^2, rho'=rho/s^2 keeps the official updates identical."""
+    from experiments.safety_baselines.algorithms.official import constrained_diffusers as official
     s = 128.0
-    x = np.zeros((2, 3)); score = np.ones((2, 3)); g = np.array([[.2], [.5]]); J = np.ones((2, 1, 3))
-    lam = np.full(1, .1); noise = np.zeros((2, 3)); eta = 1e-3; rho = 2.5e-4
-    a, l = primal_dual_step(x, score, g, J, lam, .1, eta, noise)
-    b, ll = primal_dual_step(x, score, s * g, s * J, lam / s, .1, eta / s ** 2, noise)
-    np.testing.assert_allclose(a, b); np.testing.assert_allclose(l / s, ll)
-    a, l, sl, rr = alm_step(x, score, g, J, lam, rho, 1.1, .1, noise)
-    b, ll, ssl, r2 = alm_step(x, score, s * g, s * J, lam / s, rho / s ** 2, 1.1, .1, noise)
-    np.testing.assert_allclose(a, b); np.testing.assert_allclose(l / s, ll); np.testing.assert_allclose(sl * s, ssl)
+    mean = np.zeros((2, 3)); vio = np.array([[.2], [.5]]); grad = np.ones((2, 1, 3))
+    lam = np.full((2, 1), .1); slack = np.full((2, 1), .05); lr = 1e-3; rho = 2.5e-4
+    a, la = official.primal_dual(mean, vio, grad, lam, lr)
+    b, lb = official.primal_dual(mean, s * vio, s * grad, lam / s, lr / s ** 2)
+    np.testing.assert_allclose(a, b); np.testing.assert_allclose(la / s, lb)
+    a, sa, la, ra = official.augmented_lagrangian(mean, vio, grad, lam, slack, rho, 1.1)
+    b, sb, lb, rb = official.augmented_lagrangian(mean, s * vio, s * grad, lam / s, slack * s, rho / s ** 2, 1.1)
+    np.testing.assert_allclose(a, b); np.testing.assert_allclose(sa * s, sb)
+    np.testing.assert_allclose(la / s, lb); np.testing.assert_allclose(ra / s ** 2, rb)
