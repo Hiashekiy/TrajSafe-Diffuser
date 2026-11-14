@@ -151,6 +151,7 @@ class SafetyPointDiffuser(nn.Module):
             center = gather_dense_path_points(geometry[ar, idx], geometry_lengths[ar, idx], s_i)  # [B,Q,2]
             h_ell, a_e = self.ellipse_geometry(h_gamma, center, memory, h_t, ab)
             out["shape4"] = self.ellipse_shape_head(h_ell, h_t)   # [B,Q,4]
+            out["center"] = center                                # anchors for the ellipse losses
             out["ellipse_attention"] = a_e
             a_safe = self.safety_cross_attention(h_path, h_ell, h_t)
             fused = self.fusion_mlp(h_traj, h_path, a_safe)

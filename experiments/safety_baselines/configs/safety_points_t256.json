@@ -1,0 +1,77 @@
+{
+  "model": {
+    "d_model": 128,
+    "num_heads": 4,
+    "ffn_dim": 512,
+    "dropout": 0.0,
+    "map_res": 256,
+    "global_mem_res": 16,
+    "coord_hidden": 256,
+    "head_hidden": 256,
+    "final_blocks": 8,
+    "skeleton_blocks": 2,
+    "num_safety_queries": 128,
+    "rel_bias_len": 256,
+    "geo_sigma": 0.25,
+    "geo_bias_clip": 8.0,
+    "safety_features": {
+      "enabled": true
+    }
+  },
+  "ellipse": {
+    "geo_sigma": 0.25,
+    "geo_bias_clip": 8.0
+  },
+  "diffusion": {
+    "timesteps": 256,
+    "beta_schedule": "squaredcos_cap_v2",
+    "beta_start": 0.0001,
+    "beta_end": 0.02,
+    "prediction_type": "x0"
+  },
+  "data": {
+    "processed_root": "D:/ProjectDirectory/Neural-IRISDiffuser/data/processed/160m-k4p-c48",
+    "num_points": 128,
+    "geometry_points": 512
+  },
+  "loss": {
+    "lambda_points": 0.2,
+    "lambda_coarse": 0.5,
+    "lambda_smooth": 0.08,
+    "smooth_acc_weight": 0.25,
+    "smooth_jerk_weight": 1.0,
+    "lambda_boundary": 0.2,
+    "boundary_coarse_weight": 0.5,
+    "lambda_topology": 0.25,
+    "lambda_shape": 0.08,
+    "lambda_iou": 0.25,
+    "lambda_safe": 0.15,
+    "lambda_alm": 0.3,
+    "ellipse_safe_res": 64,
+    "ellipse_iou_res": 64,
+    "ellipse_mask_tau": 10.0,
+    "safe_cvar_fraction": 0.2,
+    "safe_cvar_weight": 1.0
+  },
+  "train": {
+    "epochs": 100,
+    "batch_size": 16,
+    "lr": 0.0002,
+    "weight_decay": 0.01,
+    "warmup_steps": 200,
+    "grad_clip": 1.0,
+    "val_batches": 24,
+    "save_every": 5,
+    "seed": 0,
+    "num_workers": 0,
+    "amp": "bf16",
+    "ckpt_dir": "experiments/safety_baselines/results/safety_points_t256/ckpt"
+  },
+  "_role": "Native-point safety model: 128-point diffusion state, S-C48 safety-geometry branch kept (candidate topology required: the ellipse queries anchor on the selected candidate), no B-spline, no feedback, no inference-time ALM. Loss weights copied from the S-C48 checkpoint config; the six representation-dependent adaptations are documented in models/safety_point_losses.py.",
+  "provenance": {
+    "architecture": "current v4 modules: SceneCNN (16x16 single map feature) + TrajectoryEncoder + Safety branch (SkeletonEncoder/MatchBlock/TopologyHead/PathFeatureHead/EllipseGeometry/EllipseShapeHead/SafetyControlFusion) + FinalDenoiser(8 blocks)",
+    "loss_source": "outputs/models/oneshot_k4p_c48_s/ckpt/best_task.pt -> config.loss (epoch 65, S-C48)",
+    "data_source": "data/processed/160m-k4p-c48 (same cache S-C48 used; contains curve_gt, candidate_*, ellipse_shape4_gt, alm_cell_*)",
+    "schedule_choice": "T=256: the 16-level schedule has sigma_min=8.77 m, which puts a 12.4 m terminal-noise scale under every Langevin-type loop; 256 levels give 1.10 m"
+  }
+}
