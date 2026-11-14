@@ -99,6 +99,45 @@ L = L_x0(curve)                      # 主监督，作用在 128 点上
 
 ## 3. 七种基线要改什么？—— **什么都不用改**
 
+### 3.0 已确认：候选拓扑**不是可选项**
+
+`src/models/trajsafe/planner.py` 的 forward 链是硬的：
+
+```
+C_G, C_E = SceneCNN(occ)                    # 记忆来自地图
+H_S      = SkeletonEncoder(candidate_xy)    # 候选拓扑
+R        = MatchBlock(H_traj, H_S, h_t)
+pi       = TopologyHead(R, candidate_mask);  m = m* / argmax(pi)
+H_Gamma  = safety_query_head(H_S[m])        # 安全查询 = 沿"被选中候选"的骨架
+c_i      = Γ_m(s_i),  s_i = i/(Q-1)         # 查询锚点 = 该候选的弧长参数
+H_ell    = EllipseGeometry(H_Gamma, c_i, C_G, h_t, ab)
+```
+
+即"沿一条候选路径取 Q 个锚点，逐点问椭圆形状"。没有候选就没有 `H_S[m]` 与 `c_i`，
+安全分支无从定义 ⇒ **候选必须保留**（早期把它当"可选"是我的判断错误）。
+
+**已实现并通过冒烟测试**：`models/safety_points.py::SafetyPointDiffuser`，5.396 M 参数，
+输出 `points (B,128,2)` / `coarse` / `pi (B,4)` / `shape4{raw,shape4,a,b,theta} (B,128,·)` /
+`ellipse_attention (B,128,128)`，端点钉死、`select_index` 专家选择生效。
+
+### 3.1 改点表示后必须对应修改的六处（照抄 S-C48 损失但逐条适配）
+
+|S-C48（控制点）|新模型（原生点）|
+|---|---|
+|状态 `Q∈R^{48×2}`，`curve = B Q`|状态 `p∈R^{128×2}`，**`curve = p`**，无 B 样条解码|
+|`lambda_control` 作用在 predicted `Q`|改名 `lambda_points`，作用在 predicted `p`（128 点）|
+|`lambda_coarse` 作用在粗阶段 `Q`|作用在粗阶段 `p`|
+|`lambda_smooth` = 控制多边形二/三阶差分（**控制点的光滑 ≠ 曲线的光滑**）|**改为轨迹点按索引参数的二阶差分**：`mean‖p_{i+1}-2p_i+p_{i-1}‖²`（+jerk 项），系数 0.08 / acc 0.25 / jerk 1.0 照旧|
+|`lambda_alm = alm_corridor_loss(curve, cell_a, cell_b, anchor_s, ...)`，`curve = B Q`|`alm_corridor_loss(p, ...)` **直接传点**，无需解码（更简单，且语义完全一致：走廊约束作用在交付曲线）|
+|端点：`hard_control_endpoints` 钉 48 控制点里的首末 2 个（**解码后端点仍精确**，因为 B 样条端点插值）|`pin_endpoints` 钉 128 点里的首末 2 个（本身即端点，不需要插值性质）|
+|`lambda_shape / lambda_iou / lambda_safe` 作用在 `shape4`（Q=128 锚点，沿候选弧长）|**完全不变**：它们只依赖候选几何 + 地图，与扩散状态表示无关|
+|`SafetyControlFusion` 的 C = 48|C = **128**（查询集从控制点换成轨迹点）|
+|`lambda_feedback_safe / lambda_curve_smooth`（仅 rollout 时有效）|**不启用**（`rollout=false`，与 S-C48 同口径）|
+
+参数、日程、损失权重：`lambda_points 0.2 / coarse 0.5 / smooth 0.08 / boundary 0.2 / topology 0.25 /
+shape 0.08 / iou 0.25 / safe 0.15 / alm 0.3`，`ellipse_safe_res 64 / mask_tau 10 / cvar_fraction 0.2`，
+T=**256**（你已确认），100 epoch。
+
 这一点是本次转向的主要收益：
 
 |方法|要求的约束形式|Native Point 下|
