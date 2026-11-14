@@ -1,0 +1,158 @@
+{
+  "config": "experiments/safety_baselines/configs/sc48_native16_vertexall.json",
+  "seed": 0,
+  "scenes": {
+    "61001": {
+      "index": 0,
+      "sample_id": 61001,
+      "levels": {
+        "15": {
+          "sqp": {
+            "ok": false,
+            "reason": "sc48_projection_failed:200:residual=50.54"
+          },
+          "two_stage": {
+            "clipped_points": 126,
+            "fit_max_constraint": 31.560856945199838,
+            "fit_feasible": false,
+            "polish_ok": false,
+            "polish_reason": "sc48_projection_failed:200:residual=24.22",
+            "distance_fit_to_target": 237.76750958023194
+          }
+        },
+        "8": {
+          "sqp": {
+            "ok": false,
+            "reason": "sc48_projection_failed:11:residual=0.001052"
+          },
+          "two_stage": {
+            "clipped_points": 13,
+            "fit_max_constraint": 0.018168666333942964,
+            "fit_feasible": false,
+            "polish_ok": true,
+            "polish_residual": 4.4402144721428227e-16,
+            "distance_fit_to_target": 0.1618185161323086
+          }
+        },
+        "0": {
+          "sqp": {
+            "ok": true,
+            "residual": -0.0033186456996959456,
+            "iterations": 0,
+            "move": 0.0
+          },
+          "two_stage": {
+            "clipped_points": 1,
+            "fit_max_constraint": -0.003540838770207097,
+            "fit_feasible": true,
+            "polish_ok": true,
+            "polish_residual": -0.003540838770207097,
+            "distance_fit_to_target": 0.0005113903071356796
+          }
+        }
+      }
+    },
+    "74014": {
+      "index": 163,
+      "sample_id": 74014,
+      "levels": {
+        "15": {
+          "sqp": {
+            "ok": false,
+            "reason": "sc48_projection_failed:200:residual=50.18"
+          },
+          "two_stage": {
+            "clipped_points": 126,
+            "fit_max_constraint": 30.332661558729345,
+            "fit_feasible": false,
+            "polish_ok": false,
+            "polish_reason": "sc48_projection_failed:200:residual=23.12",
+            "distance_fit_to_target": 236.861229058642
+          }
+        },
+        "8": {
+          "sqp": {
+            "ok": false,
+            "reason": "sc48_projection_failed:9:residual=0.001132"
+          },
+          "two_stage": {
+            "clipped_points": 26,
+            "fit_max_constraint": 0.07968581452831014,
+            "fit_feasible": false,
+            "polish_ok": true,
+            "polish_residual": 4.440892098500626e-16,
+            "distance_fit_to_target": 0.23986466983091953
+          }
+        },
+        "0": {
+          "sqp": {
+            "ok": true,
+            "residual": 1.4026214543126636e-12,
+            "iterations": 9,
+            "move": 0.573196406442304
+          },
+          "two_stage": {
+            "clipped_points": 41,
+            "fit_max_constraint": 0.09653813915009135,
+            "fit_feasible": false,
+            "polish_ok": true,
+            "polish_residual": 1.7763568394002505e-15,
+            "distance_fit_to_target": 0.5388834387288788
+          }
+        }
+      }
+    },
+    "86008": {
+      "index": 407,
+      "sample_id": 86008,
+      "levels": {
+        "15": {
+          "sqp": {
+            "ok": false,
+            "reason": "sc48_projection_failed:200:residual=49.77"
+          },
+          "two_stage": {
+            "clipped_points": 125,
+            "fit_max_constraint": 31.171329995475617,
+            "fit_feasible": false,
+            "polish_ok": false,
+            "polish_reason": "sc48_projection_failed:200:residual=25.4",
+            "distance_fit_to_target": 235.50959766571074
+          }
+        },
+        "8": {
+          "sqp": {
+            "ok": true,
+            "residual": 4.4398078963281407e-16,
+            "iterations": 5,
+            "move": 0.5363971403128684
+          },
+          "two_stage": {
+            "clipped_points": 50,
+            "fit_max_constraint": 0.04988729999665902,
+            "fit_feasible": false,
+            "polish_ok": true,
+            "polish_residual": 4.441976300673112e-16,
+            "distance_fit_to_target": 0.5930117132245819
+          }
+        },
+        "0": {
+          "sqp": {
+            "ok": true,
+            "residual": 2.771447972158003e-09,
+            "iterations": 8,
+            "move": 0.2715909889208674
+          },
+          "two_stage": {
+            "clipped_points": 53,
+            "fit_max_constraint": 0.06745027299434203,
+            "fit_feasible": false,
+            "polish_ok": true,
+            "polish_residual": -0.0,
+            "distance_fit_to_target": 0.27007613709456935
+          }
+        }
+      }
+    }
+  }
+}

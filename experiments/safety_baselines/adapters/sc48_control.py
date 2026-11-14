@@ -66,52 +66,81 @@ class SC48ControlTask(CurveControlTask):
 
     # ------------------------------------------------------------------ projection
     def project(self, target, budget, tol=None, maxiter=None, allow_partial=False, start=None):
-        """Nearest feasible curve as a QP in control space, with relinearisation.
+        """Nearest feasible point, solved as an SQP with an explicit per-row slack.
 
         With p = B Q the occupancy field h(p) is bilinear inside a grid cell and p is
-        affine in Q, so h(B Q) is QUADRATIC (not affine) in Q within a cell; the QP below
+        affine in Q, so h(B Q) is QUADRATIC (not affine) in Q within a cell: the QP below
         solves the locally LINEARISED problem and the accepted point is re-checked against
-        the true constraint (i.e. this is a local SQP, not a single convex QP).
-        SLSQP stalls on the same problem (measured residual 0.87 / 8.5 / 42.9 m); the
-        QP version with a trust region and monotone line search reaches 0.87 m.
+        the true constraint (local SQP, not one convex QP).
+
+        Three defects fixed on 2026-11-14 (review):
+          A. feasibility was tested on the OUTPUT argument and an already-feasible
+             warm start was returned as `identity`, silently discarding `target`; it is
+             now tested on `target`, and a feasible target is the only identity case.
+          B. the slack row was `-s >= 0`, i.e. s <= 0, which TIGHTENS instead of
+             relaxing the linearised rows; the slack is now per-row with s >= 0 and a
+             diagonal penalty 0.5*rho*s^2 (a single shared slack let one bad row relax
+             every row, so the design was wrong as well as the sign).
+          C. the OSQP result was accepted whenever `res.x is not None`; only status 1/2
+             is accepted now, and primal/dual residuals + the slack are reported.
         """
         import osqp
         from scipy import sparse
         tol = float(self.projection_tol if tol is None else tol)
         iters = int(self.projection_maxiter if maxiter is None else maxiter)
         t = np.asarray(target, dtype=float).reshape(-1)
+        # (A) identity is decided by the TARGET, never by the warm start.
+        g_t, _ = self.constraints(t)
+        if float(np.max(g_t)) <= tol:
+            return t.copy(), {'status': 'identity', 'iterations': 0, 'residual': float(np.max(g_t)),
+                              'slack_norm': 0., 'slack_max': 0.}
         q = t.copy() if start is None else np.asarray(start, dtype=float).reshape(-1).copy()
-        g, J = self.constraints(q)
-        if float(np.max(g)) <= tol:
-            return q, {'status': 'identity', 'iterations': 0, 'residual': float(np.max(g))}
-        best = None; used = 0
+        rho = float(getattr(self, 'projection_slack_weight', 1e3))
         trust = float(getattr(self, 'projection_trust', 0.05))
+        g, J = self.constraints(q)
+        best = None; used = 0; last = {}
+
+        def solve_qp(A_hard, b_hard, n, with_slack, rho_s):
+            """min .5||x-t||^2 (+ .5*rho*||s||^2) s.t. A_hard x >= b_hard (+ s, s>=0)."""
+            if not with_slack:
+                A2, l2 = A_hard, b_hard
+            else:
+                A2 = sparse.hstack([A_hard, sparse.eye(len(b_hard))], format='csc')
+                A2 = sparse.vstack([A2, sparse.hstack([sparse.csc_matrix((len(b_hard), n)),
+                                                       sparse.eye(len(b_hard))])], format='csc')
+                l2 = np.r_[b_hard, np.zeros(len(b_hard))]
+            rn = np.sqrt(np.asarray(A2.multiply(A2).sum(axis=1)).reshape(-1))
+            sc = 1.0 / np.maximum(rn, 1e-8)
+            A2 = sparse.diags(sc) @ A2; l2 = l2 * sc
+            P = (sparse.eye(n, format='csc') if not with_slack else
+                 sparse.diags(np.r_[np.ones(n), np.full(len(b_hard), rho_s)], format='csc'))
+            solver = osqp.OSQP()
+            solver.setup(P=P, q=(np.r_[-t] if not with_slack else np.r_[-t, np.zeros(len(b_hard))]),
+                         A=A2, l=l2, u=np.full(A2.shape[0], np.inf), verbose=False,
+                         eps_abs=1e-9, eps_rel=1e-9, max_iter=40000, time_limit=budget.left(),
+                         polish=True)
+            return solver.solve(raise_error=False)
+
         for k in range(max(1, iters)):
             budget.check()
-            # linear model  g(q+dq) ~= g + J dq <= 0  <=>  (-J) q >= g - J q_at_current
-            A = sparse.csc_matrix(-J); b = g - J @ q
             n = len(q)
-            row = np.sqrt(np.asarray(A.multiply(A).sum(axis=1)).reshape(-1))
-            sc = 1.0 / np.maximum(row, 1e-8)
-            A2 = sparse.diags(sc) @ A; b2 = b * sc
-            # one scalar slack column, heavily weighted, absorbs momentarily infeasible rows
-            A2 = sparse.hstack([A2, sparse.csc_matrix(np.full((len(b2), 1), 1e-3))], format='csc')
-            pad = sparse.csc_matrix((1, n + 1)); pad[0, -1] = -1.0        # slack >= 0
-            A2 = sparse.vstack([A2, pad], format='csc')
-            P = sparse.eye(n + 1, format='csc'); P[-1, -1] = 1.0
-            solver = osqp.OSQP()
-            solver.setup(P=P, q=np.r_[-t, 0.], A=A2, l=np.r_[b2, 0.],
-                         u=np.r_[np.full(len(b2), np.inf), np.inf],
-                         verbose=False, eps_abs=1e-9, eps_rel=1e-9, max_iter=20000,
-                         time_limit=budget.left(), polish=True)
-            res = solver.solve(raise_error=False)
+            # linear model  g(q+dq) ~= g + J dq <= 0  <=>  (-J) x >= g - J q  (x = q+dq)
+            A = sparse.csc_matrix(-np.asarray(J, dtype=float)); b = g - J @ q
+            # exact projection first (well conditioned); the paper's relaxation only as a
+            # fallback when the linearised rows are momentarily inconsistent.
+            res = solve_qp(A, b, n, False, 0.)
+            used_slack = False
+            if res.x is None or int(res.info.status_val) not in (1, 2):
+                res = solve_qp(A, b, n, True, rho); used_slack = True
             budget.check()
-            if res.x is None:
+            status_val = int(res.info.status_val); status = str(res.info.status)
+            if res.x is None or status_val not in (1, 2):
+                last = {'status': 'osqp_%s' % status, 'iterations': k,
+                        'residual': float(np.max(g)), 'osqp_status': status}
                 break
-            # Globalise the SQP step: the bilinear field is only piecewise affine, so an
-            # unbounded QP step cycles (measured: residual frozen at 0.87 m over 200
-            # iterations). Trust region + monotone line search on the TRUE residual.
-            dq = np.asarray(res.x[:n], dtype=float) - q
+            x_qp = np.asarray(res.x[:n], dtype=float)
+            s_qp = np.asarray(res.x[n:], dtype=float) if used_slack else np.zeros(len(b))
+            dq = x_qp - q
             biggest = float(np.max(np.abs(dq))) if dq.size else 0.0
             if biggest > trust:
                 dq *= trust / biggest
@@ -127,15 +156,54 @@ class SC48ControlTask(CurveControlTask):
             q = bestq
             g, J = self.constraints(q)
             res_max = float(np.max(g)); used = k + 1
+            last = {'status': 'qp_relaunched', 'iterations': used, 'residual': res_max,
+                    'osqp_status': status, 'used_slack': used_slack,
+                    'slack_norm': float(np.linalg.norm(s_qp)),
+                    'slack_max': float(np.max(s_qp)) if s_qp.size else 0.,
+                    'osqp_primal_residual': float(res.info.prim_res),
+                    'osqp_dual_residual': float(res.info.dual_res),
+                    'distance_to_target': float(np.linalg.norm(q - t))}
             if best is None or res_max < best[1]:
-                best = (q.copy(), res_max)
+                best = (q.copy(), res_max, dict(last))
             if res_max <= tol:
-                return q, {'status': 'qp_relaunched', 'iterations': used, 'residual': res_max}
-            if base - res_max < 1e-12:      # no measurable progress: stop early
+                return q, dict(last, status='qp_relaunched')
+            if base - res_max < 1e-12:
                 break
-        q, res_max = best if best is not None else (q, float(np.max(g)))
+        if best is not None:
+            q, res_max, last = best[0], best[1], best[2]
+        else:
+            res_max = float(np.max(g))
+        # Near-feasible stalls (residual a few ulps above tol) are finished with an
+        # active-set Gauss-Newton step: solve J_a dq = -g_a in the least-squares sense and
+        # line-search it on the TRUE residual. Same idea as the segment projector's
+        # finish_feasible; it never widens the tolerance, it just converges further.
+        if tol < res_max <= 1e-3:
+            for _ in range(8):
+                budget.check()
+                g_cur, J_cur = self.constraints(q)
+                act = g_cur > 0
+                if not act.any():
+                    res_max = float(np.max(g_cur)); break
+                Ja = np.asarray(J_cur, dtype=float)[act]; ga = g_cur[act]
+                try:
+                    dq = -Ja.T @ np.linalg.solve(Ja @ Ja.T + 1e-12 * np.eye(act.sum()), ga)
+                except np.linalg.LinAlgError:
+                    break
+                base = float(np.max(g_cur)); step = 1.0; improved = False
+                for _ in range(20):
+                    cand = q + step * dq
+                    if float(np.max(self.constraints(cand)[0])) < base:
+                        q = cand; improved = True; break
+                    step *= 0.5
+                g_new = float(np.max(self.constraints(q)[0]))
+                res_max = g_new; used += 1
+                last = dict(last, status='gauss_newton_polish', residual=res_max, iterations=used)
+                if res_max <= tol or not improved:
+                    break
+        if res_max <= tol:
+            return q, dict(last, status=last.get('status', 'qp_relaunched'))
         if allow_partial and res_max <= 1e-2:
-            return q, {'status': 'partial', 'iterations': used, 'residual': res_max}
+            return q, dict(last, status='partial', residual=res_max)
         raise RuntimeError('sc48_projection_failed:%d:residual=%.4g' % (used, res_max))
 
     # ------------------------------------------------------------------ CBF QP
