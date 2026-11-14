@@ -36,11 +36,12 @@ class CurveControlTask(PaperTask):
     def max_point_speed(self, velocity):
         return float(np.linalg.norm(self.B[:, 1:-1] @ np.asarray(velocity).reshape(-1, 2), axis=1).max())
 
-    def project(self, target, budget):
+    def project(self, target, budget, start=None, tol=None, maxiter=None, allow_partial=False):
         # Pure paper projection objective. No extra prior draws, old guidance,
         # feasibility penalty, selected model prediction or feasible fallback.
+        # `start` (the previous level's feasible point) warm-starts the local solve.
         value, info = nearest_projection(target,
             lambda q: self.constraints(q)[0], self.projection_verification_jac,
-            None, budget,
+            start, budget,
             self.projection_maxiter, self.projection_tol,kkt_jac=self.projection_verification_jac)
         return value, info

@@ -17,7 +17,7 @@ Two implementation points that were wrong or undocumented before 2026-11-14:
 """
 import numpy as np
 from experiments.safety_baselines.algorithms.kernels import primal_dual_step,alm_step
-from experiments.safety_baselines.algorithms.solvers import nearest_projection
+from experiments.safety_baselines.algorithms.solvers import nearest_projection,call_project
 
 def level_ladder(num_levels,visits,extra_steps):
     ladder=np.linspace(num_levels-1,0,visits).round().astype(int).tolist()+[0]*extra_steps
@@ -60,7 +60,8 @@ def run(task,method,rng,cfg,budget,trace):
                 task.last_nominal=target.copy()
                 if warm is None and not hasattr(task,'project') and hasattr(task,'projection_start_for'):warm=task.projection_start_for(target,budget)
                 elif warm is None and not hasattr(task,'project') and hasattr(task,'projection_initial'):warm=task.projection_initial(budget)
-                xx,info=task.project(target,budget) if hasattr(task,'project') else nearest_projection(target,lambda y:task.constraints(y)[0],lambda y:task.constraints(y)[1],warm,budget,cfg['projection_maxiter'],cfg['projection_tol_scene']);warm=xx.copy();x=xx[None];last_info=info
+                # pass the previous feasible point so the local projection warm-starts
+                xx,info=call_project(task,target,budget,warm) if hasattr(task,'project') else nearest_projection(target,lambda y:task.constraints(y)[0],lambda y:task.constraints(y)[1],warm,budget,cfg['projection_maxiter'],cfg['projection_tol_scene']);warm=xx.copy();x=xx[None];last_info=info
             else:
                 task.last_nominal=(x+beta/2*score+noise_scale*noise)[0].copy()
                 vals=[task.constraints(v) for v in x];g=np.stack([v[0] for v in vals]);J=np.stack([v[1] for v in vals])

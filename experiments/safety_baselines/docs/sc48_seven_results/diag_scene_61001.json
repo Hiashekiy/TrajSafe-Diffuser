@@ -1,0 +1,193 @@
+{
+  "config": "experiments/safety_baselines/configs/sc48_native16_vertexall.json",
+  "seed": 0,
+  "scenes": {
+    "61001": {
+      "index": 0,
+      "sample_id": 61001,
+      "feasibility": {
+        "control_gt_max_constraint": -0.08333297718109685,
+        "control_gt_feasible_128": true,
+        "control_gt_curve_collision": false,
+        "control_gt_min_clearance_m": 6.659776654059981
+      },
+      "jacobian": {
+        "0": {
+          "rows": 128,
+          "vars": 92,
+          "row_nnz_min": 0,
+          "row_nnz_median": 4.0,
+          "row_nnz_max": 8,
+          "J_two_norm": 1.5729419353257865,
+          "J_fro": 7.558017741302062,
+          "max_constraint": 0.6177757746412675,
+          "active_rows": 84
+        },
+        "1": {
+          "rows": 128,
+          "vars": 92,
+          "row_nnz_min": 0,
+          "row_nnz_median": 4.0,
+          "row_nnz_max": 8,
+          "J_two_norm": 1.5729419353257865,
+          "J_fro": 7.558017741302062,
+          "max_constraint": 0.6177757746412675,
+          "active_rows": 84
+        },
+        "8": {
+          "rows": 128,
+          "vars": 92,
+          "row_nnz_min": 0,
+          "row_nnz_median": 4.0,
+          "row_nnz_max": 8,
+          "J_two_norm": 1.5729419353257865,
+          "J_fro": 7.558017741302062,
+          "max_constraint": 0.6177757746412675,
+          "active_rows": 84
+        },
+        "15": {
+          "rows": 128,
+          "vars": 92,
+          "row_nnz_min": 0,
+          "row_nnz_median": 4.0,
+          "row_nnz_max": 8,
+          "J_two_norm": 1.5729419353257865,
+          "J_fro": 7.558017741302062,
+          "max_constraint": 0.6177757746412675,
+          "active_rows": 84
+        }
+      },
+      "ros_legacy_wNone": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 16,
+        "seconds": 1.5709621999994852,
+        "slack_norm_mean": 0.013582251683057553,
+        "slack_norm_max": 0.019966338129132847,
+        "slack_norm_min": 0.0,
+        "cbf_residual_mean": 0.004178569192840519,
+        "cbf_residual_max": 0.06685710708544879,
+        "cbf_residual_min": -1.1102230246251565e-16,
+        "min_h_scene_mean": -0.5358974246582151,
+        "min_h_scene_max": 0.08806710675951256,
+        "min_h_scene_min": -0.8050075123426705,
+        "integration_steps_mean": 71.6875,
+        "integration_steps_max": 94.0,
+        "integration_steps_min": 42.0
+      },
+      "ros_osqp_w100.0": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 16,
+        "seconds": 13.149510800023563,
+        "slack_norm_mean": 1.3582646170917192,
+        "slack_norm_max": 1.99663381432338,
+        "slack_norm_min": 9.966087973874356e-05,
+        "cbf_residual_mean": -0.5294527060477945,
+        "cbf_residual_max": 0.06685722609520578,
+        "cbf_residual_min": -0.8220803098493886,
+        "min_h_scene_mean": -0.5358974488582975,
+        "min_h_scene_max": 0.08806719901033148,
+        "min_h_scene_min": -0.8050075494718607,
+        "integration_steps_mean": 71.6875,
+        "integration_steps_max": 94.0,
+        "integration_steps_min": 42.0
+      },
+      "ros_osqp_w0.01": {
+        "status": "failed",
+        "reason": "timeout",
+        "nfe": 2,
+        "seconds": 240.00084199997946,
+        "slack_norm_mean": 0.3766230806056378,
+        "slack_norm_max": 0.3766230806056378,
+        "slack_norm_min": 0.3766230806056378,
+        "cbf_residual_mean": -0.17078432551639525,
+        "cbf_residual_max": -0.17078432551639525,
+        "cbf_residual_min": -0.17078432551639525,
+        "min_h_scene_mean": -0.2223855597696469,
+        "min_h_scene_max": -0.2223855597696469,
+        "min_h_scene_min": -0.2223855597696469,
+        "integration_steps_mean": 1583.0,
+        "integration_steps_max": 1583.0,
+        "integration_steps_min": 1583.0
+      },
+      "project_cold": {
+        "ok": false,
+        "reason": "sc48_projection_failed:1:residual=0.6151"
+      },
+      "project_warm_gt": {
+        "ok": true,
+        "residual": -0.08333297718109685,
+        "iterations": 0,
+        "status": "identity",
+        "move": 10.108651197053778
+      },
+      "Primal-Dual_extra0": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 16,
+        "seconds": 0.7563398999918718,
+        "collision": true,
+        "min_clearance_m": -15.346915049055527,
+        "length_ratio": 7.277693881367361,
+        "max_curvature": 181.311753217836,
+        "rmse_m": 18.035794355882523
+      },
+      "Primal-Dual_extra16": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 32,
+        "seconds": 1.4421179000055417,
+        "collision": true,
+        "min_clearance_m": -7.713398821927343,
+        "length_ratio": 3.824994957675615,
+        "max_curvature": 39.71093171874804,
+        "rmse_m": 11.47260299978395
+      },
+      "Primal-Dual_extra64": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 80,
+        "seconds": 3.539390599995386,
+        "collision": true,
+        "min_clearance_m": -11.279788437880178,
+        "length_ratio": 4.131297861005711,
+        "max_curvature": 139.28762913656027,
+        "rmse_m": 11.249773181501864
+      },
+      "ALM_extra0": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 16,
+        "seconds": 0.7077157000021543,
+        "collision": true,
+        "min_clearance_m": -15.218000076655272,
+        "length_ratio": 6.982652317106139,
+        "max_curvature": 79.68922708583064,
+        "rmse_m": 20.37703516718898
+      },
+      "ALM_extra16": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 32,
+        "seconds": 1.3918004999868572,
+        "collision": true,
+        "min_clearance_m": -4.099959865692742,
+        "length_ratio": 4.239904965940316,
+        "max_curvature": 49.411455201493126,
+        "rmse_m": 10.574734967015157
+      },
+      "ALM_extra64": {
+        "status": "ok",
+        "reason": null,
+        "nfe": 80,
+        "seconds": 3.5238302999932785,
+        "collision": true,
+        "min_clearance_m": -11.079559881087759,
+        "length_ratio": 4.248695401018276,
+        "max_curvature": 287.3012199538802,
+        "rmse_m": 10.518216434099593
+      }
+    }
+  }
+}

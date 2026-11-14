@@ -17,6 +17,19 @@ def initial_noise(scene_id,seed,num_points=128):
     """The single trajectory noise vector every method starts from (paired protocol)."""
     return np.random.default_rng(initial_seed(scene_id,seed)).normal(size=(num_points,2))
 
+def attach_nfe_counter(task):
+    """Count REAL network forward passes on `task.clean`.
+
+    The NFE of these loops is not `cd_levels`: Projected/PD/ALM run
+    (levels + cd_extra_steps) updates and PDM runs pdm_levels * pdm_inner score
+    evaluations. (2026-11-14 review item 4.)
+    """
+    counter=[0];inner=task.clean
+    def counted(x,t,ve=False):
+        counter[0]+=1;return inner(x,t,ve)
+    task.clean=counted
+    return counter
+
 def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None,task_extra=None):
     started=time.perf_counter();trace=[];trajectory=None;reason=None;status='ok'
     try:
@@ -48,6 +61,8 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None,
             task.projection_tol=float(cfg.get('segment_projection_tol',1e-6))
         if cfg.get('state_adapter') in ('curve_control','sc48_control'):
             task.projection_maxiter=cfg['projection_maxiter'];task.projection_tol=cfg['projection_tol_scene']
+        # Count REAL network forward passes (see attach_nfe_counter).
+        nfe=attach_nfe_counter(task)
         if init_noise is not None:
             task.initial_override=np.asarray(init_noise,dtype=float)[1:-1].reshape(-1)
             task.particle_seed=initial_seed(scene_id,seed)   # method independent, pairs PD/ALM
@@ -65,4 +80,5 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None,
         'pdm_projection_stats':getattr(task,'pdm_stats',None),
         'segment_audit':getattr(task,'segment_audit',None),
         'internal_state_trajectory':task.points(value).tolist() if status=='ok' and hasattr(task,'points') else None,
-        'internal_max_violation_scene':float(task.constraints(value)[0].max()) if status=='ok' else None}
+        'internal_max_violation_scene':float(task.constraints(value)[0].max()) if status=='ok' else None,
+        'model_forward_calls':nfe[0]}

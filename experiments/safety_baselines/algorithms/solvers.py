@@ -12,8 +12,24 @@ class Budget:
         if time.perf_counter()>self.end:raise SolverFailure('timeout')
     def left(self):self.check();return max(.001,self.end-time.perf_counter())
 
+def call_project(task,target,budget,warm=None,allow_partial=None):
+    """task.project(target, budget, start=warm[, allow_partial=...]) with signature probing.
+
+    Task adapters written before 2026-11-14 do not accept `start`; the warm start is an
+    optional acceleration, so it is only passed when the adapter declares it (or takes
+    **kwargs). Nothing is swallowed: only the keyword is conditionally omitted.
+    """
+    import inspect
+    kw={}
+    try:params=inspect.signature(task.project).parameters
+    except (TypeError,ValueError):params={}
+    var_kw=any(p.kind==p.VAR_KEYWORD for p in params.values())
+    if warm is not None and ('start' in params or var_kw):kw['start']=warm
+    if allow_partial is not None and ('allow_partial' in params or var_kw):kw['allow_partial']=allow_partial
+    return task.project(target,budget,**kw)
+
 def nearest_projection(target,fun,jac,warm,budget,maxiter=60,tol=1e-5,kkt_jac=None):
-    """Local SLSQP solve of min .5||x-target||虏 s.t. g(x)<=0.
+    """Local SLSQP solve of min .5||x-target||^2 s.t. g(x)<=0.
     Nonconvex nearest solution is local, not a global projection certificate.
     """
     budget.check();target=np.asarray(target);g=fun(target)

@@ -14,7 +14,7 @@ of it; that variant has been removed instead of silently mixing the two. See
 docs/DSH_FIX_REPORT_20261114.md §4d.
 """
 import numpy as np
-from experiments.safety_baselines.algorithms.solvers import nearest_projection,SolverFailure
+from experiments.safety_baselines.algorithms.solvers import nearest_projection,SolverFailure,call_project
 
 def level_gamma(variance,t,levels,convention,ald_eps):
     """gamma_t of the paper's form  y += gamma*s + sqrt(2*gamma)*z  (VE units).
@@ -56,8 +56,11 @@ def run(task,method,rng,cfg,budget,trace):
             task.last_nominal=target.copy()
             info={}
             if hasattr(task,'project'):
-                if getattr(task,'partial_projection',False):x,info=task.project(target,budget,allow_partial=not last)
-                else:x,info=task.project(target,budget)
+                # `start=` carries the previous level's feasible point: without it every
+                # projection restarts from the drifted SGLD target, which is exactly the
+                # regime a local SQP handles worst (2026-11-14 review).
+                x,info=call_project(task,target,budget,warm,
+                                    allow_partial=(not last) if getattr(task,'partial_projection',False) else None)
                 warm=x.copy()
             else:
                 if warm is None and hasattr(task,'projection_start_for'):warm=task.projection_start_for(target,budget)

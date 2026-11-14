@@ -25,7 +25,7 @@ class SC48ControlTask(CurveControlTask):
     """One scene of S-C48. `candidates` holds the scene's candidate topology tensors."""
 
     def __init__(self, model, schedule, occupancy, cond, points, radius=0.,
-                 field_kind='bilinear', candidates=None):
+                 field_kind='bilinear', candidates=None, cbf_solver='legacy', slack_weight=None):
         if field_kind not in ('exact', 'bilinear'):
             raise ValueError('unapproved constraint field ' + field_kind)
         self.model = model; self.schedule = schedule
@@ -55,18 +55,25 @@ class SC48ControlTask(CurveControlTask):
                      for k, v in c.items()}
         gi = self.cand['geometry_lengths']
         self.cand['geometry_lengths'] = gi.to(torch.long).reshape(1, -1)
+        # Solver selection is explicit: `legacy` keeps `cbf_velocity` (the repo default and
+        # what the committed 20-scene table used); `osqp` binds the soft-constraint QP.
+        self.cbf_solver = str(cbf_solver)
+        self.slack_weight = None if slack_weight is None else float(slack_weight)
+        if self.cbf_solver == 'osqp':
+            self.cbf_solve = self.cbf_solve_osqp
+        elif self.cbf_solver != 'legacy':
+            raise ValueError('unknown cbf_solver %r' % cbf_solver)
 
     # ------------------------------------------------------------------ projection
     def project(self, target, budget, tol=None, maxiter=None, allow_partial=False, start=None):
         """Nearest feasible curve as a QP in control space, with relinearisation.
 
-        With p = B Q the bilinear occupancy field is locally AFFINE in Q, so
-        `h(p(u)) >= 0` is a set of linear rows and the nearest-point projection is a
-        convex QP -- which is exactly what the paper's projection step is. SLSQP on the
-        same problem stalls because the 128 rows are dense over the 92 free variables
-        (measured residual 0.87 / 8.5 / 42.9 m). Each outer iteration relinearises at the
-        current control polygon, and the accepted point is re-checked against the true
-        (piecewise-bilinear) constraint.
+        With p = B Q the occupancy field h(p) is bilinear inside a grid cell and p is
+        affine in Q, so h(B Q) is QUADRATIC (not affine) in Q within a cell; the QP below
+        solves the locally LINEARISED problem and the accepted point is re-checked against
+        the true constraint (i.e. this is a local SQP, not a single convex QP).
+        SLSQP stalls on the same problem (measured residual 0.87 / 8.5 / 42.9 m); the
+        QP version with a trust region and monotone line search reaches 0.87 m.
         """
         import osqp
         from scipy import sparse
@@ -132,24 +139,25 @@ class SC48ControlTask(CurveControlTask):
         raise RuntimeError('sc48_projection_failed:%d:residual=%.4g' % (used, res_max))
 
     # ------------------------------------------------------------------ CBF QP
-    def cbf_solve(self, desired, J, offset, w, budget, tol=1e-5):
-        """eq.(13) in control space: min .5||v-desired||^2 + .5*rho*||s||^2
-        s.t. J v + offset + s >= 0, s >= 0.
+    def cbf_solve_osqp(self, desired, J, offset, w, budget, tol=1e-5):
+        """eq.(13) in control space, solved as an explicit soft-constraint QP:
 
-        The point-space tasks can drop the slack (w=0) because their rows are separable,
-        so the hard system is always feasible. Here J is dense (one control moves 128
-        curve points) and the hard system is routinely infeasible, so the paper's
-        relaxation term is solved explicitly. `rho` is a real penalty: the scalar `w`
-        that `cbf_velocity` takes enters its objective as 1/(2w^2), so w=100 made the
-        slack almost free and turned the CBF into a no-op (measured: identical to the
-        unconstrained baseline to 4 decimals).
+            min .5||v-desired||^2 + (rho/2)||s||^2   s.t.  J v + offset + s >= 0, s >= 0
+
+        `rho` follows the SAME convention as `cbf_velocity`, whose slack term is
+        ||min(Jz+offset,0)||^2/(2w^2): rho = 1/w^2. So w=100 -> rho=1e-4 (slack almost
+        free), w=0.01 -> rho=1e4 (nearly hard). Nothing here is a hidden constant.
+
+        Only bound to the task when `cbf_solver == "osqp"` (see __init__); the default is
+        the repo's `cbf_velocity`, which is what the committed 20-scene table used.
         """
         import osqp
         from scipy import sparse
         budget.check()
         d = np.asarray(desired, dtype=float).reshape(-1); n = len(d)
         Jm = np.asarray(J, dtype=float); off = np.asarray(offset, dtype=float).reshape(-1)
-        m = len(off); rho = float(getattr(self, 'slack_weight', 1e4))
+        m = len(off)
+        rho = float(getattr(self, 'slack_weight', 0.) or (1.0 / max(float(w), 1e-6) ** 2))
         # (J v + off + s) >= 0  ->  [J I] z >= -off ;   s >= 0  ->  [0 I] z >= 0
         top = sparse.hstack([sparse.csc_matrix(Jm), sparse.eye(m)], format='csc')
         bot = sparse.hstack([sparse.csc_matrix((m, n)), sparse.eye(m)], format='csc')
@@ -166,13 +174,22 @@ class SC48ControlTask(CurveControlTask):
                      eps_abs=max(tol * .1, 1e-9), eps_rel=max(tol * .1, 1e-9),
                      max_iter=20000, time_limit=budget.left(), polish=True)
         res = solver.solve(raise_error=False); budget.check()
-        if res.x is None:
-            raise RuntimeError('sc48_cbf_qp_no_solution')
+        status = str(res.info.status); status_val = int(res.info.status_val)
+        # OSQP: 1 solved, 2 solved inaccurate. Anything else means the returned x is the
+        # last iterate of a non-converged run and must NOT be reported as a solution.
+        if res.x is None or status_val not in (1, 2):
+            raise RuntimeError('sc48_cbf_qp_not_converged:%s' % status)
         v = np.asarray(res.x[:n], dtype=float); s = np.asarray(res.x[n:], dtype=float)
         gap = Jm @ v + off
-        return v, s, {'qp_status': 'osqp_soft_slack', 'cbf_residual': float(np.min(gap)),
-                      'kkt_dual': float(np.linalg.norm(v - d + Jm.T @ np.maximum(-gap, 0.), np.inf)),
-                      'slack_norm': float(np.linalg.norm(s)), 'iterations': int(res.info.iter)}
+        info = {'qp_status': status, 'qp_status_val': status_val,
+                'cbf_residual': float(np.min(gap)),
+                'cbf_residual_soft': float(np.min(gap + s)),
+                'primal_residual': float(res.info.prim_res), 'dual_residual': float(res.info.dual_res),
+                'velocity_change_norm': float(np.linalg.norm(v - d)),
+                'velocity_ratio': float(np.linalg.norm(v) / max(np.linalg.norm(d), 1e-12)),
+                'slack_norm': float(np.linalg.norm(s)), 'slack_max': float(s.max()) if m else 0.,
+                'rho': rho, 'iterations': int(res.info.iter)}
+        return v, s, info
 
     @torch.inference_mode()
     def clean(self, x, t, ve=False):
