@@ -1,0 +1,23 @@
+# 独立无安全/无骨架共同基座；公共部分对齐完整 Ours 1+8。
+base: "experiments/safety_baselines/configs/v4_map16_l1_final8_e100.yaml"
+model:
+  architecture: "map_only_control_diffuser_v1"
+  safety_features:
+    enabled: false
+  path_features:
+    enabled: false
+  feedback:
+    enabled: false
+loss:
+  lambda_topology: 0.0
+  lambda_shape: 0.0
+  lambda_iou: 0.0
+  lambda_safe: 0.0
+  lambda_curve_smooth: 0.0
+train:
+  epochs: 100
+  ckpt_dir: "experiments/safety_baselines/results/map_only_l1_final8/ckpt"
+  feedback:
+    rollout: false
+alm:
+  enabled: false

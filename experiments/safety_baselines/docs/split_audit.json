@@ -1,0 +1,43 @@
+{
+  "train": {
+    "samples": 3850,
+    "sample_ids_unique": 3850,
+    "episode_count": 80,
+    "episode_examples": [
+      10,
+      10,
+      10,
+      10,
+      10
+    ]
+  },
+  "val": {
+    "samples": 1550,
+    "sample_ids_unique": 1550,
+    "episode_count": 20,
+    "episode_examples": [
+      61,
+      61,
+      61,
+      61,
+      61
+    ]
+  },
+  "test": {
+    "samples": 420,
+    "sample_ids_unique": 420,
+    "episode_count": 15,
+    "episode_examples": [
+      1,
+      1,
+      1,
+      1,
+      1
+    ]
+  },
+  "episode_overlap": {
+    "train_val": 0,
+    "train_test": 0,
+    "val_test": 0
+  }
+}

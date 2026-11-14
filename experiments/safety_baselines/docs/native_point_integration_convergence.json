@@ -1,0 +1,40 @@
+{
+  "purpose": "numerical integration consistency audit, not method or parameter selection on test performance",
+  "split": "val",
+  "scene_id": 61001,
+  "nominal_updates_unchanged": true,
+  "rows": [
+    {
+      "method": "RoS-diffuser",
+      "step_refinement": 4,
+      "status": "ok",
+      "reason": null,
+      "violation_m": 0.05483688984799305,
+      "seconds": 8.68362139997771
+    },
+    {
+      "method": "TVS-diffuser",
+      "step_refinement": 4,
+      "status": "ok",
+      "reason": null,
+      "violation_m": 0.060969657376244615,
+      "seconds": 6.6166943999996874
+    },
+    {
+      "method": "RoS-diffuser",
+      "step_refinement": 16,
+      "status": "ok",
+      "reason": null,
+      "violation_m": 0.013952148720563561,
+      "seconds": 33.30446309997933
+    },
+    {
+      "method": "TVS-diffuser",
+      "step_refinement": 16,
+      "status": "ok",
+      "reason": null,
+      "violation_m": 0.01170172530792206,
+      "seconds": 25.902231100015342
+    }
+  ]
+}

@@ -1,0 +1,273 @@
+{
+  "definition": "task=val.curve_rmse_m+80*val.collision_rate; epochs are zero-based. First within5% is retrospective proximity, not sustained convergence. Validation is training-script internal, not formal test sampler evaluation.",
+  "models": [
+    {
+      "model": "oneshot_k4p_c48",
+      "source": "outputs\\models\\oneshot_k4p_c48\\training_summary.json",
+      "epochs": 200,
+      "first_within_5pct_of_best_epoch": 36,
+      "best_task_epoch": 55,
+      "hours_at_best": 2.4301778111192913,
+      "total_hours": 7.3894488641950815,
+      "best_task_score": 9.562143236398697,
+      "windows": [
+        {
+          "epochs": [
+            20,
+            39
+          ],
+          "median_task_score": 10.808153400818506,
+          "median_rmse": 10.229305227597553
+        },
+        {
+          "epochs": [
+            40,
+            59
+          ],
+          "median_task_score": 10.793870774408182,
+          "median_rmse": 10.133672629793484
+        },
+        {
+          "epochs": [
+            60,
+            79
+          ],
+          "median_task_score": 10.863039704660576,
+          "median_rmse": 10.138321494062742
+        },
+        {
+          "epochs": [
+            80,
+            99
+          ],
+          "median_task_score": 11.120680458843708,
+          "median_rmse": 10.250304564833641
+        },
+        {
+          "epochs": [
+            100,
+            149
+          ],
+          "median_task_score": 11.414192877709866,
+          "median_rmse": 10.336971407135326
+        },
+        {
+          "epochs": [
+            150,
+            199
+          ],
+          "median_task_score": 11.603516762455303,
+          "median_rmse": 10.422592038909595
+        }
+      ]
+    },
+    {
+      "model": "oneshot_k4p_c48_d",
+      "source": "outputs\\models\\oneshot_k4p_c48_d\\training_summary.json",
+      "epochs": 100,
+      "first_within_5pct_of_best_epoch": 86,
+      "best_task_epoch": 96,
+      "hours_at_best": 1.1230235103766124,
+      "total_hours": 1.1578502914640638,
+      "best_task_score": 29.286125252644222,
+      "windows": [
+        {
+          "epochs": [
+            20,
+            39
+          ],
+          "median_task_score": 40.43026295801003,
+          "median_rmse": 20.163800766070686
+        },
+        {
+          "epochs": [
+            40,
+            59
+          ],
+          "median_task_score": 37.80661217868328,
+          "median_rmse": 18.137408643960953
+        },
+        {
+          "epochs": [
+            60,
+            79
+          ],
+          "median_task_score": 36.12357163180908,
+          "median_rmse": 17.648087789614998
+        },
+        {
+          "epochs": [
+            80,
+            99
+          ],
+          "median_task_score": 32.56072759628296,
+          "median_rmse": 16.481180377304554
+        }
+      ]
+    },
+    {
+      "model": "oneshot_k4p_c48_s",
+      "source": "outputs\\models\\oneshot_k4p_c48_s\\training_summary.json",
+      "epochs": 100,
+      "first_within_5pct_of_best_epoch": 38,
+      "best_task_epoch": 65,
+      "hours_at_best": 1.1450592964225346,
+      "total_hours": 1.9709854530625872,
+      "best_task_score": 12.882448211312294,
+      "windows": [
+        {
+          "epochs": [
+            20,
+            39
+          ],
+          "median_task_score": 17.657493750254314,
+          "median_rmse": 12.49493061254422
+        },
+        {
+          "epochs": [
+            40,
+            59
+          ],
+          "median_task_score": 16.025439488391083,
+          "median_rmse": 11.674822916587194
+        },
+        {
+          "epochs": [
+            60,
+            79
+          ],
+          "median_task_score": 17.239946946501732,
+          "median_rmse": 12.423065329591434
+        },
+        {
+          "epochs": [
+            80,
+            99
+          ],
+          "median_task_score": 16.89825446655353,
+          "median_rmse": 12.212036152680716
+        }
+      ]
+    },
+    {
+      "model": "v4_map16_c48",
+      "source": "outputs\\models\\v4_map16_c48\\training_summary.json",
+      "epochs": 200,
+      "first_within_5pct_of_best_epoch": 36,
+      "best_task_epoch": 78,
+      "hours_at_best": 2.150355252292421,
+      "total_hours": 5.43333683874872,
+      "best_task_score": 9.474604800343513,
+      "windows": [
+        {
+          "epochs": [
+            20,
+            39
+          ],
+          "median_task_score": 10.655112527310848,
+          "median_rmse": 10.333125218749046
+        },
+        {
+          "epochs": [
+            40,
+            59
+          ],
+          "median_task_score": 10.530495358010132,
+          "median_rmse": 10.23230031132698
+        },
+        {
+          "epochs": [
+            60,
+            79
+          ],
+          "median_task_score": 10.460743382573128,
+          "median_rmse": 9.975717340906462
+        },
+        {
+          "epochs": [
+            80,
+            99
+          ],
+          "median_task_score": 10.1800270875295,
+          "median_rmse": 9.896490847071012
+        },
+        {
+          "epochs": [
+            100,
+            149
+          ],
+          "median_task_score": 10.557097507019837,
+          "median_rmse": 10.092180011173088
+        },
+        {
+          "epochs": [
+            150,
+            199
+          ],
+          "median_task_score": 10.679159437616667,
+          "median_rmse": 10.228050202131271
+        }
+      ]
+    },
+    {
+      "model": "v4_map16_c48_l1",
+      "source": "outputs\\models\\v4_map16_c48_l1\\training_summary.json",
+      "epochs": 200,
+      "first_within_5pct_of_best_epoch": 35,
+      "best_task_epoch": 78,
+      "hours_at_best": 2.2685141215059494,
+      "total_hours": 5.6775351454152005,
+      "best_task_score": 9.538935174544653,
+      "windows": [
+        {
+          "epochs": [
+            20,
+            39
+          ],
+          "median_task_score": 11.197802896300951,
+          "median_rmse": 10.521014630794525
+        },
+        {
+          "epochs": [
+            40,
+            59
+          ],
+          "median_task_score": 10.399410327275593,
+          "median_rmse": 10.125522365172703
+        },
+        {
+          "epochs": [
+            60,
+            79
+          ],
+          "median_task_score": 10.08726492524147,
+          "median_rmse": 10.001646503806114
+        },
+        {
+          "epochs": [
+            80,
+            99
+          ],
+          "median_task_score": 10.219555372993153,
+          "median_rmse": 10.044459390143553
+        },
+        {
+          "epochs": [
+            100,
+            149
+          ],
+          "median_task_score": 10.130188254018623,
+          "median_rmse": 9.985615834593773
+        },
+        {
+          "epochs": [
+            150,
+            199
+          ],
+          "median_task_score": 10.136726622780163,
+          "median_rmse": 9.93118935575088
+        }
+      ]
+    }
+  ]
+}

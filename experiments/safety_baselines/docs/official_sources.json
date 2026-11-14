@@ -1,0 +1,25 @@
+{
+  "Weixy21/SafeDiffuser": {
+    "url": "https://github.com/Weixy21/SafeDiffuser",
+    "commit": "e41f38ce289175b4294ab25e6565bfeb7d108f3f",
+    "license": {
+      "key": "mit",
+      "name": "MIT License",
+      "spdx_id": "MIT",
+      "url": "https://api.github.com/licenses/mit",
+      "node_id": "MDc6TGljZW5zZTEz"
+    },
+    "code_reused": false
+  },
+  "RAISELab-atUVA/Projected-Diffusion": {
+    "url": "https://github.com/RAISELab-atUVA/Projected-Diffusion",
+    "commit": "992510f7836a0ffbde0ae09ea80326ca2bc204dd",
+    "license": null,
+    "code_reused": false
+  },
+  "Constrained Diffusers": {
+    "paper": "https://proceedings.neurips.cc/paper_files/paper/2025/hash/31fb284a0aaaad837d2930a610cd5e50-Abstract-Conference.html",
+    "official_code": "not established; implementation follows packaged PDF Eqs10-18",
+    "code_reused": false
+  }
+}

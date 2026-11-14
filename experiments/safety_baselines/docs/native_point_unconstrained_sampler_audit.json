@@ -1,0 +1,29 @@
+{
+  "purpose": "unconstrained-limit compatibility audit only, not a replacement for paper methods",
+  "split": "val",
+  "index": 0,
+  "same_initial_numpy_seed": 42,
+  "rows": [
+    {
+      "diagnostic": "unconstrained_DDIM",
+      "rmse_m": 5.948597812673322,
+      "vertex_collision": false,
+      "path_collision": false,
+      "iterations": 16
+    },
+    {
+      "diagnostic": "unconstrained_CD_Langevin",
+      "rmse_m": 19.09039210515225,
+      "vertex_collision": true,
+      "path_collision": true,
+      "iterations": 128
+    },
+    {
+      "diagnostic": "unconstrained_PDM_VE",
+      "rmse_m": 34116.74352115298,
+      "vertex_collision": true,
+      "path_collision": true,
+      "iterations": 1000
+    }
+  ]
+}

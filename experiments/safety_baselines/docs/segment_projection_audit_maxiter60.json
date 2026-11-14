@@ -1,0 +1,144 @@
+{
+  "rows": [
+    {
+      "index": 0,
+      "circles": 249,
+      "audit": {
+        "occupied_cells": 37373,
+        "circles": 249,
+        "covered_fraction": 1.0,
+        "radius_min_scene": 0.0133375,
+        "radius_max_scene": 0.46672725447329505,
+        "radius_median_scene": 0.021150000000000002,
+        "cell_scene": 0.0078125,
+        "padding_scene": 0.005525,
+        "free_cells_forbidden_fraction": 0.039342399602315094,
+        "geometry": "inscribed maximal-disk composition + half-cell-diagonal covering pad",
+        "source": "PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)"
+      },
+      "gt_residual_scene": -0.07706908077586158,
+      "gt_residual_m": -6.165526462068927,
+      "vertices": 128
+    },
+    {
+      "index": 0,
+      "circles": 249,
+      "audit": {
+        "occupied_cells": 37373,
+        "circles": 249,
+        "covered_fraction": 1.0,
+        "radius_min_scene": 0.0133375,
+        "radius_max_scene": 0.46672725447329505,
+        "radius_median_scene": 0.021150000000000002,
+        "cell_scene": 0.0078125,
+        "padding_scene": 0.005525,
+        "free_cells_forbidden_fraction": 0.039342399602315094,
+        "geometry": "inscribed maximal-disk composition + half-cell-diagonal covering pad",
+        "source": "PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)"
+      },
+      "gt_residual_scene": -0.07706908077586158,
+      "gt_residual_m": -6.165526462068927,
+      "vertices": 128,
+      "scale_scene": 0.1,
+      "scale_m": 8.0,
+      "status": "solver_failure",
+      "reason": "segment_projection_failed:full_residual=0.0207275:circles=249:segment_sqp_no_descent:residual=0.0104036:active_rows=85",
+      "seconds": 0.9592760000086855
+    },
+    {
+      "index": 0,
+      "circles": 249,
+      "audit": {
+        "occupied_cells": 37373,
+        "circles": 249,
+        "covered_fraction": 1.0,
+        "radius_min_scene": 0.0133375,
+        "radius_max_scene": 0.46672725447329505,
+        "radius_median_scene": 0.021150000000000002,
+        "cell_scene": 0.0078125,
+        "padding_scene": 0.005525,
+        "free_cells_forbidden_fraction": 0.039342399602315094,
+        "geometry": "inscribed maximal-disk composition + half-cell-diagonal covering pad",
+        "source": "PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)"
+      },
+      "gt_residual_scene": -0.07706908077586158,
+      "gt_residual_m": -6.165526462068927,
+      "vertices": 128,
+      "scale_scene": 0.2,
+      "scale_m": 16.0,
+      "status": "solver_failure",
+      "reason": "segment_projection_failed:full_residual=0.20685:circles=249:segment_sqp_maxiter:residual=0.136702",
+      "seconds": 1.8090351999853738
+    },
+    {
+      "index": 163,
+      "circles": 216,
+      "audit": {
+        "occupied_cells": 35115,
+        "circles": 216,
+        "covered_fraction": 1.0,
+        "radius_min_scene": 0.0133375,
+        "radius_max_scene": 0.474275,
+        "radius_median_scene": 0.021150000000000002,
+        "cell_scene": 0.0078125,
+        "padding_scene": 0.005525,
+        "free_cells_forbidden_fraction": 0.035731895729923406,
+        "geometry": "inscribed maximal-disk composition + half-cell-diagonal covering pad",
+        "source": "PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)"
+      },
+      "gt_residual_scene": -0.008928333882230346,
+      "gt_residual_m": -0.7142667105784277,
+      "vertices": 128
+    },
+    {
+      "index": 163,
+      "circles": 216,
+      "audit": {
+        "occupied_cells": 35115,
+        "circles": 216,
+        "covered_fraction": 1.0,
+        "radius_min_scene": 0.0133375,
+        "radius_max_scene": 0.474275,
+        "radius_median_scene": 0.021150000000000002,
+        "cell_scene": 0.0078125,
+        "padding_scene": 0.005525,
+        "free_cells_forbidden_fraction": 0.035731895729923406,
+        "geometry": "inscribed maximal-disk composition + half-cell-diagonal covering pad",
+        "source": "PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)"
+      },
+      "gt_residual_scene": -0.008928333882230346,
+      "gt_residual_m": -0.7142667105784277,
+      "vertices": 128,
+      "scale_scene": 0.1,
+      "scale_m": 8.0,
+      "status": "solver_failure",
+      "reason": "segment_projection_failed:full_residual=0.0118519:circles=216:segment_sqp_maxiter:residual=0.0309354",
+      "seconds": 1.1059691999980714
+    },
+    {
+      "index": 163,
+      "circles": 216,
+      "audit": {
+        "occupied_cells": 35115,
+        "circles": 216,
+        "covered_fraction": 1.0,
+        "radius_min_scene": 0.0133375,
+        "radius_max_scene": 0.474275,
+        "radius_median_scene": 0.021150000000000002,
+        "cell_scene": 0.0078125,
+        "padding_scene": 0.005525,
+        "free_cells_forbidden_fraction": 0.035731895729923406,
+        "geometry": "inscribed maximal-disk composition + half-cell-diagonal covering pad",
+        "source": "PDM NeurIPS2024 Appendix C.3 (circle union, all line segments)"
+      },
+      "gt_residual_scene": -0.008928333882230346,
+      "gt_residual_m": -0.7142667105784277,
+      "vertices": 128,
+      "scale_scene": 0.2,
+      "scale_m": 16.0,
+      "status": "solver_failure",
+      "reason": "segment_projection_failed:full_residual=0.0203955:circles=216:segment_sqp_maxiter:residual=0.207642",
+      "seconds": 1.8718226000200957
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "python": "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]",
+  "executable": "C:\\Python314\\python.exe",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "git": {
+    "status --short": " D drawio-recreation/.$特征融合与安全轨迹去噪流程图.drawio_1.dtmp\n M scripts/experiments/common.py\n M scripts/experiments/summarize.py\n M 论文整合/paper_ral_v2/figures/prepared/fig01_framework.png\n M 论文整合/paper_ral_v2/figures/prepared/fig02_safety_generation.png\n M 论文整合/paper_ral_v2/figures/prepared/fig03_alm.png\n M 论文整合/paper_ral_v2/figures/prepared/fig05_alm_budget.png\n M 论文整合/paper_ral_v2/main.aux\n M 论文整合/paper_ral_v2/main.log\n M 论文整合/paper_ral_v2/main.out\n M 论文整合/paper_ral_v2/main.pdf\n M 论文整合/paper_ral_v2/main.tex\n M 论文整合/paper_ral_v2/output/pdf/TrajSafe_Diffuser_Compact_Illustrated.pdf\n D 论文整合/图片汇总/E3_fig1_alm_budget.pdf\n D 论文整合/图片汇总/E3_fig1_alm_budget.png\n M 论文整合/图片汇总/INDEX.md\n M 论文整合/实验/EXPERIMENT_REPORT.md\n M 论文整合/实验/results/paper/PAPER_TABLES.md\n M 论文整合/论文/TrajSafe_methods_and_figures/基于生成式安全约束与闭环修正的扩散模型轨迹规划方法.md\n?? docs/TrajSafe_Safety_Baselines_Codex_Kit/\n?? experiments/\n?? scripts/alm_budget_analysis.py\n?? 论文整合/final/\n?? 论文整合/paper_ral_v2/backups/before_conclusion/\n?? 论文整合/paper_ral_v2/backups/before_eight_page_figure_resize/\n?? 论文整合/paper_ral_v2/backups/before_final_content_sync_20261027/\n?? 论文整合/paper_ral_v2/backups/before_internal_alm_budget_update/\n?? 论文整合/paper_ral_v2/figures/prepared/final_source_mapping.json\n?? 论文整合/paper_ral_v2/output/budget_update_validation.json\n?? 论文整合/paper_ral_v2/output/eight_page_validation.json\n?? 论文整合/paper_ral_v2/output/final_sync_validation.json\n?? 论文整合/paper_ral_v2/output/pdf/TrajSafe_Diffuser.pdf\n?? 论文整合/paper_ral_v2/output/pdf/TrajSafe_Diffuser_8pages.pdf\n?? 论文整合/paper_ral_v2/output/pdf/TrajSafe_Diffuser_Restored_Layout.pdf\n?? 论文整合/paper_ral_v2/output/pdf/TrajSafe_Diffuser_Updated_ALM.pdf\n?? 论文整合/paper_ral_v2/sync_final_manuscript.py\n?? 论文整合/paper_ral_v2/tmp/budget_update_build.log\n?? 论文整合/paper_ral_v2/tmp/budget_updated_contact.png\n?? 论文整合/paper_ral_v2/tmp/budget_updated_p3.png\n?? 论文整合/paper_ral_v2/tmp/budget_updated_p4.png\n?? 论文整合/paper_ral_v2/tmp/budget_updated_p5.png\n?? 论文整合/paper_ral_v2/tmp/budget_updated_p7.png\n?? 论文整合/paper_ral_v2/tmp/budget_updated_p8.png\n?? 论文整合/paper_ral_v2/tmp/conclusion_build.log\n?? 论文整合/paper_ral_v2/tmp/conclusion_page.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_build.log\n?? 论文整合/paper_ral_v2/tmp/eight_page_contact.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_1.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_2.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_3.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_4.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_5.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_6.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_7.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_8.png\n?? 论文整合/paper_ral_v2/tmp/eight_page_final_contact.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_build.log\n?? 论文整合/paper_ral_v2/tmp/final_sync_contact.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_2.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_3.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_4.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_5.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_7.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_8.png\n?? 论文整合/paper_ral_v2/tmp/final_sync_page_9.png\n?? 论文整合/paper_ral_v2/tmp/resize_compile.log\n?? 论文整合/paper_ral_v2/tmp/resize_p3.png\n?? 论文整合/paper_ral_v2/tmp/resize_p4.png\n?? 论文整合/paper_ral_v2/tmp/resize_p8.png\n?? 论文整合/paper_ral_v2/tmp/resize_p9.png\n?? 论文整合/paper_ral_v2/update_budget_section.py\n?? 论文整合/图片汇总/E3_fig1_alm_internal_budget.pdf\n?? 论文整合/图片汇总/E3_fig1_alm_internal_budget.png\n?? 论文整合/图片汇总/E3_superseded_fullchain_budget.pdf\n?? 论文整合/图片汇总/E3_superseded_fullchain_budget.png\n?? 论文整合/论文/TrajSafe_methods_and_figures/figures/current_paper/\n?? 论文整合/论文/TrajSafe_methods_and_figures/insert_current_figures.py\n?? 论文整合/论文/TrajSafe_methods_and_figures/历史版本/基于生成式安全约束与闭环修正的扩散模型轨迹规划方法-插图前备份.md\n",
+    "branch --show-current": "v4-map16-fbdelta-safeloss\n",
+    "rev-parse HEAD": "b7e8665fff4cf523d1453ca12ef24747bd76d2a5\n",
+    "log -5 --oneline": "b7e8665 test(v4-l1): 主干 8 层 vs 1 层同协议评测（test 420 x 3 seed）\n6542cca feat(v4-l1): 控制点主干 8 层 -> 1 层（单变量：主干深度）\n97b7c2e feat(dashboard): 加入 v4 map16 模型（best_task ep78 / latest ep199）\n9b5f7d7 test(ch4): v4 与 v3 A-C48 的同协议 test 评测（420 样本 x 3 seed）\nc1d97bf feat(v4): 单一16x16地图特征 + 仅回传修正量反馈 + 统一连续安全损失L_safe\n"
+  },
+  "assets": {
+    "outputs/models/oneshot_k4p_c48_d/ckpt/best_task.pt": {
+      "exists": true,
+      "sha256": "7e2f143b8bad5415ca59e01689fe7de6fb9133fa4676ea844fe2f6b0bf31c3ad"
+    },
+    "outputs/models/v4_map16_c48_l1/ckpt/best_task.pt": {
+      "exists": true,
+      "sha256": "b988c16fe255eb60f812e7d9257adc2d8e589621ce1e4fd7c4b817538f80e230"
+    },
+    "configs/config_160k4p_c48_d_std.yaml": {
+      "exists": true,
+      "sha256": "86cdef9f6bd0f837b74ad61712209814a2da5a6b56faa5634a95f6f7f578edaa"
+    },
+    "configs/config_160k4p_c48_v4_map16_l1.yaml": {
+      "exists": true,
+      "sha256": "1c4587f0f7dfa5e05550c54e5d01d19d3999ae99111b7a5e6a6ba00a17e11c20"
+    },
+    "docs\\TrajSafe_Safety_Baselines_Codex_Kit\\experiments\\safety_baselines\\papers\\ICLR-2025-safediffuser-safe-planning-with-diffusion-probabilistic-models-Paper-Conference(1).pdf": {
+      "sha256": "6f20071f69a11aa163a80932c01f0e939942abaa3b69fc50451b0a4d0d08b04e",
+      "bytes": 1879435
+    },
+    "docs\\TrajSafe_Safety_Baselines_Codex_Kit\\experiments\\safety_baselines\\papers\\NeurIPS-2024-constrained-synthesis-with-projected-diffusion-models-Paper-Conference.pdf": {
+      "sha256": "d2f30adb3d206f62c34c6fc6e7b4bd618f64632e499ceff8cac4781972695162",
+      "bytes": 11166285
+    },
+    "docs\\TrajSafe_Safety_Baselines_Codex_Kit\\experiments\\safety_baselines\\papers\\NeurIPS-2025-constrained-diffusers-for-safe-planning-and-control-Paper-Conference.pdf": {
+      "sha256": "95407f213c3bf45d53a2c1be80c7df6e330bd328606203d9c5b03c3ca4968f8d",
+      "bytes": 5274080
+    }
+  },
+  "ours_selected_by_user": "v4_map16_l1"
+}

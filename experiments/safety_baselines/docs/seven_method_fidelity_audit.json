@@ -1,0 +1,122 @@
+{
+  "status": "ALL_SEVEN_NOT_VALIDATED",
+  "formal_full_run_allowed": false,
+  "scope": "Borrow only the coordinate constraint mapping; preserve paper algorithms. Do not relabel old engineering correctors.",
+  "methods": [
+    {
+      "method": "RoS-diffuser",
+      "acceptance": "NOT_PASSED",
+      "reference": "SafeDiffuser Sections3-4,AppendixC.1",
+      "confirmed_issues": [
+        "Current finite-step integration returns vertex constraint violations; refinement changes residual substantially.",
+        "Exact occupancy-union SDF is nonsmooth; original continuous-time CBF guarantees have not been established for this map implementation.",
+        "Coarse16-level common prior and DDIM nominal are task adaptations, not an unchanged original experiment."
+      ],
+      "audit_next": [
+        "Match the chosen nominal reverse transition and physical/diffusion time indexing to source.",
+        "Verify method-specific gamma, hard interval or sigma against source independently.",
+        "Check original local-trap evaluation and distinguish discrete planning from lower-level continuous execution."
+      ]
+    },
+    {
+      "method": "ReS-diffuser",
+      "acceptance": "NOT_PASSED",
+      "reference": "SafeDiffuser Sections3-4,AppendixC.1",
+      "confirmed_issues": [
+        "Current finite-step integration returns vertex constraint violations; refinement changes residual substantially.",
+        "Exact occupancy-union SDF is nonsmooth; original continuous-time CBF guarantees have not been established for this map implementation.",
+        "Coarse16-level common prior and DDIM nominal are task adaptations, not an unchanged original experiment."
+      ],
+      "audit_next": [
+        "Match the chosen nominal reverse transition and physical/diffusion time indexing to source.",
+        "Verify method-specific gamma, hard interval or sigma against source independently.",
+        "Check original local-trap evaluation and distinguish discrete planning from lower-level continuous execution."
+      ]
+    },
+    {
+      "method": "TVS-diffuser",
+      "acceptance": "NOT_PASSED",
+      "reference": "SafeDiffuser Sections3-4,AppendixC.1",
+      "confirmed_issues": [
+        "Current finite-step integration returns vertex constraint violations; refinement changes residual substantially.",
+        "Exact occupancy-union SDF is nonsmooth; original continuous-time CBF guarantees have not been established for this map implementation.",
+        "Coarse16-level common prior and DDIM nominal are task adaptations, not an unchanged original experiment."
+      ],
+      "audit_next": [
+        "Match the chosen nominal reverse transition and physical/diffusion time indexing to source.",
+        "Verify method-specific gamma, hard interval or sigma against source independently.",
+        "Check original local-trap evaluation and distinguish discrete planning from lower-level continuous execution."
+      ]
+    },
+    {
+      "method": "Projected",
+      "acceptance": "NOT_PASSED",
+      "reference": "Constrained Diffusers Sections5-7,AppendixC(page22)",
+      "confirmed_issues": [
+        "Repeating16 trained noise levels into64 updates is not the original64-level trained noise process.",
+        "Unconstrained LMC diagnostic already differs strongly from the native DDIM prior.",
+        "Map-SDF constraints and previous-task dual/rho settings were not validated for this new point prior.",
+        "Current vertex constraints do not implement whole-polyline collision avoidance."
+      ],
+      "scope_note": "DCBF and inverse dynamics/receding-horizon execution must be checked by task. They are explicitly online mechanisms; do not blindly add online control modules to the offline Maze planning task.",
+      "audit_next": [
+        "Check score target, normalization and per-level beta against source.",
+        "Check projected objective or PD/ALM expectation, multiplier/slack/rho updates separately.",
+        "Reproduce an original analytical constraint task before treating CARLA task adaptation as paper reproduction."
+      ]
+    },
+    {
+      "method": "Primal-Dual",
+      "acceptance": "NOT_PASSED",
+      "reference": "Constrained Diffusers Sections5-7,AppendixC(page22)",
+      "confirmed_issues": [
+        "Repeating16 trained noise levels into64 updates is not the original64-level trained noise process.",
+        "Unconstrained LMC diagnostic already differs strongly from the native DDIM prior.",
+        "Map-SDF constraints and previous-task dual/rho settings were not validated for this new point prior.",
+        "Current vertex constraints do not implement whole-polyline collision avoidance."
+      ],
+      "scope_note": "DCBF and inverse dynamics/receding-horizon execution must be checked by task. They are explicitly online mechanisms; do not blindly add online control modules to the offline Maze planning task.",
+      "audit_next": [
+        "Check score target, normalization and per-level beta against source.",
+        "Check projected objective or PD/ALM expectation, multiplier/slack/rho updates separately.",
+        "Reproduce an original analytical constraint task before treating CARLA task adaptation as paper reproduction."
+      ]
+    },
+    {
+      "method": "ALM",
+      "acceptance": "NOT_PASSED",
+      "reference": "Constrained Diffusers Sections5-7,AppendixC(page22)",
+      "confirmed_issues": [
+        "Repeating16 trained noise levels into64 updates is not the original64-level trained noise process.",
+        "Unconstrained LMC diagnostic already differs strongly from the native DDIM prior.",
+        "Map-SDF constraints and previous-task dual/rho settings were not validated for this new point prior.",
+        "Current vertex constraints do not implement whole-polyline collision avoidance."
+      ],
+      "scope_note": "DCBF and inverse dynamics/receding-horizon execution must be checked by task. They are explicitly online mechanisms; do not blindly add online control modules to the offline Maze planning task.",
+      "audit_next": [
+        "Check score target, normalization and per-level beta against source.",
+        "Check projected objective or PD/ALM expectation, multiplier/slack/rho updates separately.",
+        "Reproduce an original analytical constraint task before treating CARLA task adaptation as paper reproduction."
+      ]
+    },
+    {
+      "method": "PDM",
+      "acceptance": "NOT_PASSED",
+      "reference": "PDM Algorithm1,Section6.3,AppendixC.3(page15),AppendixF/G(page19)",
+      "confirmed_issues": [
+        "The pointwise free-cell projection omitted the paper explicit whole-segment obstacle constraints.",
+        "Unconstrained finite-budget VE sampling has not recovered the learned prior.",
+        "Paper Algorithm1 and generic official ALD code use different step conventions; provenance must be resolved, not mixed.",
+        "The common x0/coarse/smooth/boundary objective is not the original score-matching training recipe."
+      ],
+      "repair_started": "Implemented exact circle-to-segment constraints and sparse analytical Jacobian plus interior-point local projection in adapters/paper_segment_constraints.py.3 focused tests passed. No map-circle conversion or real-map integration claimed complete.",
+      "audit_next": [
+        "Audit original trajectory-specific official implementation, not generic image ALD.",
+        "Audit training sigma range, score convention, initialization, gamma and fixed iteration budgets.",
+        "Integrate segment geometry and solver with explicit audited obstacle representation."
+      ]
+    }
+  ],
+  "new_completed_evidence": "Circle/segment crossing detection, finite-difference Jacobian, and interior-point projection match analytic whole-segment solution:3 tests passed.",
+  "original_results": "All existing comparison results retained as debugging evidence, excluded from paper-method ranking."
+}

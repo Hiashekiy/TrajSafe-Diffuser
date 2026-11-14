@@ -1,0 +1,5 @@
+.deps*/
+__pycache__/
+.pytest_cache/
+results/
+papers/*.pdf

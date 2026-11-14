@@ -1,0 +1,5 @@
+# 完整 Ours：1层主干 + 8层末端；从零训练100轮，其余继承。
+base: "experiments/safety_baselines/configs/v4_map16_l1_final8.yaml"
+train:
+  epochs: 100
+  ckpt_dir: "experiments/safety_baselines/results/depth_l1_final8_e100/ckpt"

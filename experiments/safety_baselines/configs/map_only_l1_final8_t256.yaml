@@ -1,0 +1,7 @@
+# 待用户确认的兼容性方案：仅改变加噪级数，网络/数据/训练100轮保持不变。
+base: "experiments/safety_baselines/configs/map_only_l1_final8.yaml"
+diffusion:
+  timesteps: 256
+train:
+  epochs: 100
+  ckpt_dir: "experiments/safety_baselines/results/map_only_l1_final8_t256/ckpt"

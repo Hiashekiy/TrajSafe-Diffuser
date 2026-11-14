@@ -1,0 +1,11 @@
+{
+  "stage": "S0",
+  "scope": "seven task-adapted methods plus Diffuser and full Ours",
+  "base": "map_only_l1_final8_e100",
+  "ours": "v4_map16_l1_final8_e100",
+  "run_id": null,
+  "previous": null,
+  "required_gate": null
+}
+............................                                             [100%]
+28 passed in 4.61s

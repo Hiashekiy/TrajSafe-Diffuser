@@ -1,0 +1,664 @@
+{
+  "split": "val",
+  "indices": [
+    0,
+    172,
+    344,
+    516,
+    688,
+    860,
+    1032,
+    1204,
+    1376,
+    1549
+  ],
+  "constraint_scale": 128.0,
+  "scale_rationale": "SDF distance / one grid cell (2/256 scene), dimensionless; physical feasible set unchanged; not a safety-margin change",
+  "selection": "maximize val planning successes, then minimize returned RMSE; no test tuning",
+  "winners": {
+    "dual_eta": 6.103515625e-05,
+    "rho": 1.52587890625e-05
+  },
+  "candidates": [
+    {
+      "method": "Primal-Dual",
+      "param": "dual_eta",
+      "value": 6.103515625e-08,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 15.07779030702578,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.320051924863927
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 17.47398964661763
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 20.730958829696743
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.299739219820811
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 19.665524941400125
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 9.898249276848935
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 24.937790952944624
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 13.306673669445942
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.269218236664505
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.875706371954552
+        }
+      ]
+    },
+    {
+      "method": "Primal-Dual",
+      "param": "dual_eta",
+      "value": 6.103515625e-07,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 15.061706106927348,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.321328069311269
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 17.465541555683078
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 20.70931740280352
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.295207009161183
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 19.5511677142327
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 9.896507395042825
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 24.94567023348756
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 13.291845434531934
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.265942007803542
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.87453424721587
+        }
+      ]
+    },
+    {
+      "method": "Primal-Dual",
+      "param": "dual_eta",
+      "value": 6.103515625e-06,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 14.90307636912387,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.332301904427405
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 17.400428676878846
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 20.530464943189322
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.259928370482555
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 18.358946103299985
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 9.878830102229353
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 25.042521982266493
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 13.140246414722407
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.227939687877868
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.859155505864459
+        }
+      ]
+    },
+    {
+      "method": "Primal-Dual",
+      "param": "dual_eta",
+      "value": 6.103515625e-05,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 13.958630877915468,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.399431843171099
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 14.983378010683579
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 19.60320311091755
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.036864041227068
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.947935441553547
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 9.663028805463151
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 26.172093204539898
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.225134153644081
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.885412563674251
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.669827604280453
+        }
+      ]
+    },
+    {
+      "method": "ALM",
+      "param": "rho",
+      "value": 1.52587890625e-08,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 16.360331830185114,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.956018516642652
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 21.11084356170211
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 22.098375298650538
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.654517435880612
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 22.211066941967616
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.419640630630486
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 28.054553906131382
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.261119318153362
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.285445171945447
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.551737520146919
+        }
+      ]
+    },
+    {
+      "method": "ALM",
+      "param": "rho",
+      "value": 1.52587890625e-07,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 16.35280544193067,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.955926223022658
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 21.113192542006818
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 22.092845329163417
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.65386627892875
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 22.142591504834186
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.417613477524885
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 28.062624935611655
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.255212856822887
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.285513074992776
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.548668196398669
+        }
+      ]
+    },
+    {
+      "method": "ALM",
+      "param": "rho",
+      "value": 1.52587890625e-06,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 16.27905593439516,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.955347471790965
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 21.1353623147862
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 22.043728276252953
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.647258728354362
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 21.469547721421215
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.397526190352423
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 28.141127765235694
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.195533237950313
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.285979930216627
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.519147707590866
+        }
+      ]
+    },
+    {
+      "method": "ALM",
+      "param": "rho",
+      "value": 1.52587890625e-05,
+      "successes": 0,
+      "n": 10,
+      "mean_rmse_returned": 15.686994141997173,
+      "records": [
+        {
+          "scene_id": 61001,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.963493517437005
+        },
+        {
+          "scene_id": 74023,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 21.586448738873507
+        },
+        {
+          "scene_id": 80045,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 21.63271014178975
+        },
+        {
+          "scene_id": 87067,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 12.592544170025764
+        },
+        {
+          "scene_id": 93039,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 15.885441581485543
+        },
+        {
+          "scene_id": 96011,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.2203269504056
+        },
+        {
+          "scene_id": 100083,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 28.66584674782348
+        },
+        {
+          "scene_id": 103055,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.722796598560612
+        },
+        {
+          "scene_id": 105027,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 10.305161880731609
+        },
+        {
+          "scene_id": 106100,
+          "success": false,
+          "status": "ok",
+          "failure": null,
+          "rmse": 11.29517109283886
+        }
+      ]
+    }
+  ]
+}

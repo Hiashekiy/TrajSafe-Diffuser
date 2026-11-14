@@ -1,0 +1,50 @@
+[
+  {
+    "index": 0,
+    "method": "RoS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.2636097855784201
+  },
+  {
+    "index": 0,
+    "method": "TVS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.013069120330116936
+  },
+  {
+    "index": 516,
+    "method": "RoS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.267761674393462
+  },
+  {
+    "index": 516,
+    "method": "TVS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.016291141473422723
+  },
+  {
+    "index": 1032,
+    "method": "RoS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.354130023907472
+  },
+  {
+    "index": 1032,
+    "method": "TVS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.04489011795747304
+  },
+  {
+    "index": 1549,
+    "method": "RoS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.4326030675410325
+  },
+  {
+    "index": 1549,
+    "method": "TVS-diffuser",
+    "phase1_status": 0,
+    "required_normalized_slack": 0.013982505098319309
+  }
+]

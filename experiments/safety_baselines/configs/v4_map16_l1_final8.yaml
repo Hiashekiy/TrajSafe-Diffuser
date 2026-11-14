@@ -1,0 +1,7 @@
+# 单变量深度实验：以 v4_map16_l1 为参照，仅末端去噪器 3 -> 8。
+# 保留完整 Ours 安全/骨架/反馈；不替换已锁定基座或已有论文结果。
+base: "configs/config_160k4p_c48_v4_map16_l1.yaml"
+model:
+  final_blocks: 8
+train:
+  ckpt_dir: "experiments/safety_baselines/results/depth_l1_final8/ckpt"

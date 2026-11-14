@@ -1,0 +1,30 @@
+[
+  {
+    "index": 0,
+    "unsafe_noisy_points": 89,
+    "unsafe_noisy_points_zero_scalar_gradient": 1,
+    "old_guidance_zero_on_unsafe": 0,
+    "unsafe_predicted_clean_points": 0
+  },
+  {
+    "index": 516,
+    "unsafe_noisy_points": 71,
+    "unsafe_noisy_points_zero_scalar_gradient": 3,
+    "old_guidance_zero_on_unsafe": 0,
+    "unsafe_predicted_clean_points": 33
+  },
+  {
+    "index": 1032,
+    "unsafe_noisy_points": 77,
+    "unsafe_noisy_points_zero_scalar_gradient": 4,
+    "old_guidance_zero_on_unsafe": 0,
+    "unsafe_predicted_clean_points": 0
+  },
+  {
+    "index": 1549,
+    "unsafe_noisy_points": 87,
+    "unsafe_noisy_points_zero_scalar_gradient": 1,
+    "old_guidance_zero_on_unsafe": 0,
+    "unsafe_predicted_clean_points": 0
+  }
+]
