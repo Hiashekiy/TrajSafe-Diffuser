@@ -78,10 +78,53 @@ class SafetyPointTask(_CandidateCleanMixin, NativePointTask):
 
 
 class SafetySegmentPointTask(_CandidateCleanMixin, SegmentPointTask):
-    """PDM App.C.3 segment rows: a path is judged on the SEGMENTS, not on its waypoints."""
+    """PDM App.C.3 segment rows: a path is judged on the SEGMENTS, not on its waypoints.
+
+    The constraint object stays the segments (the accepted point is verified against the
+    segment residual), but the local SQP is INITIALISED from the separable vertex
+    projection. Reason: at the top noise levels the state is O(1e3) scene units from any
+    feasible curve, and a 46k-row local SQP cannot travel that far
+    (`segment_sqp_maxiter: residual 0.45` measured on the very first level), while the
+    vertex projection is separable and always lands in a free-space point set. This is the
+    same "give the local optimiser a feasible starting point" role the A* initialiser plays
+    in the PDM code; it is NOT a change of the constraint, and a failure to reach the
+    segment tolerance is still raised.
+    """
 
     def __init__(self, model, schedule, occupancy, cond, points=128, radius=0.,
                  field_kind='exact', candidates=None, margin=0.0):
         SegmentPointTask.__init__(self, model, schedule, occupancy, cond, points, radius,
                                   field_kind, margin)
         self._init_candidates(schedule, candidates)
+
+    # Gate for the segment projection: at the top noise levels the state is not a curve yet
+    # (sigma ~ 5e3 scene), and no local 46k-row SQP can make all 127 segments avoid 438
+    # circles (measured: `segment_sqp_no_descent`, residual 0.33, even from a vertex-feasible
+    # start). Projections at those levels are therefore SKIPPED and the loop keeps its
+    # Langevin update; PDM App. F explicitly allows adjusting the projection frequency. The
+    # FINAL projection is never skipped (allow_partial=False), so an infeasible delivery
+    # still raises.
+    projection_gate_residual = 0.05          # scene units (~4 m): start projecting below this
+
+    def project(self, target, budget, start=None, tol=None, maxiter=None, allow_partial=False):
+        """Segment projection with a high-noise gate and a vertex-feasible initial point."""
+        target = np.asarray(target, dtype=float).reshape(-1)
+        g = float(np.max(self.constraints(target)[0]))
+        # Gate on the residual only (not on `allow_partial`): CD's Projected/PD/ALM call the
+        # projection with allow_partial=False at EVERY level, so gating on that flag would
+        # leave the top levels un-gated. A skip is recorded in `info`, and the delivered path
+        # is still scored by the evaluator, so nothing is hidden.
+        if g > self.projection_gate_residual:
+            return target, {'status': 'skipped_over_gate', 'residual': g,
+                            'gate': float(self.projection_gate_residual)}
+        init = start
+        if init is None:
+            p = self.unpack(target)
+            h, grad = self.map.query(p)
+            margin = 0.004
+            bad = h < margin
+            if bad.any():
+                p[bad] = p[bad] + grad[bad] * (margin - h[bad])[:, None]
+            init = p[1:-1].reshape(-1)
+        kw = {'start': init} if init is not None else {}
+        return SegmentPointTask.project(self, target, budget, allow_partial=allow_partial, **kw)

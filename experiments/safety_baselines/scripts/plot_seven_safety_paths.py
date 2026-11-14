@@ -95,7 +95,7 @@ def main():
             secs = time.perf_counter() - t0
             if p is None:
                 store[method] = {'points': None, 'collision': None}
-                print(scene, method, 'FAILED', flush=True)
+                print(scene, method, 'FAILED', str(r['failure_reason'])[:110], flush=True)
                 continue
             m = evaluate_curve(polyline_at_u(p, u), occ, cond, gt_curve, u)
             store[method] = {'points': p, 'collision': m['curve_collision'],
