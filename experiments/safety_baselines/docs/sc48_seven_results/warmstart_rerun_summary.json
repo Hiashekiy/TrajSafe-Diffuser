@@ -1,0 +1,57 @@
+{
+  "config": "experiments/safety_baselines/configs/sc48_native16_vertexall.json",
+  "checkpoint": "outputs/models/oneshot_k4p_c48_s/ckpt/best_task.pt",
+  "seed": 0,
+  "indices": [
+    0,
+    81,
+    163,
+    244,
+    326,
+    407,
+    489,
+    570,
+    652,
+    733,
+    815,
+    896,
+    978,
+    1059,
+    1141,
+    1222,
+    1304,
+    1385,
+    1467,
+    1549
+  ],
+  "aggregate": {
+    "Projected": {
+      "n": 20,
+      "returned": 0,
+      "path_collisions": 0,
+      "vertex_collisions": 0,
+      "successes": 0,
+      "min_clearance_m_mean": null,
+      "violation_max_m": null,
+      "rmse_m_mean": null,
+      "path_length_ratio_mean": null,
+      "max_curvature_mean": null,
+      "mean_second_diff_m_mean": null,
+      "seconds_mean": 0.5219319600000745
+    },
+    "PDM": {
+      "n": 20,
+      "returned": 0,
+      "path_collisions": 0,
+      "vertex_collisions": 0,
+      "successes": 0,
+      "min_clearance_m_mean": null,
+      "violation_max_m": null,
+      "rmse_m_mean": null,
+      "path_length_ratio_mean": null,
+      "max_curvature_mean": null,
+      "mean_second_diff_m_mean": null,
+      "seconds_mean": 2.1425851399995737
+    }
+  }
+}
