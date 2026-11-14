@@ -57,15 +57,27 @@ def _integrate_level(task,method,cfg,x,nominal,h_start,h_initial,gamma,N,N0,hard
             j=t+1-elapsed/dt_full
             sigma,sigma_dot=tvs_schedule(h_initial,j,N,dt_full)
             offset=-sigma_dot+eps*(h-sigma);target_gamma=sigma
-            extra={'sigma_max':float(sigma.max()),'sigma_min':float(sigma.min()),'sigma_dot_max':float(sigma_dot.max())}
+            # eq.(13) carries a relaxation term with weight w; TVS/RoS are the "soft"
+            # variants, so w>0 is the paper-faithful reading. The point-space tables kept
+            # w=0 because the separable solver tolerated it; only `cbf_hard_slack` turns
+            # the soft form on, so those tables are untouched.
+            if cfg.get('cbf_hard_slack'):w=float(cfg['relax_weight'])
+            extra={'sigma_max':float(sigma.max()),'sigma_min':float(sigma.min()),'sigma_dot_max':float(sigma_dot.max()),'w':w}
         else:
             if method=='ReS-diffuser':
                 # Thm 3.5 uses gamma(N0, eps); the hard interval is t<=N0,
                 # i.e. hard_levels = N0+1 levels (paper's ReS-diffuser-l10 -> 10).
                 if t<=N0 and hard_gamma is None:hard_gamma=legal_gamma(h,N0*dt_full,eps,cfg['cbf_gamma_floor'])
-                w=cfg['relax_weight'] if t>N0 else 0.
+                # Thm 3.5 removes the slack in the hard interval (w=0). That is only usable
+                # when the constraint rows are separable (one row per free state variable).
+                # With a coupled Jacobian (e.g. B-spline controls -> 128 curve rows) the hard
+                # system is routinely infeasible, so cbf_hard_slack keeps the paper's
+                # relaxation term of eq.(13) alive in the hard interval too.
+                w=cfg['relax_weight'] if (t>N0 or cfg.get('cbf_hard_slack')) else 0.
                 used=gamma if hard_gamma is None else hard_gamma
-            else:used=gamma
+            else:
+                used=gamma
+                if cfg.get('cbf_hard_slack'):w=float(cfg['relax_weight'])
             offset=eps*(h-used);target_gamma=np.atleast_1d(used)
             extra={'gamma':float(np.min(np.atleast_1d(used))),'w':w,'hard_interval':bool(w==0),'hard_levels':int(N0+1)}
         solver=getattr(task,'cbf_solve',None) or cbf_velocity

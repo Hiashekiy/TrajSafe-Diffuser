@@ -17,7 +17,7 @@ def initial_noise(scene_id,seed,num_points=128):
     """The single trajectory noise vector every method starts from (paired protocol)."""
     return np.random.default_rng(initial_seed(scene_id,seed)).normal(size=(num_points,2))
 
-def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None):
+def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None,task_extra=None):
     started=time.perf_counter();trace=[];trajectory=None;reason=None;status='ok'
     try:
         budget=Budget(cfg.get('timeouts',{}).get(method,cfg['timeout_seconds']))
@@ -31,18 +31,22 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None)
         elif cfg.get('state_adapter')=='curve_control':
             from experiments.safety_baselines.adapters.curve_control import CurveControlTask
             Task=CurveControlTask
+        elif cfg.get('state_adapter')=='sc48_control':
+            from experiments.safety_baselines.adapters.sc48_control import SC48ControlTask
+            Task=SC48ControlTask;extra=dict(task_extra or {})
         elif cfg.get('state_adapter')=='physical_trajectory':
             from experiments.safety_baselines.adapters.physical_trajectory import PhysicalTrajectoryTask
             Task=PhysicalTrajectoryTask
         elif cfg.get('state_adapter')=='trajectory':
             from experiments.safety_baselines.adapters.trajectory_state import TrajectoryStateTask
             Task=TrajectoryStateTask
+        if cfg.get('state_adapter')=='sc48_control':extra=dict(task_extra or {})
         task=Task(model,schedule,occ,cond,cfg['constraint_points'],cfg['radius_scene'],cfg.get('field_kind','bilinear'),**extra)
         if hasattr(task,'projection_maxiter'):
             task.projection_maxiter=int(cfg.get('segment_projection_maxiter',8))
             task.projection_maxiter_final=int(cfg.get('segment_projection_maxiter_final',40))
             task.projection_tol=float(cfg.get('segment_projection_tol',1e-6))
-        if cfg.get('state_adapter')=='curve_control':
+        if cfg.get('state_adapter') in ('curve_control','sc48_control'):
             task.projection_maxiter=cfg['projection_maxiter'];task.projection_tol=cfg['projection_tol_scene']
         if init_noise is not None:
             task.initial_override=np.asarray(init_noise,dtype=float)[1:-1].reshape(-1)

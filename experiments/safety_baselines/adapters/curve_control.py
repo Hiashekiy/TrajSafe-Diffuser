@@ -10,6 +10,18 @@ class CurveControlTask(PaperTask):
             return -(self.B[:,1:-1,None]*grad[:,None,:]).reshape(len(self.B),-1)
         return self.constraints(x)[1]
     def initial(self, rng, particles=1, ve=False):
+        # Paired protocol, same rule as the point-space tasks: particle 0 is the shared
+        # initial curve noise (dimension C-2), particles 1..P-1 come from a
+        # method-independent seed so Primal-Dual and ALM start from the identical set.
+        override=getattr(self,'initial_override',None)
+        if override is not None:
+            base=np.asarray(override,dtype=float).reshape(-1)
+            if base.shape!=(self.D,):raise ValueError('initial_override shape mismatch')
+            if particles<=1:noise=base[None]
+            else:
+                extra=np.random.default_rng(int(getattr(self,'particle_seed',0))).normal(size=(particles-1,self.D))
+                noise=np.concatenate([base[None],extra],axis=0)
+            return noise*(self.sigma[-1] if ve else 1.)
         return rng.normal(size=(particles, self.D)) * (self.sigma[-1] if ve else 1.0)
 
     def points(self, x):
