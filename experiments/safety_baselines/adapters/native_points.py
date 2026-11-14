@@ -25,13 +25,18 @@ class NativePointTask:
         return p
     def points(self,x):return self.unpack(x)
     def initial(self,rng,particles=1,ve=False):
-        # `initial_override` (VP-space noise, set by the paired-protocol runner) makes
-        # every method start from the same trajectory noise vector.
+        # Paired protocol: particle 0 is the shared trajectory noise vector, the
+        # remaining particles come from a *method independent* seed so that every
+        # multi-particle method (Primal-Dual, ALM) starts from the identical set.
         override=getattr(self,'initial_override',None)
-        if override is not None and particles==1:
-            noise=np.asarray(override,dtype=float).reshape(-1)
-            if noise.shape!=(self.D,):raise ValueError('initial_override shape mismatch')
-            return (noise*self.sigma[-1] if ve else noise)[None]
+        if override is not None:
+            base=np.asarray(override,dtype=float).reshape(-1)
+            if base.shape!=(self.D,):raise ValueError('initial_override shape mismatch')
+            if particles<=1:noise=base[None]
+            else:
+                extra=np.random.default_rng(int(getattr(self,'particle_seed',0))).normal(size=(particles-1,self.D))
+                noise=np.concatenate([base[None],extra],axis=0)
+            return (noise*self.sigma[-1] if ve else noise)
         return rng.normal(size=(particles,self.D))*(self.sigma[-1] if ve else 1.)
     @torch.inference_mode()
     def clean(self,x,t,ve=False):
@@ -44,6 +49,11 @@ class NativePointTask:
     def score(self,x,t,ve=False):
         clean=self.clean(x,t,ve)
         return -(np.atleast_2d(x)-clean)/self.sigma[t]**2 if ve else -(np.atleast_2d(x)-np.sqrt(self.ab[t])*clean)/(1-self.ab[t])
+    def values(self,x):
+        # h-free fast path for the discrete barrier check: returns g = -h (g<=0 feasible),
+        # the same sign convention as the segment task, without building a Jacobian.
+        return -self.map.query(self.unpack(np.asarray(x,dtype=float)))[0]
+
     def constraints(self,x):
         h,grad=self.map.query(self.unpack(x));J=np.zeros((self.H,self.D));i=np.arange(self.H-2)
         J[i+1,2*i]=-grad[1:-1,0];J[i+1,2*i+1]=-grad[1:-1,1]

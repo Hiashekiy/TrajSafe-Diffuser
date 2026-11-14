@@ -67,10 +67,14 @@ def run(task,method,rng,cfg,budget,trace):
             st=info.get('status','')
             statuses.append(st)
             if 'partial' in st:partial+=1
+            score_norm=float(np.linalg.norm(score))
             trace.append({'t':t,'inner':i,'optimizer':'projection','gamma':float(gamma),
                 'sigma':float(np.sqrt(variance[t])),'parameterization':'ve','step_convention':convention,
-                'mixing_ratio':float(gamma/max(1-task.ab[t],1e-12)),'projection_status':st,
-                'partial_so_far':partial,**info})
+                # VE mixing rate is gamma / sigma_t^2 (NOT gamma/(1-alphabar_t), which is the
+                # VP-normalised quantity and was reported by mistake before 2026-11-14).
+                'mixing_ratio':float(gamma/variance[t]),
+                'drift_norm':float(gamma*score_norm),'noise_std':float(np.sqrt(2.*gamma)),
+                'score_norm':score_norm,'projection_status':st,'partial_so_far':partial,**info})
     tol=float(getattr(task,'projection_tol',cfg.get('projection_tol_scene',1e-7)))
     residual=float(task.constraints(x)[0].max(initial=-np.inf))
     # The delivered state must come from an *exact* projection: a partially improved

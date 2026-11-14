@@ -36,6 +36,19 @@ def aggregate(records,methods):
             'time_mean_s':float(np.mean([r['wall_time'] for r in rr])) if rr else None}
     return out
 
+def resolve_indices(cfg,split,spec,dataset_size):
+    """val/test indices are strictly separated; nothing is reused across splits."""
+    if spec in ('frozen20','default'):
+        key='validation_indices' if split=='val' else 'test_indices'
+        if key not in cfg:raise ValueError('config has no %s for split=%s'%(key,split))
+        idx=list(cfg[key])
+    elif spec=='all':idx=list(range(dataset_size))
+    else:idx=[int(v) for v in spec.split(',')]
+    bad=[v for v in idx if v<0 or v>=dataset_size]
+    if bad:raise IndexError('indices %s out of range for split=%s (size %d)'%(bad,split,dataset_size))
+    if len(set(idx))!=len(idx):raise ValueError('duplicate indices in %s'%spec)
+    return idx
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--config',default='experiments/safety_baselines/configs/seven_native_points_paper_t256.json')
@@ -47,7 +60,7 @@ def main():
     ap.add_argument('--ddim-steps',type=int,default=16,help='DDIM steps for the unconstrained baseline (match the budget of the loops under review)')
     a=ap.parse_args()
     base=ROOT/'experiments/safety_baselines';cfg=json.loads((ROOT/a.config).read_text(encoding='utf8'))
-    indices=cfg['validation_indices'] if a.indices=='frozen20' else [int(v) for v in a.indices.split(',')]
+
     methods=METHODS+['Diffuser'] if a.methods=='all' else a.methods.split(',')
     seeds=[int(v) for v in a.seeds.split(',')]
     stamp=datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -56,10 +69,11 @@ def main():
     ckpt=ROOT/cfg['checkpoint'];model,ck=load_point_baseline(ckpt,'cuda');d=ck['config']['diffusion']
     schedule=NoiseSchedule(d['timesteps'],d['beta_schedule'],d['beta_start'],d['beta_end']).to('cuda')
     ds=PointDataset(a.split,ck['config']['data']['processed_root'])
+    indices=resolve_indices(cfg,a.split,a.indices,len(ds))
     ids=np.load(Path(ck['config']['data']['processed_root'])/a.split/'sample_id.npy')
     manifest={'status':'running','checkpoint':cfg['checkpoint'],'checkpoint_hash':hashlib.sha256(ckpt.read_bytes()).hexdigest(),
         'config_path':a.config,'config_hash':hashlib.sha256((ROOT/a.config).read_bytes()).hexdigest(),
-        'split':a.split,'indices':indices,'seeds':seeds,'methods':methods,'expected_records':len(indices)*len(seeds)*len(methods),
+        'split':a.split,'indices':indices,'scene_ids':[int(v) for v in ids[indices]],'seeds':seeds,'methods':methods,'expected_records':len(indices)*len(seeds)*len(methods),
         'completed_records':0,'representation':'direct128points; no spline, lifting or refit','config':cfg,
         'source_hashes':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()
             for folder in ['algorithms','adapters','models'] for p in (base/folder).rglob('*.py')}}

@@ -46,6 +46,7 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None)
             task.projection_maxiter=cfg['projection_maxiter'];task.projection_tol=cfg['projection_tol_scene']
         if init_noise is not None:
             task.initial_override=np.asarray(init_noise,dtype=float)[1:-1].reshape(-1)
+            task.particle_seed=initial_seed(scene_id,seed)   # method independent, pairs PD/ALM
         rng=np.random.default_rng(derived_seed(scene_id,seed,method));fn=safe_run if method.endswith('diffuser') else pdm_run if method=='PDM' else cd_run
         value=fn(task,method,rng,cfg,budget,trace);budget.check();trajectory=task.unpack(value)
         if not np.isfinite(trajectory).all():raise RuntimeError('nonfinite_trajectory')
