@@ -79,6 +79,9 @@ def sample_ddpm(model, schedule, batch, device, seed=0, extra_steps=64):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', default='experiments/safety_baselines/configs/seven_safety_points_t256.json')
+    ap.add_argument('--split', default='val', choices=['val', 'test'])
+    ap.add_argument('--override', action='append', default=[],
+                    help='KEY=VALUE applied to the config, e.g. --override sd_tvs_level_scene=0.05')
     ap.add_argument('--indices', default=','.join(str(i) for i in INDICES))
     ap.add_argument('--methods', default=','.join(['Diffuser'] + METHODS))
     ap.add_argument('--seed', type=int, default=0)
@@ -86,6 +89,10 @@ def main():
     ap.add_argument('--out-dir', default='experiments/safety_baselines/results/seven_safety_points')
     a = ap.parse_args()
     cfg = json.load(open(os.path.join(ROOT, a.config), encoding='utf8'))
+    for item in a.override:
+        key, _, value = item.partition('=')
+        cfg[key] = json.loads(value)          # numbers/bools/null parse, bare words stay strings
+    if a.override: print('overrides', a.override, flush=True)
     mcfg = json.load(open(os.path.join(ROOT, cfg['model_config']), encoding='utf8'))
     device = 'cuda'
     d = mcfg['diffusion']
@@ -95,7 +102,7 @@ def main():
     model.load_state_dict(state['model_state']); model.eval()
     print('base epoch', state.get('epoch'), 'params %.4f M' % (sum(p.numel() for p in model.parameters()) / 1e6), flush=True)
     idx = [int(v) for v in a.indices.split(',')]
-    loader, _ = make_safety_point_loader('val', mcfg['data']['processed_root'], 1, False, indices=idx)
+    loader, _ = make_safety_point_loader(a.split, mcfg['data']['processed_root'], 1, False, indices=idx)
     u = np.linspace(0., 1., a.eval_points)
     out = os.path.join(ROOT, a.out_dir); os.makedirs(out, exist_ok=True)
     methods = [m for m in a.methods.split(',') if m]

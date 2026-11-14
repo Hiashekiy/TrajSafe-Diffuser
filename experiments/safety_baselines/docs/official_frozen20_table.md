@@ -1,5 +1,10 @@
 # 官方修正 + 我们的基座/场景：Frozen20 全表（2026-11-14）
 
+> **⚠ 本表已被 `official_test420_table.md` 推翻，只能当链路自检，不能当结论。**
+> 同一套代码在 test 全量 420 场景上：无约束基线 49.5% 撞墙（本表 25%）、RoS 39.0%（25%）、
+> **TVS 3.6%（本表 0%）**、ALM 30.0%（25%）。四个冻结 val 场景集明显偏简单，其中 TVS 的 0/20
+> 是 20 样本下的偶然（真实率 3.6% 时 20 个全中的概率约 0.964²⁰ ≈ 48%，完全不算反常）。逐条对照见新表 §3。
+
 配置 `configs/seven_safety_points_t256.json`，基座 `results/safety_points_t256/ckpt/best.pt`
 （5.3958 M，checkpoint 记录 epoch 41），seed 0，**20 个冻结 val 场景**（index 0,81,163,…,1549），
 评价器 `unified_curve_eval`（512 点曲线），原始数据 `results/official_tables_frozen20/results.jsonl`。
