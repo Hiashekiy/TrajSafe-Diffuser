@@ -47,19 +47,23 @@ def run_method(method,model,schedule,occ,cond,scene_id,seed,cfg,init_noise=None,
         elif cfg.get('state_adapter')=='sc48_control':
             from experiments.safety_baselines.adapters.sc48_control import SC48ControlTask
             Task=SC48ControlTask;extra=dict(task_extra or {})
+        elif cfg.get('state_adapter')=='safety_points':
+            from experiments.safety_baselines.adapters.safety_point_task import SafetyPointTask
+            Task=SafetyPointTask;extra=dict(task_extra or {})
         elif cfg.get('state_adapter')=='physical_trajectory':
             from experiments.safety_baselines.adapters.physical_trajectory import PhysicalTrajectoryTask
             Task=PhysicalTrajectoryTask
         elif cfg.get('state_adapter')=='trajectory':
             from experiments.safety_baselines.adapters.trajectory_state import TrajectoryStateTask
             Task=TrajectoryStateTask
-        if cfg.get('state_adapter')=='sc48_control':extra=dict(task_extra or {})
+        if cfg.get('state_adapter') in ('sc48_control','safety_points'):
+            extra=dict(task_extra or {})
         task=Task(model,schedule,occ,cond,cfg['constraint_points'],cfg['radius_scene'],cfg.get('field_kind','bilinear'),**extra)
         if hasattr(task,'projection_maxiter'):
             task.projection_maxiter=int(cfg.get('segment_projection_maxiter',8))
             task.projection_maxiter_final=int(cfg.get('segment_projection_maxiter_final',40))
             task.projection_tol=float(cfg.get('segment_projection_tol',1e-6))
-        if cfg.get('state_adapter') in ('curve_control','sc48_control'):
+        if cfg.get('state_adapter') in ('curve_control','sc48_control','safety_points'):
             task.projection_maxiter=cfg['projection_maxiter'];task.projection_tol=cfg['projection_tol_scene']
         # Count REAL network forward passes (see attach_nfe_counter).
         nfe=attach_nfe_counter(task)
