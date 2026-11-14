@@ -7,6 +7,10 @@
 
 ## 0. 一分钟摘要
 
+> **本轮的硬规矩（用户明确要求）：先读 `.refs/` 下的官方实现，按官方代码对齐；
+> 不要再去自行发明"修复"。** 我上一轮为了让它跑通，自己发明了"高噪声门控""梯度夹出初值"
+> "每段一行约简"等做法——这些现在全部降级为**待官方代码核对**的假设，不再作为既定方案。
+
 1. 原来的七种安全扩散基线（RoS/ReS/TVS、Projected/Primal-Dual/ALM、PDM）跑的基座是
    **map-only 128 点 Diffuser**，质量太差（无约束采样 12/20 穿障）。
 2. 找回并验证了历史 **S-C48**（B 样条 48 控制点 + 安全几何特征，epoch 65）。它作为生成器明显更好
@@ -17,11 +21,11 @@
 4. 七种方法现在**全部能跑**，但结果被两个问题污染：
    - **(a) 基座锯齿**（平滑权重照抄了 B 样条口径，`lambda_smooth=0.08` 太小）→ RoS/TVS 发散成乱麻；
    - **(b) 约束对象错配**（方法约束顶点、评价器量线段）→ Projected/PDM 出现"点全在空地、线横穿墙"。
-5. (b) 已修：七种全部切到**线段约束**后，Projected 实测**不再穿墙**（净距 −0.15 → +0.78 m）。
-   但线段约束把行数从 128 抬到 **220752**，于是又暴露两个新问题（见 §5）：
-   SafeDiffuser 的 CBF QP 被证明不可行、PD/ALM 把稠密 Jacobian 撑爆内存。
-6. 下一步（新窗口第一件事）：给 PD/ALM 与 SafeDiffuser 提供**每段一行**（127 行）的段约束约简，
-   而不是 220752 行的 (段×圆) 全展开。详见 §6。
+5. (b) 的接线错误已修（`segment_constraints_for` 之前被静默忽略）。但把它硬切到"段×圆全展开"后，
+   SafeDiffuser 的 CBF QP 被证明不可行、PD/ALM 稠密 Jacobian 撑爆内存。
+   **这两个报错说明我此前对"怎么用段约束"的理解很可能是错的——去官方代码里找答案。**
+6. **下一步（新窗口第一件事，也是唯一一件事）：读 `.refs/` 下三份官方实现，逐条对照我们的代码，
+   先出一张"官方 vs 我们"的差异表，再决定改什么。** 详见 §6.0 与 §9。
 
 ---
 
@@ -122,38 +126,53 @@ MemoryError: Unable to allocate 1.68 MiB for an array with shape (220752,) and d
 
 ---
 
-## 6. 下一步具体工序（新窗口照着做）
+## 6. 下一步（新窗口照着做）
 
-### 6.1 首要：把段约束**约简为每段一行**（127 行）
+### 6.0 【必做·第一步】读 `.refs/` 官方实现，先出差异表，不写新代码
 
-现在 `SegmentPointTask.constraints` 返回的是 (段, 圆) 全展开（220752 行）。
-对 PD/ALM 与 SafeDiffuser，正确形式是**每段一个标量违反**：
+三份参考实现**已经在本地**（你自己下载的）：
 
-```
-每段 s： g_s = max_over_circles ( r_c − dist(seg_s, c_c) )      # g_s ≤ 0 即该段可行
-       取到 max 的那个圆即 binding，其梯度给出该行的 ∂g_s/∂x
-```
-→ 行数 **127**（≈128），稠密 J 是 127×252 ≈ 32k 元素，CBF 的 QP 也是 127 行硬约束（可解）。
-
-**实现位置**：`adapters/segment_points.py` 增加一个 `reduced=True` 模式（或新增
-`SegmentRowsReduced` 方法），只影响 `constraints()`；`project()` 保持全展开 SQP（Projected/PDM 用它）。
-**验收**：
-- PD/ALM 在 2 个场景上跑通、不再 MemoryError；
-- RoS/ReS/TVS 的 QP 不再 `qp_infeasible_certified`；
-- 交付路径的"线段穿越"计数与全展开版本一致（说明约简没丢失约束强度）。
-
-### 6.2 次要：三选一决定 RoS/ReS/TVS 的约束口径
-
-| 选项 | 内容 | 代价 |
+| 参考实现 | 路径 | 状态 |
 |---|---|---|
-| A | 这三种保持**顶点**约束（它们论文原文就是点约束），表里注明 | 0 |
-| B | 用 6.1 的 127 行约简段约束 | 1 天 |
-| C | 中点加密（128→256 行） | 半天 |
+| **PDM / Projected Diffusion Models**（NeurIPS 2024） | `.refs/Projected-Diffusion/` | 完整仓库 |
+| **SafeDiffuser**（ICLR 2025，RoS/ReS/TVS） | `.refs/SafeDiffuser/` | 完整仓库 |
+| **Constrained Diffusers**（NeurIPS 2025，Projected/PD/ALM） | `.refs/NeurIPS-2025-constrained-diffusers-for-safe-planning-and-control-Supplemental-Conference/code/` | 官方补充材料代码，按环境分目录：`BallRunning / Hopper / swimmer / umaze-large / umaze-small` |
 
-### 6.3 之后才轮到的（都不该现在动）
+**已知的关键落点（省你 grep 时间，但请自行确认内容）：**
+
+- PDM：`.refs/Projected-Diffusion/examples/trajectories/mpd/models/diffusion_models/`
+  里的 `projection.py`、`sample_functions.py`、`scoremodel.py`、`guides.py`；
+  另有一层 `examples/trajectories/projection.py`。**重点核对**：投影对象（x0 还是 x_t）、
+  每级投影几次、步长 `eps·(σ/σ_min)²`、T 与 M 的实际取值、约束是"点"还是"段"。
+- SafeDiffuser：`.refs/SafeDiffuser/diffuser/models/diffusion.py` 里 **`#CBF` 标记共 12+ 处**
+  （行号 255 / 290 / 329 / 348 / 392 / 419 / 465 / 484 / 529 / 547 / 602 / 629 …），
+  这是 RoS/ReS/TVS 的真实实现位置。**重点核对**：barrier 的 `h` 是怎么算的（逐点还是逐段）、
+  QP 的行数与 slack 权重、`Δτ` 与 sub-step、γ 的取法、是否真的每步解 QP。
+- Constrained Diffusers：`.refs/NeurIPS-2025-.../code/<scheme>/` 下与 `diffuser/models/temporal.py`、
+  `diffuser/datasets/sequence.py`、`config/*.py` 同级的采样/约束代码。**重点核对**：
+  Projected / Primal-Dual / ALM 三者的**约束行构造**与**乘子单位**，以及它们对 `β_t` / 每级步数的处理。
+
+**要求的产出（第一件事就交付这个）**：
+一张 `docs/official_vs_ours_diff.md`，逐条列：
+`项目 | 官方实现(文件:行) | 我们(文件:行) | 差异 | 结论(按官方改 / 保留并说明 / 待定)`。
+**在差异表出来之前，不要再改 `algorithms/` 或 `adapters/` 里的任何约束逻辑。**
+
+### 6.1 待官方代码确认后才动手的候选改动（均为**假设**，不是既定方案）
+
+| 假设 | 需要官方代码回答的问题 |
+|---|---|
+| 段约束应约简为"每段一行、取最紧的圆"（127 行，而不是 220752 行） | 官方的约束行到底怎么构造？是否本来就有这种约简？ |
+| SafeDiffuser 的 CBF 每步该解多大的 QP | 官方 `#CBF` 段里 QP 的变量数/行数是多少？是否用 slack？ |
+| PD/ALM 需要稠密 J，所以只能承载少量行 | 官方实现里 PD/ALM 的约束行数量级与 Jacobian 存储方式 |
+| 高噪声级不该做投影（我加的 `projection_gate_residual`） | 官方是否也在某些级跳过投影？PDM App.F 的"投影频率"具体怎么实现？ |
+| `lambda_smooth` 0.08 需要加大 | 与安全方法无关，属基座自身；官方代码无法回答，属我们自己的标定 |
+
+---
+
+## 6.5 之后才轮到的（都不该现在动）
 
 1. `lambda_smooth` 0.08→0.5 重训（70 min）——只有在你愿意时才做；
-2. 13 场景 × 8 行的完整表（线段版）；
+2. 13 场景 × 8 行的完整表（按官方对齐后的实现对跑）；
 3. `docs/native_point_retrain_report.md` 更新验收结论。
 
 ---
@@ -224,28 +243,35 @@ $env:OPENBLAS_NUM_THREADS="1"; $env:OMP_NUM_THREADS="1"; $env:MPLBACKEND="Agg"
 
 ---
 
-## 9. 官方代码线索（新窗口接着查）
+## 9. 官方参考实现（**已下载到本地，这是新窗口的起点**）
 
-| 方法族 | 官方代码 | 备注 |
+| 方法族 | 本地路径 | 说明 |
 |---|---|---|
-| **PDM = Projected Diffusion Models**（NeurIPS 2024） | ✅ [RAISELab-atUVA/Projected-Diffusion](https://github.com/RAISELab-atUVA/Projected-Diffusion) | 我们文档里引用的 `projected_diffusion/scoremodel.py` 就是它；**待核实**：该仓库是否也实现了 projection/primal-dual/ALM（若是，则 `Projected` 这个基线的归属要改） |
-| **SafeDiffuser**（ICLR 2025, RoS/ReS/TVS） | ❓ 只有项目页 [safediffuser.github.io](https://safediffuser.github.io/safediffuser/)，未检索到公开仓库 | 目前是**纯论文重推**，风险最高 |
-| **Constrained Diffusers**（NeurIPS 2025, Projected/PD/ALM） | ❓ 只有 [proceedings](https://dl.acm.org/doi/10.52202/085713-1174) 与 [talk](https://slideslive.com/39051580/constrained-diffusers-for-safe-planning-and-control) | 同上 |
+| **PDM / Projected Diffusion Models**（NeurIPS 2024） | `.refs/Projected-Diffusion/` | 官方仓库（RAISELab-atUVA）。我们文档里引用的 `projected_diffusion/scoremodel.py` 就是它的谱系 |
+| **SafeDiffuser**（ICLR 2025, RoS/ReS/TVS） | `.refs/SafeDiffuser/` | 官方仓库；CBF 实现在 `diffuser/models/diffusion.py` 的 `#CBF` 段（12+ 处） |
+| **Constrained Diffusers**（NeurIPS 2025, Projected/PD/ALM） | `.refs/NeurIPS-2025-constrained-diffusers-for-safe-planning-and-control-Supplemental-Conference/code/` | 官方补充材料代码；5 个环境目录 `BallRunning / Hopper / swimmer / umaze-large / umaze-small` |
 
-**我这侧无法 clone**（git HTTPS 与 GitHub API/raw 都被沙箱 TLS 挡住，`SEC_E_NO_CREDENTIALS`）。
-请你在本机：
-```powershell
-cd D:\ProjectDirectory\Neural-IRISDiffuser
-New-Item -ItemType Directory -Force -Path .refs | Out-Null
-git clone --depth 1 https://github.com/RAISELab-atUVA/Projected-Diffusion.git .refs/Projected-Diffusion
-```
-拉下来后新窗口可以**直接读本地文件**，做逐条对照（噪声日程 / 投影对象是 x0 还是 x_t /
-每级投一次还是多次 / 步长 `eps·(σ/σ_min)²` / T=10 / M=100 / 段约束是否真的按段）。
+`git` 在本会话无法 clone（沙箱 TLS `SEC_E_NO_CREDENTIALS`），但你已经手动下载好了，**直接用本地文件即可**。
+
+**待核实的归属问题**：`Projected` 这个基线我们当初归到 "Constrained Diffusers" 家族；
+如果 `Projected-Diffusion` 官方仓库里也有 projection 采样器，那 `Projected` 更应该按
+**PDM 官方实现**来做（两者都是"每步投影到可行集"，但步长/投影对象可能不同）。
+在 §6.0 的差异表里必须给出结论。
 
 ---
 
 ## 10. 新窗口第一句话可以这样说
 
-> 读 `experiments/safety_baselines/docs/HANDOFF_NEXT_SESSION_20261114.md`，
-> 然后按 §6.1 实现"每段一行（127 行）的段约束约简"，
-> 让 Primal-Dual/ALM 不再 MemoryError、让 SafeDiffuser 的 CBF QP 恢复可行。
+> 读 `experiments/safety_baselines/docs/HANDOFF_NEXT_SESSION_20261114.md`。
+> 然后**先读 `.refs/` 下的三份官方实现**（Projected-Diffusion、SafeDiffuser、
+> NeurIPS-2025-constrained-diffusers `code/`），按 §6.0 出一张 `docs/official_vs_ours_diff.md`
+> 差异表；**在差异表出来之前不要改任何约束代码**，也不要再自己发明修复方案。
+
+## 11. 禁止事项（本轮教训）
+
+1. **不许再自行发明"让它跑通"的做法**（高噪声门控、梯度夹出初值、行数约简…）而不先核对官方实现。
+   这些做法可以保留为候选，但必须标注"未与官方核对"。
+2. **不许拿改了方法的版本和原方法混在同一张表里排名**（段约束版本必须单独一列并说明）。
+3. **不许把 13/20 场景的 val 数字说成 test 结论**。
+4. **不许为了让指标好看而调 `relax_weight / η / ρ / γ / λ_smooth`**；每次调整必须是一次可复现的
+   单变量实验，并写清依据（论文公式 或 官方代码 或 显式的工程理由）。
