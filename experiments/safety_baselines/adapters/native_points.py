@@ -15,6 +15,11 @@ class NativePointTask:
         self.endpoints=np.asarray(cond,dtype=float)
         with torch.inference_mode():self.memory=model.encode_scene(self.occ)
         self.map=ExactMapConstraint(occupancy,extent=2.,radius=radius)
+        # `radius` is a margin for the *interior* of the path; the two endpoints are given by
+        # the task and cannot be moved, so they are tested against the un-inflated map.
+        # Without this, any margin wider than the endpoint clearance makes every projection
+        # method report 'fixed endpoint is occupied' (~half the test scenes at 5 m).
+        self.map_raw=ExactMapConstraint(occupancy,extent=2.,radius=0.)
         self.ab=schedule.alphas_cumprod.cpu().numpy();self.betas=schedule.betas.cpu().numpy()
         self.sigma=np.sqrt((1-self.ab)/self.ab)
 
@@ -69,11 +74,22 @@ class NativePointTask:
         return -h,J
     def project(self,target,budget):
         budget.check()
-        if self.map.radius!=0:raise SolverFailure('nonzero-radius projection not implemented')
+        # A nonzero `radius` inflates the obstacle set by that margin; pushing a point until
+        # h = 0 of the inflated field is exactly "leave a margin of `radius`". One Newton
+        # step only closes a thin inflation, so iterate: with a 5 m margin the single-step
+        # version left a residual and every projection failed (observed 2026-11-14).
         p=self.unpack(target);h,grad=self.map.query(p)
-        if np.min(h[[0,-1]]) < -1e-10:raise SolverFailure('fixed endpoint is occupied')
-        eps=1e-7;free=p[1:-1].copy();mask=h[1:-1]<=eps
-        free[mask]+=(-h[1:-1][mask]+eps)[:,None]*grad[1:-1][mask]
+        raw_h,_=self.map_raw.query(p[[0,-1]])
+        if np.min(raw_h) < -1e-10:raise SolverFailure('fixed endpoint is occupied')
+        eps=1e-7;free=p[1:-1].copy()
+        for _ in range(64):
+            hh=self.constraints(free.reshape(-1))[0]
+            if hh.max()<=1e-5:break
+            budget.check()
+            hh2,gg=self.map.query(self.unpack(free.reshape(-1)))
+            bad=hh2[1:-1]<=eps
+            if not bad.any():break
+            free[bad]+=(-hh2[1:-1][bad]+eps)[:,None]*gg[1:-1][bad]
         value=free.reshape(-1);residual=float(self.constraints(value)[0].max())
         if residual>1e-5:raise SolverFailure('native point projection residual')
         return value,{'status':'nearest_free_cell_union','residual':residual,'iterations':1,'projection_error_bound_scene':float(np.sqrt(self.H-2)*eps)}

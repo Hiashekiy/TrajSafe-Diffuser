@@ -34,10 +34,10 @@ def _violation(task, x, scale, clip=None):
     `vio` is signed the official way (positive = safe), so `grad` is `-J` of our adapters
     and no sign-fix is needed inside the vendored update.
 
-    `clip` (scaled units) saturates how *deep* a violation counts. Our schedule makes a
-    high-noise sample sit ~2600x outside the map, so |g| reaches hundreds of metres there
-    and the multiplier ratchets up on information-free input; one grid cell is the depth
-    beyond which "inside an obstacle" carries no extra signal, exactly as the release's
+    `clip` (scaled units) saturates how *deep* a violation counts. At high t the state is a
+    random N(0,1) point cloud (`x = 1.9e-4*x0 + 1.0*eps`), so points fall outside the map and
+    the distance field reports hundreds of metres for them; one grid cell is the depth beyond
+    which "inside an obstacle" carries no extra signal, exactly as the release's
     dimensionless barrier saturates at one obstacle radius.
     """
     rows = [task.constraints(p) for p in x]
@@ -68,13 +68,14 @@ def run(task, method, rng, cfg, budget, trace):
     _prev_correction = None
     ladder = level_ladder(T, cfg.get('cd_extra_steps', 0))
     repeats = len(ladder) - len(set(ladder))
-    # `cd_correct_below`: only engage the constraint in the low-noise tail. Our base model
-    # has sigma_max ~ 5.2e3 scene units while the map is 2 units wide, so at high t the
-    # state is ~2600x larger than the geometry and |g| reaches hundreds of metres; letting
-    # the multiplier accumulate there ratchets it up and then applies the whole charge at
-    # the levels where the trajectory is finally meaningful. PDM (`idx > 5`) and SafeDiffuser
-    # (`t <= 10`) both ship exactly this gate; the Constrained Diffusers release does not
-    # need it because its sigma_max is only a few times its data range.
+    # `cd_correct_below`: only engage the constraint in the low-noise tail. At t=255 our
+    # forward process gives x = 1.9e-4*x0 + 1.0*eps, i.e. the "trajectory" is a random
+    # N(0,1) point cloud over a map that is only 2 scene units wide (~60% of the points land
+    # outside the free area), and the barrier reports hundreds of metres of "violation" for
+    # it. Letting the multiplier integrate that ratchets it up before any geometry exists.
+    # PDM (`idx > 5`) and SafeDiffuser (`t <= 10`) both ship exactly this gate; the
+    # Constrained Diffusers release does not need it because its sigma_max is only a few
+    # times its data range.
     gate = cfg.get('cd_correct_below')
 
     for t in ladder:
