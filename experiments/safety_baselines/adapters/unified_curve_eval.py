@@ -58,10 +58,25 @@ def evaluate_curve(points,occ,cond,gt_curve,u):
     acc=p[2:]-2*p[1:-1]+p[:-2]
     collision=bool(_cell_hit(dense,occ).any())
     endpoint=float(max(np.linalg.norm(p[0]-cond[0]),np.linalg.norm(p[-1]-cond[1]))*SCENE_TO_METER)
+    # Continuous violation share: `curve_collision` is binary per scene (one bad point marks
+    # the whole path), so a path with 49 bad waypoints and one with 1 score the same. Probe
+    # at uniform ARC LENGTH so the share does not depend on how the caller sampled the curve.
+    arc=np.r_[0.,np.cumsum(seg)]
+    if arc[-1]>1e-12:
+        uu=np.linspace(0.,arc[-1],512)
+        probe=np.stack([np.interp(uu,arc,p[:,0]),np.interp(uu,arc,p[:,1])],axis=1)
+        hp,_=field.query(probe);inside=hp<0
+        inside_fraction=float(inside.mean())
+        mean_penetration=float((-hp[inside]).mean()) if inside.any() else 0.
+    else:
+        inside_fraction=mean_penetration=0.
     return {'curve_collision':collision,'curve_vertex_collision':bool(_cell_hit(p,occ).any()),
         'planning_success':(not collision) and endpoint<=.01,'endpoint_error_m':endpoint,
         'min_clearance_m':float(h.min()*SCENE_TO_METER),
         'violation_max_m':float(np.maximum(-h,0).max()*SCENE_TO_METER),
+        'inside_fraction':inside_fraction,
+        'inside_length_m':inside_fraction*length*SCENE_TO_METER,
+        'mean_penetration_m':mean_penetration*SCENE_TO_METER,
         'rmse_m':float(np.sqrt(np.mean(np.sum((p-np.asarray(gt_curve))**2,axis=1)))*SCENE_TO_METER),
         'path_length_m':length*SCENE_TO_METER,'path_length_ratio':length/max(ref,1e-12),
         'max_curvature_1pm':float(curv.max()),'mean_curvature_1pm':float(curv.mean()),
