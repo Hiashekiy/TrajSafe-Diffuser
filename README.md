@@ -1,5 +1,17 @@
 # TrajSafe-Diffuser（报告一致的骨架引导安全扩散规划器）
 
+独立地图准备工具：[`src/map_preparation/README.md`](src/map_preparation/README.md)。使用 `python -m src.map_preparation` 将二维占据图转换为 DMA 骨架和 sknw 稀疏曲线图，支持 JSON/NPZ 导出与可视化。
+
+> **栅格搜索模块（独立实验）**：`src/grid_search/` 实现
+> Progress-aware Diffusion-Guided Focal A*（PDG-Focal A*）——用逆扩散早期中间 x0 的
+> **距离 + 弧长进度**引导 FOCAL 内部排序，搜索始终覆盖完整安全栅格图。
+> 用现成 ckpt 在 test 200 case 上：扩展数比 A* 少 3.3×（179 vs 585），搜索循环快 1.6×，
+> 代价 +3.2%（w=1.2 上界内）。接口核查见
+> [`docs/PDG_Focal_Astar_S0_接口核查.md`](docs/PDG_Focal_Astar_S0_接口核查.md)，
+> 实验与诚实结论（含“端到端不一定更快”“进度项无收益”）见
+> [`docs/PDG_Focal_Astar_实验报告.md`](docs/PDG_Focal_Astar_实验报告.md)。
+> 该模块不修改 `src/diffusion/*`、`src/models/*` 与任何训练/采样入口。
+
 本仓库实现 **TrajSafe-Diffuser**：以占据地图（CARLA v1 快照）上的**骨架拓扑**为
 几何先验，用一条**控制点空间**的扩散链生成起终点之间的安全 B 样条路径，
 并预测沿路径分布的安全椭圆。
