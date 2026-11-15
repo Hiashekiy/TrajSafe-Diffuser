@@ -1,4 +1,4 @@
-"""Plot the unconstrained base and the seven corrected paths on their maps.
+﻿"""Plot the unconstrained base and the seven corrected paths on their maps.
 
 Two scenes: one where the base is already safe, one where it collides. All eight rows use
 the same seed / paired initial noise as the comparison table, so what you see is exactly
@@ -57,10 +57,14 @@ def panel(ax, occ, gt, cond, curves, title):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', default='experiments/safety_baselines/configs/seven_safety_points_t256.json')
-    ap.add_argument('--indices', default='0,163')          # 61001 (base safe), 74014 (base collides)
+    ap.add_argument('--indices', default='0,163')
+    ap.add_argument('--split', default='val', choices=['val', 'test'])
+    ap.add_argument('--override', action='append', default=[])          # 61001 (base safe), 74014 (base collides)
     ap.add_argument('--out-dir', default='experiments/safety_baselines/results/seven_safety_paths')
     a = ap.parse_args()
     cfg = json.load(open(os.path.join(ROOT, a.config), encoding='utf8'))
+    for item in a.override:
+        k, _, v = item.partition('='); cfg[k] = json.loads(v)
     mcfg = json.load(open(os.path.join(ROOT, cfg['model_config']), encoding='utf8'))
     device = 'cuda'
     d = mcfg['diffusion']
@@ -69,9 +73,9 @@ def main():
     st = torch.load(os.path.join(ROOT, cfg['checkpoint']), map_location='cpu', weights_only=False)
     model.load_state_dict(st['model_state']); model.eval()
     idx = [int(v) for v in a.indices.split(',')]
-    loader, _ = make_safety_point_loader('val', mcfg['data']['processed_root'], 1, False, indices=idx)
+    loader, _ = make_safety_point_loader(a.split, mcfg['data']['processed_root'], 1, False, indices=idx)
     out = os.path.join(ROOT, a.out_dir); os.makedirs(out, exist_ok=True)
-    methods = ['Diffuser'] + METHODS
+    methods = ['Diffuser-ddpm'] + METHODS
     u = np.linspace(0., 1., 512)
     for k, batch in enumerate(loader):
         b = {kk: v.to(device) for kk, v in batch.items()}
@@ -86,8 +90,10 @@ def main():
         store = {}
         for method in methods:
             t0 = time.perf_counter()
-            if method == 'Diffuser':
-                p = sample_diffuser(model, schedule, b, device, seed=k)
+            if method == 'Diffuser-ddpm':
+                from experiments.safety_baselines.scripts.run_seven_safety_points import sample_ddpm
+                p, _ = sample_ddpm(model, schedule, b, device, seed=0,
+                            extra_steps=int(cfg.get('cd_extra_steps', 0)))
             else:
                 r = run_method(method, model, schedule, occ, cond, scene, 0, cfg, init_noise=init,
                                task_extra={'candidates': cand})
@@ -113,7 +119,9 @@ def main():
             title = '%s  %s  clear %.1f m  len %.2f' % (
                 method, 'COLLIDES' if s['collision'] else 'ok', s['clear'], s['len'])
             panel(ax, occ, gt, cond, [(method, s['points'], s['collision'])], title)
-        fig.suptitle('scene %d — grey dashed = ground truth, green = start/goal, red = colliding path' % scene, fontsize=10)
+        fig.suptitle('scene %d 鈥?grey dashed = ground truth, green = start/goal, red = colliding path' % scene, fontsize=10)
+        if a.override:
+            fig.suptitle(fig._suptitle.get_text() + '   |   ' + ', '.join(a.override), fontsize=9)
         fig.tight_layout(); fig.savefig(os.path.join(out, 'scene_%d_grid.png' % scene)); plt.close(fig)
         # all curves on one map
         fig, ax = plt.subplots(figsize=(7, 7), dpi=120)
