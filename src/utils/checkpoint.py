@@ -217,7 +217,7 @@ def load_model(cfg, ckpt=None, arch: str = "auto", device="cpu",
     from the checkpoint unless ``arch`` forces it, and shape changes introduced
     by the refactor are absorbed by :func:`load_state_dict_flexible`.
     """
-    from ..models.trajsafe import TrajSafePlanner
+    from ..models.factory import build_model
 
     data = None
     if isinstance(ckpt, str):
@@ -228,8 +228,8 @@ def load_model(cfg, ckpt=None, arch: str = "auto", device="cpu",
     model_cfg = resolve_architecture(
         cfg.get("model"), state, arch,
         checkpoint_cfg=(data.get("config") if isinstance(data, dict) else None))
-    model = TrajSafePlanner(model_cfg, cfg.get("ellipse_label"),
-                            cfg.get("bspline"))
+    # ``model.framework: v5`` -> the new single-path planner, otherwise legacy
+    model = build_model(cfg, model_cfg)
     report = None
     if state is not None:
         report = load_state_dict_flexible(

@@ -236,11 +236,19 @@ def focal_search(safe: SafeGrid, start_idx: int, goal_idx: int,
             + beta * L_ref * np.abs(prog_tab[nodes].astype(np.float64) - u_g)
         return lam * s.min(axis=1)
 
+    # The octile heuristic only depends on the cell -> precompute it once per
+    # search (one vectorised pass over the grid) instead of evaluating it in
+    # Python for every neighbour of every expansion.
+    if cfg.heuristic == "none":
+        h_tab = None
+    else:
+        rr, cc = np.divmod(np.arange(n, dtype=np.int64), width)
+        h_tab = octile_heuristic(rr, cc, goal_rc, cell_m).astype(np.float64)
+
     def h_of(node: int) -> float:
-        if cfg.heuristic == "none":
+        if h_tab is None:
             return 0.0
-        return float(octile_heuristic(node // width, node % width, goal_rc,
-                                      cell_m))
+        return float(h_tab[node])
 
     g[start_idx] = 0.0
     f0[start_idx] = h_of(start_idx)

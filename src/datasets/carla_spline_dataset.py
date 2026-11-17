@@ -78,6 +78,17 @@ class CarlaSplineDataset(Dataset):
         self.geom_lengths = _load("candidate_geometry_lengths.npy")
         self.geometry = _load("candidate_geometry.npy", mmap=True)
         self.best = _load("topology_best.npy")
+        # ---- new single-path framework labels (optional) -------------------
+        def _opt(name):
+            path = os.path.join(self.dir, name)
+            return np.load(path) if os.path.exists(path) else None
+
+        self.heading = _opt("heading.npy")
+        self.heading_valid = _opt("heading_valid.npy")
+        self.pdg_path = _opt("pdg_path_points.npy")
+        self.pdg_valid = _opt("pdg_path_valid.npy")
+        if self.pdg_valid is not None:
+            self.pdg_valid = self.pdg_valid.astype(bool)
         # sampling / evaluation do not need the offline ellipse labels
         try:
             self.shape4_gt = _load("ellipse_shape4_gt.npy")
@@ -133,15 +144,19 @@ class CarlaSplineDataset(Dataset):
                 "bspline.num_controls (the control labels are offline data)"
                 % (int(num_controls), self.num_controls, self.dir))
         # The ellipse labels / safety queries are indexed by Skeleton progress.
-        if num_safety_queries is not None \
-                and int(num_safety_queries) != self.candidate_points:
+        # The ellipse/safety queries are indexed by the ACTIVE path progress:
+        # legacy = Skeleton length (= candidate_xy), new single-path framework
+        # = independent Q (64).
+        self.num_safety_queries = int(
+            num_safety_queries if num_safety_queries is not None
+            else self.candidate_points)
+        if self.shape4_gt.shape[1] not in (self.num_safety_queries,
+                                           self.candidate_points):
             raise ValueError(
-                "model.num_safety_queries=%d != candidate_points=%d"
-                % (int(num_safety_queries), self.candidate_points))
-        if self.shape4_gt.shape[1] != self.candidate_points:
-            raise ValueError(
-                "ellipse_shape4_gt has %d rows but candidate_xy has %d points"
-                % (self.shape4_gt.shape[1], self.candidate_points))
+                "ellipse_shape4_gt has %d rows but the model asks for %d "
+                "safety queries (candidate_xy has %d points)"
+                % (self.shape4_gt.shape[1], self.num_safety_queries,
+                   self.candidate_points))
         if int(self.geom_lengths.max(initial=0)) > self.geometry_points:
             raise ValueError(
                 "dense geometry longer than the padding budget: %d > %d "
@@ -192,7 +207,7 @@ class CarlaSplineDataset(Dataset):
         alm_a = alm_a / nrm[..., None]
         alm_b = alm_b / nrm
 
-        return {
+        item = {
             "pos": torch.as_tensor(np.asarray(self.curve_gt[i], dtype=np.float32)),
             "control_gt": torch.as_tensor(
                 np.asarray(self.control_gt[i], dtype=np.float32)),
@@ -218,6 +233,18 @@ class CarlaSplineDataset(Dataset):
             "episode_id": int(self.episode_id[i]),
             "sample_id": int(self.sample_id[i]),
         }
+        # ---- new framework labels -------------------------------------------
+        if self.heading is not None:
+            item["heading"] = torch.as_tensor(
+                np.asarray(self.heading[i], dtype=np.float32).reshape(2, 2))
+            item["heading_valid"] = torch.as_tensor(
+                np.asarray(self.heading_valid[i]).astype(bool).reshape(2))
+        if self.pdg_path is not None:
+            item["pdg_path"] = torch.as_tensor(
+                np.asarray(self.pdg_path[i], dtype=np.float32))
+            item["pdg_path_valid"] = torch.tensor(
+                bool(self.pdg_valid[i]) if self.pdg_valid is not None else True)
+        return item
 
 
 def make_collate(ds: CarlaSplineDataset):
@@ -253,6 +280,15 @@ def make_collate(ds: CarlaSplineDataset):
             "sample_id": torch.tensor([b["sample_id"] for b in batch],
                                       dtype=torch.long),
         }
+        # ---- new framework labels (only if the snapshot provides them) -----
+        if "heading" in batch[0]:
+            out["heading"] = torch.stack([b["heading"] for b in batch])
+            out["heading_valid"] = torch.stack(
+                [b["heading_valid"] for b in batch])
+        if "pdg_path" in batch[0]:
+            out["pdg_path"] = torch.stack([b["pdg_path"] for b in batch])
+            out["pdg_path_valid"] = torch.stack(
+                [b["pdg_path_valid"] for b in batch])
         # backward-compatible alias used by the sampler / dashboard
         out["map_tensor"] = out["occupancy"]
         return out

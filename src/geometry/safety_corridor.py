@@ -239,6 +239,7 @@ class SafetyCorridor:
     failure_reason: str | None = None
     min_overlap: float = 0.10
     bridge_gaps: list = field(default_factory=list)
+    skipped_cells: list = field(default_factory=list)   # degenerate, dropped
 
     @property
     def num_cells(self) -> int:
@@ -407,6 +408,8 @@ def build_safety_corridor(
     b_np = b[0].detach().cpu().numpy().astype(np.float64)
     mask_np = mask[0].detach().cpu().numpy().astype(bool)
     valid_np = valid[0].detach().cpu().numpy().astype(bool)
+
+    skipped_cells: list = []
     faces = [A_np[i][mask_np[i]] for i in range(n_cells)]
     face_b = [b_np[i][mask_np[i]] for i in range(n_cells)]
     # One call per cell.  ``convex_region.vertices_pairwise_batch`` computes the
@@ -421,6 +424,27 @@ def build_safety_corridor(
                             polys[i], areas[i], valid_np[i])
             for i in range(n_cells)]
 
+    # ---- skip DEGENERATE cells instead of throwing the whole corridor away ---
+    # One empty region used to abort the build ("invalid_base_region:i"), which
+    # killed ALM for the whole trajectory although the other 126 cells were fine.
+    # We drop those cells and re-link their neighbours; the overlap of a new pair
+    # is computed exactly the way the batched table below does it (intersection
+    # == polytope of the union of both face sets), so corridors WITHOUT a
+    # degenerate cell are bit-for-bit unchanged.
+    bad = [i for i, cell in enumerate(base) if not cell.valid]
+    if bad:
+        keep = [i for i in range(n_cells) if i not in set(bad)]
+        if len(keep) < 2:
+            empty.failure_reason = "too_many_invalid_base_regions:%d" % len(bad)
+            empty.base_cell_count = n_cells
+            return empty
+        skipped_cells = bad
+        base = [base[i] for i in keep]
+        faces = [faces[i] for i in keep]
+        face_b = [face_b[i] for i in keep]
+        keep_anchors = np.asarray(keep_anchors)[keep]
+        n_cells = len(base)
+
     # The intersection of two convex cells is the polytope of ALL their faces,
     # so no clipping is needed; each cell's area is already known, which makes
     # the pair test pure arithmetic.
@@ -432,11 +456,6 @@ def build_safety_corridor(
         inter_areas = [polygon_area(poly) for poly in inter_polys]
     else:
         inter_areas = []
-    for i, cell in enumerate(base):
-        if not cell.valid:
-            empty.failure_reason = "invalid_base_region:%d" % i
-            empty.base_cell_count = n_cells
-            return empty
 
     def _gamma(s_value: float) -> np.ndarray:
         if gamma is None:
@@ -522,4 +541,5 @@ def build_safety_corridor(
     return SafetyCorridor(
         cells=cells, overlap_ratio=ratios, base_cell_count=n_cells,
         bridge_cell_count=len(bridges), valid=True, failure_reason=None,
-        min_overlap=min_overlap, bridge_gaps=bridges)
+        min_overlap=min_overlap, bridge_gaps=bridges,
+        skipped_cells=skipped_cells)

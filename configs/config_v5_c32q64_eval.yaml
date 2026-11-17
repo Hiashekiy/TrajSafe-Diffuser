@@ -1,0 +1,156 @@
+# ============================================================
+# config_v5_c32q64 —— 新框架（单路径 + 32 控制点 + 64 椭圆 + 端点朝向）
+#
+# 对应《TrajSafe-Diffuser 新框架整体改造实施方案》§2 / §3 / §8 / §9：
+#   * 删除 q_coarse 与 TopologyHead，路径输入改为单条 active_path [B,128,2]
+#   * Control Backbone 1 层，Final Denoiser 4 层
+#   * 32 控制点 / 64 椭圆查询 / 128 路径点 / 128 解码点（互相独立配置）
+#   * 端点朝向条件（heading），ell 为几何切线段长度（scene 单位）
+#   * 推理 4 步 DDIM，训练时间表仍为 T=16（子采样 4 次）
+#
+# 数据：data/processed/160m-k4p-c32q64（由 scripts/data/new_framework/ 生成：
+#   control_gt[32]、ellipse_shape4_gt[64]、shape_valid[64]、
+#   heading/heading_valid、pdg_path_points/pdg_path_valid）
+# 注意：该数据根建立在 160m-k4p 上，其障碍已被腐蚀 4 格（不是安全膨胀），
+# 报告中不得声称恢复了原始障碍边界。
+# ============================================================
+base: "configs/config_160k4p_oneshot.yaml"
+
+data:
+  processed_root: "D:/ProjectDirectory/Neural-IRISDiffuser/data/processed/160m-k4p-c32q64"
+  batch_size: 16
+  num_workers: 0
+
+model:
+  framework: "v5"                      # 选择 TrajSafePlannerV5（新框架）
+  num_controls: 32                     # C
+  num_safety_queries: 64               # Q（椭圆 / 安全查询）
+  path_points: 128                     # 单路径输入点数
+  traj_blocks: 1                       # Control Backbone 层数
+  final_blocks: 4                      # Final Denoiser 层数
+  skeleton_blocks: 1                   # 单路径编码器层数
+  global_mem_res: 16
+  # 端点朝向（§8）：ell 是几何切线段长度，不是速度
+  heading:
+    enabled: true
+    goal: true
+    ell_scene: 0.04                    # 1 scene = 80 m -> 3.2 m
+    ell_min_scene: 0.01
+    ell_max_frac: 0.20
+  feedback:
+    enabled: true
+    hidden: 64
+    zero_init: true
+  boundary_decoder:
+    span: 4
+    profile: [1.0, 0.75, 0.5, 0.25]
+  safety_features:
+    enabled: true
+
+bspline:
+  degree: 3
+  num_controls: 32
+  curve_points: 128
+  knots: "auto"
+
+diffusion:
+  timesteps: 16
+  inference_steps: 4                   # 新采样器执行 4 次反向前向
+
+# 新框架的损失（§9.4）：控制点重建 / 平滑 / 边界 / 椭圆形状 / 局部安全 / 朝向
+loss:
+  lambda_control: 0.20
+  lambda_smooth: 0.08
+  lambda_boundary: 0.20
+  lambda_shape: 0.08
+  lambda_iou: 0.25
+  lambda_safe: 0.15
+  lambda_heading: 0.10                 # 新增：端点朝向
+  boundary_coarse_weight: 0.0          # coarse 分支已删除
+  safe_cvar_fraction: 0.2
+  safe_cvar_weight: 1.0
+  ellipse_safe_res: 64
+  ellipse_mask_tau: 10.0
+  ellipse_safe_chunk: 32
+
+# 四步 rollout（§9.3）：第1步无路径无安全无反馈；第2步路径+椭圆无反馈；
+# 第3/4 步路径（ALM 验证后更新）+ 最近有效反馈
+train:
+  epochs: 120
+  max_hours: 6.0
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  log_interval: 20
+  save_every: 2
+  eval_every: 2
+  val_batches: 6
+  ckpt_dir: "outputs/models/v5_c32q64/ckpt"
+  rollout:
+    steps: 4                           # 执行 4 次反向前向
+    use_pdg_path: true                 # 第 2 步用 pdg_path_points
+    use_alm: true                      # 第 2-4 步 no_grad ALM
+    update_active_path: true           # ALM 全局验证通过才更新
+    local_corridor: true               # 只在碰撞区间建局部走廊（§5.2）
+  feedback:
+    topology: "expert"
+
+eval:
+  num_candidates_ablation: [1]
+  samples_per_od: 4
+
+# 新框架没有候选骨架，这些段仅保留键位以免旧脚本报错
+topology:
+  candidate_points: 128
+  num_candidates: 1
+
+corridor:
+  enabled: true
+  min_overlap_ratio: 0.10
+  bridge:
+    enabled: true
+    max_bridge_per_gap: 1
+  topology_trials: 1
+  densify:
+    enabled: false
+    min_overlap: 0.10
+    max_insert_per_gap: 2
+    max_total: 256
+  local:
+    enabled: true
+    pad_queries: 4                     # 碰撞区间前后各扩 4 个椭圆查询
+    min_queries: 8
+  region:
+    safety_margin: 0.02
+    obstacle_window_half: 0.35
+    obstacle_dilation: 0
+    corridor_chunk_size: 512
+    ellipse_axis_min: 0.002
+    ellipse_axis_max: 2.0
+
+alm:
+  enabled: true
+  mode: "guided_bspline"
+  warmup_reverse_steps: 0
+  max_activation_delay_steps: 0
+  activation_inner_steps: 8
+  inner_steps: 6
+  step_size: 0.05
+  rho: 5.0
+  proximity_weight: 1.0
+  correction_smooth_weight: 0.1
+  constraint_tol: 1.0e-3
+  max_curve_step_scene: 0.20
+  inherit_dual_across_reverse_steps: true
+  dense_verify_points: 512
+
+grid_search:
+  enabled: true
+  robot_radius_m: 0.8
+  safety_margin_m: 0.3
+  # 数据侧已腐蚀 4 格；按方案 §4.3 这不算安全膨胀，故这里不做抵消
+  already_inflated_cells: 0.0
+  focal_w: 1.2
+  J: 3
+  alpha_p: 1.0
+  scene_to_meter: 80.0
