@@ -2,44 +2,111 @@
 \providecommand\hyper@newdestlabel[2]{}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{ddpm}
+\citation{diffuser}
+\citation{scene}
+\citation{diffuser}
+\citation{mpd}
+\citation{raptor}
+\citation{multimodal}
+\citation{safe}
+\citation{cbf}
+\citation{projected}
 \@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\citation{nurbs}
+\citation{fast}
+\citation{ego}
+\citation{fourier}
+\citation{attention}
 \@writefile{toc}{\contentsline {section}{\numberline {II}Problem Definition}{2}{section.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {III}Method}{2}{section.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Feature Encoding and Fusion}{2}{subsection.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}1}Map and Control Point Feature Encoding}{2}{subsubsection.3.1.1}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overall framework of TrajSafe-Diffuser. Feature encoding and fusion condition safety geometry generation and trajectory denoising. ALM correction updates the sampling state and supplies historical safety feedback.}}{3}{figure.1}\protected@file@percent }
-\newlabel{fig:framework}{{1}{3}{Overall framework of TrajSafe-Diffuser. Feature encoding and fusion condition safety geometry generation and trajectory denoising. ALM correction updates the sampling state and supplies historical safety feedback}{figure.1}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}2}Historical Safety Feedback Fusion}{3}{subsubsection.3.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}1}Map and State Feature Encoding}{2}{subsubsection.3.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}2}Historical Safety Feedback Fusion}{2}{subsubsection.3.1.2}\protected@file@percent }
+\citation{guo}
+\citation{raptor}
+\citation{homotopy}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Overall framework of TrajSafe-Diffuser.}}{3}{figure.1}\protected@file@percent }
+\newlabel{fig:framework}{{1}{3}{Overall framework of TrajSafe-Diffuser}{figure.1}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Generative Safety Constraint Construction}{3}{subsection.3.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Candidate Skeleton Route Matching and Selection}{3}{subsubsection.3.2.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Local Safety Feature Extraction and Convex Safe Corridor Generation}{3}{subsubsection.3.2.2}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Local safety feature extraction and ellipse prediction. Selected-route features query local map features through time-conditioned cross-attention with a spatial distance bias. The predicted ellipses initialize the subsequent convex-region construction.}}{4}{figure.2}\protected@file@percent }
-\newlabel{fig:safety}{{2}{4}{Local safety feature extraction and ellipse prediction. Selected-route features query local map features through time-conditioned cross-attention with a spatial distance bias. The predicted ellipses initialize the subsequent convex-region construction}{figure.2}{}}
+\citation{iris}
+\citation{firi}
+\citation{sfc}
+\citation{bound}
+\citation{nguyen}
+\citation{minvo}
+\citation{nguyen}
+\citation{boehm}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Local safety feature extraction and ellipse prediction. Selected-route features $\mathbf  Z_\ast ^{\mathrm  {route}}$ are mapped to queries $\mathbf  Z_t^{\mathrm  {query}}$, which attend to map features $\mathbf  Z^{\mathrm  {map}}$ through time-conditioned cross-attention with a spatial distance bias. Residual fusion yields safety geometry features $\mathbf  Z_t^{\mathrm  {geometry}}$ and predicts local ellipse parameters $\bm  {\eta }_i$.}}{4}{figure.2}\protected@file@percent }
+\newlabel{fig:safety}{{2}{4}{Local safety feature extraction and ellipse prediction. Selected-route features $\mathbf Z_\ast ^{\mathrm {route}}$ are mapped to queries $\mathbf Z_t^{\mathrm {query}}$, which attend to map features $\mathbf Z^{\mathrm {map}}$ through time-conditioned cross-attention with a spatial distance bias. Residual fusion yields safety geometry features $\mathbf Z_t^{\mathrm {geometry}}$ and predicts local ellipse parameters $\boldsymbol \eta _i$}{figure.2}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Trajectory Denoising and Closed-Loop Safety Correction}{4}{subsection.3.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}1}Safety-Conditioned Denoising}{4}{subsubsection.3.3.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}2}Continuous-Trajectory Safety Constraint and ALM Correction}{4}{figure.3}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Continuous-trajectory safety constraints and ALM correction. Region responsibility boundaries and B-spline knots define cubic B\'ezier subsegments. Constraining their four control points to the assigned convex region gives continuous segment containment; ALM adjusts the spline control points while fixing the endpoints.}}{5}{figure.3}\protected@file@percent }
-\newlabel{fig:alm}{{3}{5}{Continuous-trajectory safety constraints and ALM correction. Region responsibility boundaries and B-spline knots define cubic B\'ezier subsegments. Constraining their four control points to the assigned convex region gives continuous segment containment; ALM adjusts the spline control points while fixing the endpoints}{figure.3}{}}
+\citation{nurbs}
+\citation{nguyen}
+\citation{hestenes}
+\citation{nocedal}
+\citation{ddim}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Continuous-trajectory safety constraints and ALM correction. Top: trajectories and control points for the reference state $\mathbf  Q^{\mathrm  {ref}}$ and its safety-corrected state. Bottom: joint subdivision by region responsibility intervals and B-spline knots. The inset constrains the four control points $\bm  {\beta }_{k,j}$ to $\mathcal  R_{\rho (k)}$, ensuring continuous containment by the convex-hull property. Point and region counts are illustrative, not experimental settings.}}{5}{figure.3}\protected@file@percent }
+\newlabel{fig:alm}{{3}{5}{Continuous-trajectory safety constraints and ALM correction. Top: trajectories and control points for the reference state $\mathbf Q^{\mathrm {ref}}$ and its safety-corrected state. Bottom: joint subdivision by region responsibility intervals and B-spline knots. The inset constrains the four control points $\boldsymbol \beta _{k,j}$ to $\mathcal R_{\rho (k)}$, ensuring continuous containment by the convex-hull property. Point and region counts are illustrative, not experimental settings}{figure.3}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}3}Reverse-Diffusion Update and Historical Safety Feedback}{5}{subsubsection.3.3.3}\protected@file@percent }
+\citation{carla}
+\citation{fast}
+\citation{nocedal}
+\citation{hestenes}
+\citation{nocedal}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Training Strategy and Loss Function}{6}{subsection.3.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {IV}Experiments and Results}{6}{section.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Experimental Setup}{6}{subsection.4.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Performance Comparison of Safety Planning Methods}{6}{subsection.4.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Ablation Study and Analysis of Historical Safety Feedback}{6}{subsection.4.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}1}Key Module Ablation}{6}{subsubsection.4.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Effect of Historical Safety Feedback on the Denoising Process}{6}{subsubsection.4.3.2}\protected@file@percent }
+\citation{wilcoxon}
 \@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Performance Comparison of Different Safety Planning Methods}}{7}{table.1}\protected@file@percent }
 \newlabel{tab:methods}{{I}{7}{Performance Comparison of Different Safety Planning Methods}{table.1}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Ablation Results of the Key Modules}}{7}{table.2}\protected@file@percent }
 \newlabel{tab:ablation}{{II}{7}{Ablation Results of the Key Modules}{table.2}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Effect of Historical Safety Feedback on the Denoising Process}{7}{subsubsection.4.3.2}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Effect of historical safety feedback on the denoising process: (a) mean safety violation before ALM correction; (b) mean ALM correction magnitude.}}{7}{figure.4}\protected@file@percent }
 \newlabel{fig:feedback}{{4}{7}{Effect of historical safety feedback on the denoising process: (a) mean safety violation before ALM correction; (b) mean ALM correction magnitude}{figure.4}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Safety and Trajectory Quality under Different ALM Iteration Budgets}}{7}{table.3}\protected@file@percent }
-\newlabel{tab:budget}{{III}{7}{Safety and Trajectory Quality under Different ALM Iteration Budgets}{table.3}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}ALM Iteration Budget Analysis}{7}{subsection.4.4}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces ALM iteration budget analysis: (a) continuous-constraint satisfaction and collision rate; (b) end-to-end inference cost. The default configuration is marked by a star.}}{7}{figure.5}\protected@file@percent }
-\newlabel{fig:alm-budget}{{5}{7}{ALM iteration budget analysis: (a) continuous-constraint satisfaction and collision rate; (b) end-to-end inference cost. The default configuration is marked by a star}{figure.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Constraint Correction under Different ALM Iteration Budgets}}{7}{table.3}\protected@file@percent }
+\newlabel{tab:budget}{{III}{7}{Constraint Correction under Different ALM Iteration Budgets}{table.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Effect of the ALM iteration budget on safety constraint correction: (a) constraint feasibility rate under different iteration budgets; (b) residual maximum constraint violation after correction. Both horizontal axes show the maximum number of iterations per ALM call.}}{7}{figure.5}\protected@file@percent }
+\newlabel{fig:alm-budget}{{5}{7}{Effect of the ALM iteration budget on safety constraint correction: (a) constraint feasibility rate under different iteration budgets; (b) residual maximum constraint violation after correction. Both horizontal axes show the maximum number of iterations per ALM call}{figure.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}Trajectory Generation in Real CARLA Road Scenes}{7}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Conclusion}{7}{section.5}\protected@file@percent }
+\bibcite{ddpm}{1}
+\bibcite{diffuser}{2}
+\bibcite{scene}{3}
+\bibcite{mpd}{4}
+\bibcite{raptor}{5}
+\bibcite{multimodal}{6}
+\bibcite{safe}{7}
+\bibcite{cbf}{8}
+\bibcite{projected}{9}
+\bibcite{nurbs}{10}
+\bibcite{fast}{11}
+\bibcite{ego}{12}
+\bibcite{fourier}{13}
+\bibcite{attention}{14}
+\bibcite{guo}{15}
+\bibcite{homotopy}{16}
+\bibcite{iris}{17}
+\bibcite{firi}{18}
+\bibcite{sfc}{19}
 \@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Trajectory generation in CARLA road scenes. Columns show straight roads, intersections, curved roads and long-distance routes; the two rows show separate examples. Green bands indicate the drivable range and highlighted centerlines show the generated trajectories.}}{8}{figure.6}\protected@file@percent }
 \newlabel{fig:carla}{{6}{8}{Trajectory generation in CARLA road scenes. Columns show straight roads, intersections, curved roads and long-distance routes; the two rows show separate examples. Green bands indicate the drivable range and highlighted centerlines show the generated trajectories}{figure.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}Trajectory Generation in Real CARLA Road Scenes}{8}{subsection.4.5}\protected@file@percent }
-\gdef \@abspage@last{8}
+\@writefile{toc}{\contentsline {section}{References}{8}{section*.1}\protected@file@percent }
+\bibcite{bound}{20}
+\bibcite{nguyen}{21}
+\bibcite{minvo}{22}
+\bibcite{boehm}{23}
+\bibcite{hestenes}{24}
+\bibcite{nocedal}{25}
+\bibcite{ddim}{26}
+\bibcite{carla}{27}
+\bibcite{wilcoxon}{28}
+\gdef \@abspage@last{9}

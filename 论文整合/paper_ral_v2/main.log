@@ -1,7 +1,6 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.8.5)  26 OCT 2026 14:26
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.8.5)  27 OCT 2026 01:14
 entering extended mode
  restricted \write18 enabled.
- file:line:error style messages enabled.
  %&-line parsing enabled.
 **main.tex
 (./main.tex
@@ -345,27 +344,27 @@ File: l3backend-pdftex.def 2026-02-18 L3 backend support: PDF output (pdfTeX)
 ) (./main.aux)
 \openout1 = `main.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 55.
-LaTeX Font Info:    ... okay on input line 55.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 48.
+LaTeX Font Info:    ... okay on input line 48.
 
 -- Lines per column: 58 (exact).
-Package hyperref Info: Link coloring OFF on input line 55.
+Package hyperref Info: Link coloring OFF on input line 48.
 (./main.out) (./main.out)
 \@outlinefile=\write3
 \openout3 = `main.out'.
@@ -385,86 +384,108 @@ File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Live
 
 
 ]
-LaTeX Font Info:    Trying to load font information for U+msa on input line 206.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 198.
  (c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 206.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 198.
  (c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
-<figures/prepared/fig01_framework.png, id=102, 6124.8825pt x 3695.8075pt>
+<figures/prepared/fig01_framework.png, id=132, 6125.88625pt x 3696.81125pt>
 File: figures/prepared/fig01_framework.png Graphic file (type png)
 <use figures/prepared/fig01_framework.png>
-Package pdftex.def Info: figures/prepared/fig01_framework.png  used on input line 254.
-(pdftex.def)             Requested size: 516.0pt x 311.348pt.
+Package pdftex.def Info: figures/prepared/fig01_framework.png  used on input line 246.
+(pdftex.def)             Requested size: 464.39685pt x 280.23854pt.
  [2]
-<figures/prepared/fig02_safety_generation.png, id=123, 6453.10875pt x 2257.43375pt>
+<figures/prepared/fig02_safety_generation.png, id=162, 6452.105pt x 2272.49pt>
 File: figures/prepared/fig02_safety_generation.png Graphic file (type png)
 <use figures/prepared/fig02_safety_generation.png>
-Package pdftex.def Info: figures/prepared/fig02_safety_generation.png  used on input line 325.
-(pdftex.def)             Requested size: 516.0pt x 180.49506pt.
+Package pdftex.def Info: figures/prepared/fig02_safety_generation.png  used on input line 303.
+(pdftex.def)             Requested size: 402.47937pt x 141.75287pt.
  [3 <./figures/prepared/fig01_framework.png (PNG copy)>]
-<figures/prepared/fig03_alm.png, id=132, 4301.06876pt x 2491.3075pt>
+Underfull \hbox (badness 1400) in paragraph at lines 399--407
+\OT1/ptm/m/n/10 fea-tures $\OT1/cmr/bx/n/10 Z[]$ \OT1/ptm/m/n/10 as queries and safety ge-om-e-try fea-tures
+ []
+
+<figures/prepared/fig03_alm.png, id=181, 4258.91125pt x 2505.36pt>
 File: figures/prepared/fig03_alm.png Graphic file (type png)
 <use figures/prepared/fig03_alm.png>
-Package pdftex.def Info: figures/prepared/fig03_alm.png  used on input line 438.
-(pdftex.def)             Requested size: 412.80157pt x 239.07156pt.
- [4 <./figures/prepared/fig02_safety_generation.png (PNG copy)>] [5 <./figures/prepared/fig03_alm.png (PNG copy)>] [6]
-<figures/prepared/fig04_feedback.png, id=160, 2096.83376pt x 798.985pt>
+Package pdftex.def Info: figures/prepared/fig03_alm.png  used on input line 423.
+(pdftex.def)             Requested size: 335.39685pt x 197.29814pt.
+[4 <./figures/prepared/fig02_safety_generation.png (PNG copy)>] [5 <./figures/prepared/fig03_alm.png (PNG copy)>] [6]
+<figures/prepared/fig04_feedback.png, id=241, 2096.83376pt x 798.985pt>
 File: figures/prepared/fig04_feedback.png Graphic file (type png)
 <use figures/prepared/fig04_feedback.png>
-Package pdftex.def Info: figures/prepared/fig04_feedback.png  used on input line 748.
+Package pdftex.def Info: figures/prepared/fig04_feedback.png  used on input line 711.
 (pdftex.def)             Requested size: 252.0pt x 96.02036pt.
-<figures/prepared/fig05_alm_budget.png, id=161, 2096.83376pt x 821.0675pt>
+<figures/prepared/fig05_alm_budget.png, id=243, 2096.83376pt x 821.0675pt>
 File: figures/prepared/fig05_alm_budget.png Graphic file (type png)
 <use figures/prepared/fig05_alm_budget.png>
-Package pdftex.def Info: figures/prepared/fig05_alm_budget.png  used on input line 768.
+Package pdftex.def Info: figures/prepared/fig05_alm_budget.png  used on input line 766.
 (pdftex.def)             Requested size: 252.0pt x 98.67418pt.
-<figures/prepared/fig06_carla.pdf, id=162, 517.935pt x 302.12875pt>
+<figures/prepared/fig06_carla.pdf, id=244, 517.935pt x 302.12875pt>
 File: figures/prepared/fig06_carla.pdf Graphic file (type pdf)
 <use figures/prepared/fig06_carla.pdf>
 Package pdftex.def Info: figures/prepared/fig06_carla.pdf  used on input line 776.
 (pdftex.def)             Requested size: 423.12378pt x 246.83437pt.
 
-Underfull \hbox (badness 2096) in paragraph at lines 817--826
-[]\OT1/ptm/m/n/10 Raising the bud-get from 2 to 4 it-er-a-tions in-creases
+Underfull \hbox (badness 1509) in paragraph at lines 796--808
+\OT1/ptm/m/n/10 and closed-loop cor-rec-tion. By com-bin-ing en-vi-ron-men-tal
  []
 
 [7 <./figures/prepared/fig04_feedback.png (PNG copy)> <./figures/prepared/fig05_alm_budget.png (PNG copy)>]
+Underfull \hbox (badness 2529) in paragraph at lines 820--822
+\OT1/ptm/m/n/8 Op-ti-miza-tion, and Plan-ning in 3D Scenes,'' \OT1/ptm/m/it/8 Pro-ceed-ings of the
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 820--822
+\OT1/ptm/m/it/8 pp. 16750--16761\OT1/ptm/m/n/8 , 2023. []$https : / / openaccess . thecvf . com / content /
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 820--822
+\OT1/ptm/m/n/8 CVPR2023 / papers / Huang[]Diusion-[]Based[]Generation[]Optimization[]
+ []
+
+
+Underfull \vbox (badness 1320) has occurred while \output is active []
+
+ [8 <./figures/prepared/fig06_carla.pdf>]
 - LAST -
-Extra skip:35.01495pt
-Left:180.0pt/2.16492pt
-Right:147.14996pt/0.0pt
-Split: 180.44995pt
-Output:180.44995pt
+Extra skip:0.0pt
+Left:165.0pt/0.11192pt
+Right:165.0pt/0.0pt
+Split: 165.5pt
+Output:165.5pt
 Pageshrink: 0.0pt
 Pagestretch: 0.0pt
-@colht:410.83366pt
-FLUSHEND [output]: 180.44995pt
-FLUSHEND [leftcolumn badness]: 12
+@colht:696.0pt
+FLUSHEND [output]: 165.5pt
+FLUSHEND [leftcolumn badness]: 4
 FUSHEND [rightcolumn badness]: 0
- [8 <./figures/prepared/fig06_carla.pdf>] (./main.aux)
+ [9] (./main.aux)
  ***********
 LaTeX2e <2026-06-01>
 L3 programming layer <2026-07-20>
  ***********
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 5007BD4CEA3E39C726E9B4CF51F8DE07;5646.
+(rerunfilecheck)             Checksum: FABF9BC8C08A13BAA7620CBA2915D845;5792.
  ) 
 Here is how much of TeX's memory you used:
- 10671 strings out of 469149
- 171019 string characters out of 5457857
- 601589 words of memory out of 5000000
- 39485 multiletter control sequences out of 15000+600000
- 676295 words of font info for 137 fonts, out of 8000000 for 9000
+ 10734 strings out of 469149
+ 171730 string characters out of 5457857
+ 601425 words of memory out of 5000000
+ 39515 multiletter control sequences out of 15000+600000
+ 677938 words of font info for 139 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 74i,9n,79p,475b,472s stack positions out of 10000i,1000n,20000p,200000b,200000s
-<c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmib10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmss8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmb8a.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on main.pdf (8 pages, 13059219 bytes).
+ 74i,11n,79p,633b,584s stack positions out of 10000i,1000n,20000p,200000b,200000s
+<c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmib10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmmib8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmss8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy5.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmb8a.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmr8a.pfb><c:/Users/zz/AppData/Roaming/TinyTeX/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on main.pdf (9 pages, 13313356 bytes).
 PDF statistics:
- 308 PDF objects out of 1000 (max. 8388607)
- 230 compressed objects within 3 object streams
- 56 named destinations out of 1000 (max. 500000)
- 207 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 461 PDF objects out of 1000 (max. 8388607)
+ 369 compressed objects within 4 object streams
+ 88 named destinations out of 1000 (max. 500000)
+ 223 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -39,52 +39,20 @@
 | Pre-correction violation (m) | 0.2749 | 0.1167 | -0.1582 | 0.6459 | 0.000 | 1260 |
 | ALM correction (m) | 0.4609 | 0.2488 | -0.2121 | 0.4146 | 0.000 | 1260 |
 
-## 实验 3：ALM 迭代预算与安全性-计算效率权衡
+## 实验 3：ALM 迭代预算对安全约束修正效果的影响
 
-**Table 3 — ALM iteration budget: safety and trajectory quality**
+**Table 4 — ALM iteration budget vs constraint-correction quality** (main set: calls whose cached input already violated the corridor)
 
-| Config | Continuous feasible (%) | Collision (%) | Collisions/N | Min clearance (m) | Detour | NRMSE (%) | Max curvature (1/m) | Sq. curvature (1/m2) |
-|---|---|---|---|---|---|---|---|---|
-| I2 | 79.60 | 0.24 | 3/1260 | 3.221 | 1.3139 | 8.576 | 1.0349 | 0.02087 |
-| I4 | 95.32 | 0.00 | 0/1260 | 3.315 | 1.3209 | 8.642 | 1.0499 | 0.02068 |
-| I6 | 98.10 | 0.16 | 2/1260 | 3.329 | 1.3216 | 8.659 | 1.0471 | 0.02065 |
-| I8 | 98.57 | 0.00 | 0/1260 | 3.321 | 1.3211 | 8.668 | 1.0406 | 0.02057 |
-| I10 | 99.13 | 0.00 | 0/1260 | 3.318 | 1.3212 | 8.668 | 1.0436 | 0.02058 |
-| Default | 98.81 | 0.00 | 0/1260 | 3.319 | 1.3209 | 8.668 | 1.0397 | 0.02055 |
+| Max iters | Feasible calls (%) | 95% CI | Residual violation (scene) | P95 | Correction (m) | Actual iters | Calls |
+|---|---|---|---|---|---|---|---|
+| I1 | 32.20 | [26.71, 37.92] | 0.00697 | 0.00999 | 0.35936 | 1.00 | 5694 |
+| I2 | 50.32 | [44.69, 56.02] | 0.00266 | 0.00460 | 0.40980 | 1.68 | 5694 |
+| I4 | 87.82 | [84.18, 90.91] | 0.00056 | 0.00130 | 0.42160 | 2.45 | 5694 |
+| I6 | 95.01 | [93.14, 96.65] | 0.00048 | 0.00110 | 0.41893 | 2.65 | 5694 |
+| I8 | 96.92 | [95.49, 98.11] | 0.00044 | 0.00098 | 0.41787 | 2.73 | 5694 |
+| I10 | 97.38 | [96.01, 98.51] | 0.00042 | 0.00090 | 0.41725 | 2.79 | 5694 |
 
-**Table 3b — cost and solver diagnostics**
+Coverage: cached calls 16380 (all valid), baseline-satisfied 65.24%, main set 5694 calls / 183 scenes / 515 trajectories; parity check max |diff| = 0.0.
 
-| Config | Mean iters | P95 iters | At budget (%) | ALM ms/call | E2E ms (b=32, med) | E2E ms (b=1, mean) | E2E ms (b=1, med) | E2E P95 (b=1) |
-|---|---|---|---|---|---|---|---|---|
-| I2 | 2.000 | 2.00 | 27.8 | 25.10 | 65.69 | 242.24 | 241.01 | 252.82 |
-| I4 | 3.730 | 4.00 | 16.5 | 26.29 | 70.44 | 306.05 | 302.75 | 325.01 |
-| I6 | 5.257 | 6.00 | 9.9 | 31.56 | 73.21 | 303.04 | 299.76 | 326.98 |
-| I8 | 6.583 | 8.00 | 7.2 | 39.67 | 75.89 | 302.97 | 298.44 | 332.03 |
-| I10 | 7.762 | 10.00 | 8.0 | 45.51 | 78.59 | 301.91 | 298.95 | 329.65 |
-| Default | 6.811 | 10.00 | 7.1 | 37.95 | 77.11 | 300.24 | 296.72 | 320.45 |
-
-**Table 3c — paired bootstrap vs Default (95% CI, resampled by task)**
-
-| Config | Quantity | Mean diff | CI low | CI high | Tasks |
-|---|---|---|---|---|---|
-| I2 | constraint_feasible | -0.1921 | -0.2278 | -0.1579 | 420 |
-| I2 | collision | 0.0024 | 0.0000 | 0.0071 | 420 |
-| I2 | detour_ratio | -0.0070 | -0.0086 | -0.0054 | 420 |
-| I2 | nrmse_pct | -0.0911 | -0.1339 | -0.0509 | 420 |
-| I4 | constraint_feasible | -0.0349 | -0.0548 | -0.0198 | 420 |
-| I4 | collision | 0.0000 | 0.0000 | 0.0000 | 420 |
-| I4 | detour_ratio | -0.0000 | -0.0007 | 0.0008 | 420 |
-| I4 | nrmse_pct | -0.0256 | -0.0506 | -0.0042 | 420 |
-| I6 | constraint_feasible | -0.0071 | -0.0167 | 0.0024 | 420 |
-| I6 | collision | 0.0016 | 0.0000 | 0.0048 | 420 |
-| I6 | detour_ratio | 0.0007 | 0.0003 | 0.0014 | 420 |
-| I6 | nrmse_pct | -0.0090 | -0.0246 | 0.0019 | 420 |
-| I8 | constraint_feasible | -0.0024 | -0.0111 | 0.0040 | 420 |
-| I8 | collision | 0.0000 | 0.0000 | 0.0000 | 420 |
-| I8 | detour_ratio | 0.0002 | 0.0001 | 0.0004 | 420 |
-| I8 | nrmse_pct | 0.0003 | -0.0001 | 0.0010 | 420 |
-| I10 | constraint_feasible | 0.0032 | 0.0000 | 0.0079 | 420 |
-| I10 | collision | 0.0000 | 0.0000 | 0.0000 | 420 |
-| I10 | detour_ratio | 0.0003 | -0.0001 | 0.0010 | 420 |
-| I10 | nrmse_pct | 0.0007 | -0.0011 | 0.0026 | 420 |
+Model: `D:\ProjectDirectory\Neural-IRISDiffuser\outputs\models\v4_map16_c48\ckpt\best_task.pt` (sha256 `614c9208559c6af7`), branch `v4-map16-fbdelta-safeloss`.
 

@@ -10,7 +10,7 @@
 %  Layout: IEEE Robotics and Automation Letters (IEEEtran, journal)
 %  Supplied method and experiment figures inserted; CARLA examples combined into one figure.
 %
-%  Compile:  pdflatex main.tex  (twice; no BibTeX, the source has no refs)
+%  Compile: pdflatex main.tex (twice; bibliography embedded below).
 % =====================================================================
 \documentclass[journal]{IEEEtran}
 
@@ -44,13 +44,6 @@
 \setcounter{dbltopnumber}{3}
 
 \newcommand{\R}{\mathbb{R}}
-\newcommand{\ctrl}{H_{\mathrm{ctrl}}}
-\newcommand{\ctrlf}{\widetilde{H}_{\mathrm{ctrl}}}
-\newcommand{\hell}{H_{\mathrm{ell}}}
-\newcommand{\Qraw}{\widehat{Q}_{0,\mathrm{raw}}^{(t)}}
-\newcommand{\Qbdry}{\widehat{Q}_{0,\mathrm{bdry}}^{(t)}}
-\newcommand{\Qalm}{Q_{0,\mathrm{ALM}}^{(t)}}
-\newcommand{\abar}{\bar{\alpha}}
 
 \begin{document}
 
@@ -103,13 +96,13 @@ safe corridor, closed-loop safety correction, augmented Lagrangian method.
 % ---------- 源稿段 3 ----------
 \IEEEPARstart{B}{y} learning the probability distribution of trajectory data,
 diffusion models provide a data-driven and multimodal means of trajectory
-planning. They have already been applied to task-conditioned trajectory
+planning~\cite{ddpm,diffuser,scene}. They have already been applied to task-conditioned trajectory
 generation and optimization: Diffuser generates goal-directed trajectories
-under cost guidance, whereas MPD combines a learned trajectory prior with cost
-gradients. Learning a trajectory distribution, however, does not by itself
+under cost guidance~\cite{diffuser}, whereas MPD combines a learned trajectory prior with cost
+gradients~\cite{mpd}. Learning a trajectory distribution, however, does not by itself
 ensure that the generated result satisfies the safety constraints of the
 environment. In non-convex environments with complex obstacle layouts and
-several feasible routes, a generated trajectory may depart from obstacle-free
+several feasible routes~\cite{raptor,multimodal}, a generated trajectory may depart from obstacle-free
 space and thus incur a collision risk. Preserving the multimodal generative
 capability of diffusion models while improving trajectory safety is therefore
 a central problem for diffusion-based trajectory planning.
@@ -117,9 +110,9 @@ a central problem for diffusion-based trajectory planning.
 % ---------- 源稿段 4 ----------
 To improve safety, previous work has introduced explicit safety constraints
 into the reverse diffusion process. SafeDiffuser, for instance, constrains
-trajectory generation with control barrier functions (CBFs), and Projected
+trajectory generation with control barrier functions (CBFs)~\cite{safe,cbf}, and Projected
 Diffusion Models correct infeasible predictions through projection-based
-optimization. Such methods concentrate on how a given safety constraint is
+optimization~\cite{projected}. Such methods concentrate on how a given safety constraint is
 used to guide or correct the generated trajectory; the constraint is usually a
 predefined function or feasible set rather than one obtained by learning the
 spatial structure of the environment. Moreover, the safety constraint acts on
@@ -201,412 +194,382 @@ participate in later trajectory prediction.
 \end{enumerate}
 
 \section{Problem Definition}
-% ---------- 源稿段 12 ----------
 Consider trajectory planning in a two-dimensional static environment. Given an
-occupancy grid map $O\in\{0,1\}^{H\times W}$, a start $\bm S\in\R^2$ and a
-goal $\bm G\in\R^2$, the objective is to generate a continuous trajectory that
-connects the start and the goal while satisfying the obstacle-avoidance
-requirement of the environment.
+occupancy grid map $\mathbf O\in\{0,1\}^{H\times W}$, a start
+$\mathbf p_{\mathrm s}\in\mathbb R^2$, and a goal $\mathbf p_{\mathrm g}\in\mathbb R^2$,
+the objective is to generate a continuous trajectory connecting the endpoints
+while satisfying the environmental obstacle-avoidance requirement.
 
-% ---------- 源稿段 13 ----------
-The trajectory is represented by a clamped cubic B-spline defined by
-$C=48$ control points. Denoting the control point set by
-$Q=[q_0,\ldots,q_{C-1}]\in\R^{C\times2}$, the continuous trajectory is
+The trajectory is represented by a clamped cubic B-spline defined by $C=48$
+control points~\cite{nurbs,fast,ego}. Let
+$\mathbf Q=[\mathbf q_0,\ldots,\mathbf q_{C-1}]^{\mathsf T}\in\mathbb R^{C\times2}$
+be the control point matrix. The continuous trajectory is
 \begin{equation}
-\tau_Q(u)=\sum_{j=0}^{C-1}B_{j,3}(u)\,q_j,\qquad u\in[0,1],
+\tau_{\mathbf Q}(u)=\sum_{j=0}^{C-1}B_{j,3}(u)\mathbf q_j,\quad u\in[0,1],
 \end{equation}
-where $B_{j,3}$ is the cubic B-spline basis function and $u$ the curve
-parameter. Owing to the endpoint interpolation property of clamped B-splines,
-$q_0=\bm S$ and $q_{C-1}=\bm G$ are fixed and diffusion sampling is performed
-only on the interior control points.
+where $B_{j,3}$ is the cubic B-spline basis function and $u$ is the curve
+parameter. Using the endpoint interpolation property of clamped B-splines,
+$\mathbf q_0=\mathbf p_{\mathrm s}$ and $\mathbf q_{C-1}=\mathbf p_{\mathrm g}$ are
+fixed, and diffusion sampling is performed only on the interior control points.
 
-% ---------- 源稿段 14 ----------
-Let $\mathcal F(O)$ denote the obstacle-free space of the map. The trajectory
-is then required to satisfy
+Let $\mathcal F(\mathbf O)$ denote the obstacle-free space of the map. The
+trajectory must satisfy
 \begin{equation}
-q_0=\bm S,\quad q_{C-1}=\bm G,\quad
-\tau_Q(u)\in\mathcal F(O),\quad \forall u\in[0,1].
+\begin{gathered}
+\mathbf q_0=\mathbf p_{\mathrm s},\quad \mathbf q_{C-1}=\mathbf p_{\mathrm g},\\
+\tau_{\mathbf Q}(u)\in\mathcal F(\mathbf O),\quad \forall u\in[0,1].
+\end{gathered}
 \end{equation}
-A conditional diffusion model is used to learn the control point distribution
-$p_\theta(Q\mid O,\bm S,\bm G)$ and thereby generate different candidate
-trajectories. Since probabilistic modeling cannot directly guarantee the
-continuous obstacle-avoidance condition above, this paper further studies how
-to generate safety constraints from the environment structure and the planning
-task, and how to improve the safety feasibility of the generated trajectory
-through constraint correction and historical feedback during reverse diffusion.
+A conditional diffusion model learns the control point distribution
+$p_\theta(\mathbf Q\mid\mathbf O,\mathbf p_{\mathrm s},\mathbf p_{\mathrm g})$
+to generate different candidate trajectories. Since probabilistic distribution
+modeling cannot directly guarantee the continuous obstacle-avoidance condition
+above, this paper further studies how to generate safety constraints from the
+environment structure and planning task, and improve the safety feasibility
+of generated trajectories through constraint correction and historical feedback
+during reverse diffusion.
 
 \section{Method}
-% ---------- 源稿段 15（原稿方法引言只有这一段） ----------
-The overall structure of TrajSafe-Diffuser, shown in Fig.~\ref{fig:framework}, comprises three modules: feature
-encoding and fusion, generative safety constraint construction, and trajectory
-denoising with closed-loop correction. The model first encodes the environment,
-the current noisy control points and the historical feedback into conditioning
-features used for route matching and trajectory prediction. Candidate route
-matching, local ellipse prediction and convex region construction then generate
-the safety constraints, and local safety features are extracted to guide
-denoising. Finally, the reverse-diffusion prediction, after explicit constraint
-correction, takes part in subsequent generation through the sampling state
-update and the historical feedback.
-
+The overall structure of TrajSafe-Diffuser, shown in Fig.~\ref{fig:framework},
+comprises three modules: feature encoding and fusion, generative safety
+constraint construction, and trajectory denoising with closed-loop correction.
+The model first encodes the environment, current noisy control points, and
+historical feedback into conditioning features for route matching and trajectory
+prediction. Candidate route matching, local ellipse prediction, and convex
+region construction then generate safety constraints, while local safety
+features guide denoising. Following explicit constraint correction, the reverse
+diffusion prediction participates in subsequent generation through sampling
+state updates and historical feedback.
 
 \begin{figure*}[!tb]
 \centering
-\includegraphics[width=\textwidth]{fig01_framework.png}
-\caption{Overall framework of TrajSafe-Diffuser. Feature encoding and fusion condition safety geometry generation and trajectory denoising. ALM correction updates the sampling state and supplies historical safety feedback.}
+\includegraphics[width=0.90\textwidth]{fig01_framework.png}
+\caption{Overall framework of TrajSafe-Diffuser.}
 \label{fig:framework}
 \end{figure*}
 
 \subsection{Feature Encoding and Fusion}
+\subsubsection{Map and State Feature Encoding}
+The network first extracts map information through convolutional layers and
+then progressively reduces the spatial resolution through four downsampling
+stages, yielding a feature map of size $128\times16\times16$. This is flattened
+into 256 spatial tokens and augmented with two-dimensional sinusoidal positional
+encoding to obtain map features
+$\mathbf Z^{\mathrm{map}}\in\mathbb R^{256\times128}$.
 
-\subsubsection{Map and Control Point Feature Encoding}
-% ---------- 源稿段 16 ----------
-A multi-scale convolutional encoder--decoder network is used to extract
-occupancy map features. The encoder captures global environment information
-through successive downsampling, while the decoder preserves local spatial
-information through upsampling and fusion of intermediate-layer features. After
-channel mapping and positional encoding, a global map feature
-$C_G\in\R^{256\times128}$ and a local map feature
-$C_E\in\R^{1024\times128}$ are obtained, corresponding to spatial resolutions
-of $16\times16$ and $32\times32$. $C_G$ is used for control point feature
-encoding and conditional denoising, whereas $C_E$ is used for local safety
-feature extraction.
-
-% ---------- 源稿段 17 ----------
-For the current noisy control points $Q_t$, the coordinates are first
-positionally encoded and mapped by an MLP, and a control point index encoding
-is then added, giving the initial control features
+For the current noisy control points $\mathbf Q_t$, their coordinates are first
+positionally encoded and mapped by an MLP~\cite{fourier}, then augmented with
+control point index encoding to obtain state features
+$\mathbf Z_t^{\mathrm{state}}\in\mathbb R^{48\times128}$:
 \begin{equation}
-X_j^{(0)}=\operatorname{MLP}_{T}\!\left(\Phi_{xy}(q_{t,j})\right)
+\mathbf z_{t,j}^{\mathrm{state}}=
+\operatorname{MLP}_{\mathrm{state}}\bigl(\Phi_{xy}(\mathbf q_{t,j})\bigr)
 +\operatorname{PE}_{1D}(j).
 \end{equation}
-
-% ---------- 源稿段 18 ----------
-Eight conditional attention blocks are then applied to extract the relations
-among control points and the environment information. Each block contains
-control point self-attention, global-map cross-attention and a feed-forward
-network, and the diffusion time condition is introduced through adaptive layer
-normalization. Four attention heads and 128-dimensional features are used,
-finally yielding the control features $\ctrl\in\R^{48\times128}$.
+The state features $\mathbf Z_t^{\mathrm{state}}$ are then fed into the
+conditional attention module. Self-attention extracts relations among control
+points, and cross-attention incorporates environmental information from map
+features $\mathbf Z^{\mathrm{map}}$~\cite{attention}, yielding map-fused state
+features $\mathbf Z_t^{\mathrm{context}}\in\mathbb R^{48\times128}$.
 
 \subsubsection{Historical Safety Feedback Fusion}
-% ---------- 源稿段 19 ----------
-To make use of earlier safety corrections, the most recent corrected control
-points that passed the constraint check, $Q_{\mathrm{hist}}$, the corresponding
-correction $\Delta Q_{\mathrm{hist}}$ and a validity flag $v\in\{0,1\}$ are
-taken as historical feedback inputs. The five-dimensional feedback vector of
-each control point is encoded by an MLP into
-$H_{\mathrm{fb}}\in\R^{48\times128}$.
+To exploit earlier safety corrections, the most recent ALM correction
+$\Delta\mathbf Q_t^{\mathrm{hist}}$ and its validity flag $v_t\in\{0,1\}$ are used
+as historical feedback inputs. The three-dimensional feedback vector
+$(\Delta x,\Delta y,v_t)$ of each control point is encoded by an MLP into
+$\mathbf Z_t^{\mathrm{history}}\in\mathbb R^{48\times128}$.
 
-% ---------- 源稿段 20 ----------
-To regulate how strongly individual control points and feature channels exploit
-the historical correction, a channel-wise gating mechanism is used:
+A channel-wise gating mechanism regulates how different control points and
+feature channels exploit the historical correction:
 \begin{equation}
 \begin{aligned}
-g&=\sigma\!\left(W_g[\ctrl;H_{\mathrm{fb}}]+b_g\right),\\
-\ctrlf&=\ctrl+v\,g\odot H_{\mathrm{fb}},
+\boldsymbol\gamma_t&=\sigma\bigl(\mathbf W_\gamma[
+\mathbf Z_t^{\mathrm{context}};\mathbf Z_t^{\mathrm{history}}]+\mathbf b_\gamma\bigr),\\
+\mathbf Z_t^{\mathrm{fused}}&=\mathbf Z_t^{\mathrm{context}}
++v_t\,\boldsymbol\gamma_t\odot\mathbf Z_t^{\mathrm{history}}.
 \end{aligned}
 \end{equation}
-
-% ---------- 源稿段 21 ----------
-where $[\cdot;\cdot]$ denotes feature concatenation, $\sigma$ the sigmoid
-function and $\odot$ the element-wise product, with
-$g\in\R^{48\times128}$. When $v=0$ the historical feedback takes no part in the
-fusion; otherwise the gating weights adapt, according to the current control
-features and the historical feedback, the correction applied to each control
-point and feature channel. The fused features $\ctrlf$ are used both for
-candidate route matching and for conditional denoising, so that the historical
-correction participates in the subsequent route selection and trajectory
-prediction.
+Here, $[\cdot;\cdot]$ denotes feature concatenation, $\sigma$ is the sigmoid
+function, $\odot$ is the element-wise product, and
+$\boldsymbol\gamma_t\in\mathbb R^{48\times128}$. When $v_t=0$, the historical
+feedback does not participate in fusion; when $v_t=1$, the gating weights
+regulate fusion according to the map-fused state features and historical
+feedback. The fused features $\mathbf Z_t^{\mathrm{fused}}$ are used for
+subsequent candidate route matching and conditional denoising.
 
 \subsection{Generative Safety Constraint Construction}
-
 \begin{figure*}[!tb]
 \centering
-\includegraphics[width=\textwidth]{fig02_safety_generation.png}
-\caption{Local safety feature extraction and ellipse prediction. Selected-route features query local map features through time-conditioned cross-attention with a spatial distance bias. The predicted ellipses initialize the subsequent convex-region construction.}
+\includegraphics[width=0.78\textwidth]{fig02_safety_generation.png}
+\caption{Local safety feature extraction and ellipse prediction. Selected-route features $\mathbf Z_\ast^{\mathrm{route}}$ are mapped to queries $\mathbf Z_t^{\mathrm{query}}$, which attend to map features $\mathbf Z^{\mathrm{map}}$ through time-conditioned cross-attention with a spatial distance bias. Residual fusion yields safety geometry features $\mathbf Z_t^{\mathrm{geometry}}$ and predicts local ellipse parameters $\boldsymbol\eta_i$.}
 \label{fig:safety}
 \end{figure*}
 
-
-
 \subsubsection{Candidate Skeleton Route Matching and Selection}
-% ---------- 源稿段 22 ----------
-First, the Guo--Hall thinning algorithm is applied to the occupancy map to
-extract the free-space skeleton and to build a skeleton graph, on which up to
-$M$ candidate routes $\{\Gamma_m\}_{m=1}^{M}$ connecting the start $\bm S$ and
-the goal $\bm G$ are searched. Different skeleton routes represent different
-ways of circumventing the obstacles, so that the model retains several planning
-options at the topological level instead of presupposing a single route; the
-diffusion model then generates a continuous trajectory under the safety
-constraints associated with the selected route.
+First, the Guo--Hall thinning algorithm~\cite{guo} extracts the free-space
+skeleton from the occupancy map and constructs a skeleton graph, on which up
+to $M$ candidate routes $\{\Gamma_m\}_{m=1}^{M}$ connecting
+$\mathbf p_{\mathrm s}$ and $\mathbf p_{\mathrm g}$ are searched. Different
+skeleton routes represent different ways of circumventing
+obstacles~\cite{raptor,homotopy}, retaining multiple planning choices at the
+topological level instead of prescribing a single route. The diffusion model
+generates a continuous trajectory under the safety constraints associated with
+the selected route.
 
-% ---------- 源稿段 23 ----------
-Each candidate route is resampled at equal arc length into 128 points; the
-two-dimensional coordinates of the sample points are positionally encoded and
-mapped by an MLP, and sequence positional encoding together with self-attention
-is used to extract the route features $H_{S,m}\in\R^{128\times128}$. With the
-fused control features $\ctrlf$ of Section~III-A as queries and the candidate
-route features as keys and values, time-conditioned cross-attention computes
-the matching features. Average pooling along the control point dimension
-followed by a scoring network and a masked softmax gives the route selection
-probabilities $\pi_m$, and the route $\Gamma^*$ with the highest probability is
-selected.
+Each candidate route is resampled at equal arc length into 128 points. Their
+two-dimensional coordinates are positionally encoded and mapped by an MLP;
+sequence positional encoding and self-attention then extract route features
+$\mathbf Z_m^{\mathrm{route}}\in\mathbb R^{128\times128}$. Using the
+history-fused state features $\mathbf Z_t^{\mathrm{fused}}$ from
+Section~III-A as queries and candidate route features as keys and values,
+time-conditioned cross-attention computes matching features. Average pooling
+along the control point dimension, followed by a scoring network and masked
+softmax, yields route selection probabilities $\pi_m$. The candidate
+$\Gamma^\ast$ with the highest probability is selected. Denote its index by
+$m^\ast$ and its features by
+$\mathbf Z_\ast^{\mathrm{route}}=\mathbf Z_{m^\ast}^{\mathrm{route}}$.
 
 \subsubsection{Local Safety Feature Extraction and Convex Safe Corridor Generation}
-% ---------- 源稿段 24 ----------
-As illustrated in Fig.~\ref{fig:safety}, with the features $H_{S,*}$ of the selected route $\Gamma^*$ as queries and the
-local map features $C_E$ as keys and values, time-conditioned cross-attention
-extracts the local obstacle information. To strengthen attention to the spatial
-structure around the skeleton sample points, a distance bias is introduced into
-the attention scores:
+The selected-route features $\mathbf Z_\ast^{\mathrm{route}}$ are mapped into
+queries and combined with the positional encoding of skeleton sample points to
+form query features $\mathbf Z_t^{\mathrm{query}}$. With these as queries and
+map features $\mathbf Z^{\mathrm{map}}$ as keys and values, time-conditioned
+cross-attention extracts local obstacle information. The time embedding is
+denoted by $\mathbf e_t\in\mathbb R^{128}$. To focus on spatial structure near
+the skeleton sample points, a spatial distance bias is introduced into the
+attention scores:
 \begin{equation}
-\mathcal B_{ij}^{\mathrm{geo}}
-=\operatorname{clip}\!\left(
--\frac{\abar_t\,\lVert c_i-z_j\rVert_2^2}
-{2\sigma_{\mathrm{geo}}^2},
--b_{\mathrm{clip}},0\right),
+D_{t,i\ell}^{\mathrm{spatial}}=\operatorname{clip}\left(
+-\frac{\bar\alpha_t\lVert\mathbf c_i-\mathbf p_\ell\rVert_2^2}
+{2\sigma_{\mathrm{spatial}}^2},-\kappa,0\right),
 \end{equation}
 \begin{equation}
-\operatorname{Attn}(Q_a,K_a,V_a)
-=\operatorname{Softmax}\!\left(
-\frac{Q_aK_a^{\mathsf T}}{\sqrt{d_k}}+\mathcal B^{\mathrm{geo}}
-\right)V_a,
+\begin{aligned}
+&\operatorname{Attn}(\mathbf Q_{\mathrm{att}},\mathbf K_{\mathrm{att}},\mathbf V_{\mathrm{att}})\\
+&\quad=\operatorname{Softmax}\left(
+\frac{\mathbf Q_{\mathrm{att}}\mathbf K_{\mathrm{att}}^{\mathsf T}}{\sqrt{d_h}}
++\mathbf D_t^{\mathrm{spatial}}\right)\mathbf V_{\mathrm{att}}.
+\end{aligned}
 \end{equation}
+Here, $\mathbf c_i$ is the coordinate of the $i$-th selected skeleton sample
+point, and $\mathbf p_\ell$ is the spatial position of the $\ell$-th map token.
+Let $\mathbf D_t^{\mathrm{spatial}}=[D_{t,i\ell}^{\mathrm{spatial}}]$;
+$\sigma_{\mathrm{spatial}}$ is the distance scale, $\kappa>0$ is the clipping
+magnitude, and $d_h$ is the key dimension of one attention head. The expression
+above is for one head; the multi-head outputs are concatenated and projected
+back to 128 dimensions before residual fusion with the query features.
+The attention projection matrix $\mathbf Q_{\mathrm{att}}$ and the trajectory
+diffusion state $\mathbf Q_t$ are different objects. The distance bias reduces
+the attention weight of map tokens far from the skeleton sample points.
+Residual fusion yields safety geometry features
+$\mathbf Z_t^{\mathrm{geometry}}\in\mathbb R^{128\times128}$, followed by an
+ellipse prediction head that outputs local ellipse parameters. These features,
+formed jointly from route and environment information, are used both for
+ellipse prediction and subsequent safety-conditioned denoising.
 
-% ---------- 源稿段 25 ----------
-where $c_i$ is the coordinate of the $i$-th sample point of the selected
-skeleton route and $z_j$ the spatial position corresponding to local map
-feature $j$. The distance bias reduces the attention weight of map features
-that are far from the skeleton sample points. Residual fusion of the
-cross-attention output with the query features yields the local safety features
-$\hell\in\R^{128\times128}$, from which an ellipse prediction head then outputs
-the local ellipse parameters.
-
-% ---------- 源稿段 26 ----------
-To ensure that the convex safety region construction starts from a valid
-free-space position, the free-space-checked skeleton sample points $c_i$ are
-used as ellipse centers, which avoids the problem that predicting the centers
-directly may place them inside obstacles. The network predicts only the scale
-and orientation of the ellipse:
+To initialize convex safe-region construction at valid free-space positions,
+free-space-checked skeleton sample points $\mathbf c_i$ are used as ellipse
+centers. This avoids directly predicted centers falling inside obstacles. The
+network predicts only ellipse scale and orientation:
 \begin{equation}
-e_i=(\log a_i,\ \log b_i,\ \cos 2\theta_i,\ \sin 2\theta_i),
+\boldsymbol\eta_i=(\log r_{i,1},\log r_{i,2},\cos 2\theta_i,\sin 2\theta_i).
 \end{equation}
-
-% ---------- 源稿段 27 ----------
-where $a_i$, $b_i$ and $\theta_i$ denote the semi-axis lengths and the rotation
-angle of the ellipse. The predicted ellipse serves as a local geometric prior
-and does not by itself guarantee obstacle-free space. Taking the skeleton
-centers in free space and the predicted ellipses as a basis, a deterministic
-convex region construction is further performed according to the obstacle grid,
-the map boundary and a safety margin, giving
+Here, $r_{i,1}$, $r_{i,2}$, and $\theta_i$ denote the two semi-axis lengths
+and rotation angle, without presupposing an ordering of the two semi-axes.
+The predicted ellipse serves as a local geometric prior and does not directly
+guarantee obstacle avoidance. Using the free-space skeleton centers and
+predicted ellipses, deterministic convex-region construction incorporates the
+obstacle grid, map boundary, and safety margin~\cite{iris,firi}, yielding
 \begin{equation}
-\mathcal R_i=\{x\in\R^2\mid A_ix\leq b_i\}.
+\mathcal R_i=\{\mathbf x\in\mathbb R^2\mid\mathbf A_i\mathbf x\leq\mathbf b_i\}.
 \end{equation}
-
-% ---------- 源稿段 28 ----------
-The local convex regions are arranged in order along the selected skeleton
-route. Where adjacent regions overlap insufficiently, an intermediate position
-between the corresponding skeleton sample points along the route is taken as a
-seed, and an additional obstacle-free convex region is constructed for bridging,
-forming a continuous convex safe corridor $\mathcal C$. Finally, the local
-safety features $\hell$ are used to guide diffusion denoising, while the convex
-safe corridor $\mathcal C$ provides explicit safety constraints for the
-continuous trajectory.
+The matrices $\mathbf A_i$ and $\mathbf b_i$ are the corresponding half-space
+parameters. Local convex regions are arranged along the selected skeleton
+route. When neighboring regions overlap insufficiently, intermediate positions
+along the route between their skeleton sample points serve as seeds for
+additional obstacle-free bridging regions. This produces a safe corridor of
+continuously connected convex regions
+$\mathcal C=\bigcup_i\mathcal R_i$~\cite{sfc,bound}. Each local region is
+convex, while their union need not be globally convex. Finally, safety geometry
+features $\mathbf Z_t^{\mathrm{geometry}}$ guide diffusion denoising, and the
+safe corridor $\mathcal C$ provides explicit continuous-trajectory constraints.
 
 \subsection{Trajectory Denoising and Closed-Loop Safety Correction}
-
 \subsubsection{Safety-Conditioned Denoising}
-% ---------- 源稿段 29 ----------
-With the fused control features $\ctrlf$ as queries and the local safety
-features $\hell$ as keys and values, multi-head cross-attention extracts the
-safety information corresponding to each control point, and residual fusion
-followed by an MLP mapping gives the safety-conditioned features
-$F\in\R^{48\times128}$. $F$ is then fed to three conditional denoising blocks
-that predict the clean control points $\Qraw$, conditioned on the global map
-features $C_G$ and the diffusion time step $t$. Each block contains control
-point self-attention, map cross-attention and a feed-forward network.
-
-% ---------- 源稿段 30 ----------
-Finally, endpoint correction is applied to the predicted control points,
-yielding the control points $\Qbdry$ that satisfy the start and goal
-constraints.
+Using history-fused state features $\mathbf Z_t^{\mathrm{fused}}$ as queries
+and safety geometry features $\mathbf Z_t^{\mathrm{geometry}}$ as keys and
+values, multi-head cross-attention extracts the safety information for each
+control point. Residual fusion and an MLP mapping yield safety-fused state
+features $\mathbf Z_t^{\mathrm{safe}}\in\mathbb R^{48\times128}$. These are
+fed into three conditional denoising blocks, conditioned on map features
+$\mathbf Z^{\mathrm{map}}$ and time embedding $\mathbf e_t$, to predict the
+clean state:
+\begin{equation}
+\widehat{\mathbf Q}_{0\mid t}^{\mathrm{pred}}=
+f_\theta\bigl(\mathbf Q_t,\mathbf Z_t^{\mathrm{safe}},\mathbf Z^{\mathrm{map}},\mathbf e_t\bigr).
+\end{equation}
+Each block contains control point self-attention, map cross-attention, and a
+feed-forward network. The notation $0\mid t$ denotes an estimate of the
+noise-free state at diffusion time $t$; semantic superscripts $\mathrm{pred}$,
+$\mathrm{end}$, and $\mathrm{safe}$ identify network prediction, endpoint
+correction, and ALM safety correction, respectively. Endpoint correction yields
+$\widehat{\mathbf Q}_{0\mid t}^{\mathrm{end}}$, satisfying the start and goal
+constraints. Here, $f_\theta$ denotes the clean-state predictor, including state
+denoising and output mapping.
 
 \subsubsection{Continuous-Trajectory Safety Constraint and ALM Correction}
-
 \begin{figure*}[!tb]
 \centering
-\includegraphics[width=0.8\textwidth]{fig03_alm.png}
-\caption{Continuous-trajectory safety constraints and ALM correction. Region responsibility boundaries and B-spline knots define cubic B\'ezier subsegments. Constraining their four control points to the assigned convex region gives continuous segment containment; ALM adjusts the spline control points while fixing the endpoints.}
+\includegraphics[width=0.65\textwidth]{fig03_alm.png}
+\caption{Continuous-trajectory safety constraints and ALM correction. Top: trajectories and control points for the reference state $\mathbf Q^{\mathrm{ref}}$ and its safety-corrected state. Bottom: joint subdivision by region responsibility intervals and B-spline knots. The inset constrains the four control points $\boldsymbol\beta_{k,j}$ to $\mathcal R_{\rho(k)}$, ensuring continuous containment by the convex-hull property. Point and region counts are illustrative, not experimental settings.}
 \label{fig:alm}
 \end{figure*}
 
-
-% ---------- 源稿段 31 ----------
 The diffusion model outputs a cubic B-spline curve defined by $C=48$ control
-points, whereas the safe corridor consists of several local convex regions
-arranged along the skeleton route. Constraining the original B-spline control
-points directly inside the local convex regions easily produces conservative
-constraints, because the convex hull of the control points need not match the
-extent of a region. The B-spline is therefore subdivided and converted exactly
-into cubic B\'ezier subsegments, so that the safety constraint acts on a
-shorter continuous curve segment.
+points, while the safe corridor consists of local convex regions along the
+skeleton route. Directly constraining the original B-spline control points to
+these regions may be conservative because their convex hull need not match
+the region extent~\cite{nguyen,minvo}. The B-spline is therefore subdivided
+and converted exactly into cubic B\'ezier subsegments~\cite{nguyen,boehm},
+so that safety constraints act on shorter continuous curve segments.
 
-% ---------- 源稿段 32 ----------
-Let the safe corridor contain $N$ convex regions ordered by route progress, the
-$i$-th region corresponding to a normalized progress $s_i\in[0,1]$. To make
-explicit the curve range constrained by each region, the parameter intervals
-are delimited by the progress midpoints of adjacent regions:
+Let the safe corridor contain $N$ convex regions ordered by route progress,
+with normalized progress $s_i\in[0,1]$ for region $i$. To specify the curve
+range constrained by each region, responsibility intervals are divided at
+the progress midpoints of adjacent regions:
 \begin{equation}
 \begin{aligned}
-m_i&=\frac{s_i+s_{i+1}}{2},\quad i=1,\ldots,N-1,\\
-m_0&=0,\quad m_N=1.
+\xi_i&=\frac{s_i+s_{i+1}}{2},\quad i=1,\ldots,N-1,\\
+\xi_0&=0,\quad \xi_N=1.
 \end{aligned}
 \end{equation}
+The B-spline parameter interval $[\xi_{i-1},\xi_i]$ is assigned to region $i$.
+Since a cubic B-spline represents a single cubic polynomial only within each
+knot interval, a curve spanning a knot cannot be represented exactly by one
+cubic B\'ezier curve. The region boundaries and interior B-spline knots are
+therefore merged, sorted, and deduplicated into $K$ subsegments
+$[u_{k-1},u_k]$. Let $\rho(k)\in\{1,\ldots,N\}$ map each subsegment to its
+assigned region. Subsegment $\tau_k=\tau_{\mathbf Q}|_{[u_{k-1},u_k]}$ inherits
+the constraint of $\mathcal R_{\rho(k)}$ without crossing a B-spline knot.
+This partition only specifies the correspondence between regions and curve
+parameters; the trajectory need not lie inside its assigned regions before
+correction.
 
-% ---------- 源稿段 33 ----------
-The B-spline parameter interval $[m_{i-1},m_i]$ is assigned to the $i$-th
-convex region. Since a cubic B-spline corresponds to a single cubic polynomial
-only within a knot interval, a curve crossing a knot cannot be represented
-exactly by one cubic B\'ezier curve. The region boundaries are therefore merged
-with the interior knots of the B-spline, sorted and de-duplicated, giving $K$
-subsegments $[u_{k-1},u_k]$. Each subsegment inherits the constraint of its
-region and does not cross a B-spline knot. This partition only specifies the
-correspondence between regions and curve parameters; the trajectory is not
-required to already lie inside the corresponding region before correction.
-
-% ---------- 源稿段 34 ----------
-Let $Q\in\R^{C\times2}$ be the control point matrix of the original B-spline,
-$\mathbf n(u)\in\R^{1\times C}$ the row vector of basis functions, and
-$h_k=u_k-u_{k-1}$ the subsegment length. The four B\'ezier control points of
-subsegment $k$ satisfy $\bm\beta_k=E_kQ$, where the conversion matrix is
+Let $\mathbf Q\in\mathbb R^{C\times2}$ be the original B-spline control point
+matrix, $\mathbf n(u)\in\mathbb R^{1\times C}$ the row vector of basis
+functions, and $h_k=u_k-u_{k-1}$ the subsegment length. The four B\'ezier
+control points of subsegment $k$ form the matrix
+$\boldsymbol\beta_k=\mathbf E_k\mathbf Q\in\mathbb R^{4\times2}$, where
 \begin{equation}
-E_k=
-\begin{bmatrix}
+\mathbf E_k=\begin{bmatrix}
 \mathbf n(u_{k-1})\\[2pt]
 \mathbf n(u_{k-1})+\tfrac{h_k}{3}\mathbf n'(u_{k-1})\\[3pt]
 \mathbf n(u_k)-\tfrac{h_k}{3}\mathbf n'(u_k)\\[3pt]
 \mathbf n(u_k)
-\end{bmatrix},
+\end{bmatrix}.
 \end{equation}
+Here, $\mathbf n'(u)$ is the basis-function derivative, evaluated one-sidedly
+at a knot for the corresponding subsegment. The conversion preserves the curve
+shape and introduces no additional optimization variables. Transposing the
+four rows of $\boldsymbol\beta_k$ gives column vectors
+$\boldsymbol\beta_{k,j}\in\mathbb R^2$, for $j=0,1,2,3$.
 
-% ---------- 源稿段 35 ----------
-where $\mathbf n'(u)$ is the derivative of the basis functions, evaluated
-one-sidedly at a knot according to the subsegment in question. This conversion
-does not change the curve shape and introduces no additional optimization
-variable.
-
-% ---------- 源稿段 36 ----------
-Owing to the convex-hull property of B\'ezier curves, if the four control
-points of a subsegment all lie inside the corresponding convex safe region
-$\mathcal R_k=\{x\in\R^2\mid A_kx\leq b_k\}$, the whole curve segment lies
-inside that region. The continuous safety condition can therefore be written as
+By the convex-hull property of B\'ezier curves, if the four control points of a
+subsegment lie in its assigned convex safe region $\mathcal R_{\rho(k)}$, the
+entire curve segment remains in that region~\cite{nurbs,nguyen}. Hence,
 \begin{equation}
-A_k\bm\beta_{k,j}\leq b_k,\qquad j=1,2,3,4.
+\mathbf A_{\rho(k)}\boldsymbol\beta_{k,j}\leq\mathbf b_{\rho(k)},
+\quad j=0,1,2,3.
 \end{equation}
+Substituting $\boldsymbol\beta_k=\mathbf E_k\mathbf Q$ and collecting all
+subsegments gives linear inequalities $\mathbf g(\mathbf Q)\leq0$ in
+$\mathbf Q$. Provided the convex regions have been verified obstacle-free,
+satisfying these constraints guarantees that the whole continuous trajectory
+lies inside safe regions, rather than only a finite set of sample points
+being collision-free. This is a sufficient condition for continuous safety,
+but does not guarantee feasibility of the optimization problem.
 
-% ---------- 源稿段 37 ----------
-Substituting $\bm\beta_k=E_kQ$ and collecting the subsegments gives linear
-inequalities $g(Q)\leq0$ in $Q$. Given that every convex region has been
-verified obstacle-free, satisfying these constraints guarantees that the whole
-continuous trajectory lies inside the safety region, and not merely that a
-finite set of sample points is collision-free. This is a sufficient condition
-for continuous safety, but it does not guarantee that the optimization problem
-is feasible.
-
-% ---------- 源稿段 38 ----------
-As shown in Fig.~\ref{fig:alm}, the augmented Lagrangian method (ALM) is used to apply safety correction to the
-B-spline control points, satisfying the continuous-trajectory safety constraint
-while preserving the shape of the original predicted trajectory as far as
-possible. Taking the endpoint-corrected control points
-$Q^{\mathrm{ref}}=\Qbdry$ as reference and defining the control point correction
-$\Delta Q=Q-Q^{\mathrm{ref}}$, the following constrained optimization problem is
-established:
+As shown in Fig.~\ref{fig:alm}, an augmented Lagrangian method (ALM) corrects
+the B-spline control points~\cite{hestenes,nocedal}, satisfying continuous
+safety constraints while preserving the original predicted trajectory shape
+as far as possible. Taking the endpoint-corrected state
+$\mathbf Q^{\mathrm{ref}}=\widehat{\mathbf Q}_{0\mid t}^{\mathrm{end}}$ as
+reference and defining $\Delta\mathbf Q=\mathbf Q-\mathbf Q^{\mathrm{ref}}$,
+the constrained optimization problem is
 \begin{equation}
 \begin{aligned}
-\min_{Q}\quad
-&\frac{\lambda_p}{2}\lVert\mathbf B\Delta Q\rVert_F^2
-+\frac{\lambda_s}{2}\lVert D_2\mathbf B\Delta Q\rVert_F^2\\
-\mathrm{s.t.}\quad
-&g(Q)\leq0,\\
-&q_0=\bm S,\qquad q_{C-1}=\bm G,
+\min_{\mathbf Q}\quad &\frac{\lambda_p}{2}\lVert\mathbf B\Delta\mathbf Q\rVert_F^2
++\frac{\lambda_s}{2}\lVert\mathbf D_2\mathbf B\Delta\mathbf Q\rVert_F^2\\
+\mathrm{s.t.}\quad &\mathbf g(\mathbf Q)\leq0,\\
+&\mathbf q_0=\mathbf p_{\mathrm s},\quad \mathbf q_{C-1}=\mathbf p_{\mathrm g}.
 \end{aligned}
 \end{equation}
-
-% ---------- 源稿段 39 ----------
-where $\mathbf B$ is the B-spline sampling basis matrix, $\mathbf B\Delta Q$ the
-trajectory correction displacement, and $D_2$ the second-difference matrix. The
-two objective terms limit, respectively, the offset of the trajectory from the
-original prediction and the local fluctuation of the correction displacement
-along the trajectory. By introducing constraint multipliers and penalty terms,
-the ALM iteratively adjusts the interior control points in order to reduce the
-safety constraint violation while keeping the start and goal fixed, finally
-yielding the corrected control points $\Qalm$.
+Here, $\mathbf B$ is the B-spline sampling basis matrix,
+$\mathbf B\Delta\mathbf Q$ is the trajectory correction displacement, and
+$\mathbf D_2$ is the second-difference matrix. The two objective terms limit
+the deviation from the original trajectory and local variation of the
+correction displacement along it, respectively. ALM introduces constraint
+multipliers and penalty terms to iteratively adjust interior control points,
+reducing safety violations while fixing the endpoints. This yields the
+safety-corrected state $\widehat{\mathbf Q}_{0\mid t}^{\mathrm{safe}}$.
 
 \subsubsection{Reverse-Diffusion Update and Historical Safety Feedback}
-% ---------- 源稿段 40 ----------
-To let the safety correction take part in subsequent trajectory generation, the
-ALM result $\Qalm$ is taken as the clean control point estimate at the current
-step, the sampling state of the next step is updated by a deterministic DDIM
-update, and the start and goal are kept fixed throughout. The final sampling
-step directly adopts the corrected control points.
+At each reverse-diffusion step, the ALM-corrected
+$\widehat{\mathbf Q}_{0\mid t}^{\mathrm{safe}}$ serves as the current clean-state
+estimate. DDIM updates the next sampling state~\cite{ddim}
+$\mathbf Q_{t^{-}}$, while keeping the endpoints fixed. The final sampling
+step directly outputs the safety-corrected state, denoted by $\mathbf Q^\ast$,
+with final trajectory $\tau^\ast=\tau_{\mathbf Q^\ast}$.
 
-% ---------- 源稿段 41 ----------
-Meanwhile, inspired by the idea of self-conditioning, the safety correction
-result of the previous reverse-diffusion step is used as an auxiliary condition
-for the subsequent network prediction. The historical feedback comprises the
-corrected control points, the correction relative to the original prediction and
-a validity flag:
+The correction computed at the current step is used as historical feedback
+at the next step:
 \begin{equation}
 \begin{aligned}
-Q_{\mathrm{hist}}&=\Qalm,\\
-\Delta Q_{\mathrm{hist}}&=\Qalm-\Qbdry,\\
-v_{\mathrm{hist}}&\in\{0,1\}.
+\Delta\mathbf Q_{t^{-}}^{\mathrm{hist}}
+&=\widehat{\mathbf Q}_{0\mid t}^{\mathrm{safe}}
+-\widehat{\mathbf Q}_{0\mid t}^{\mathrm{end}},\\
+\mathcal H_{t^{-}}&=(\Delta\mathbf Q_{t^{-}}^{\mathrm{hist}},v_{t^{-}}).
 \end{aligned}
 \end{equation}
-
-% ---------- 源稿段 42 ----------
-This information takes part in the trajectory prediction of the next
-reverse-diffusion step through the gated fusion module of Section~III-A. Unlike
-self-conditioning, which feeds the network prediction back directly, this
-mechanism further introduces the control points after safety constraint
-correction together with their correction, so that subsequent denoising can
-exploit the historical safety correction and a closed loop is achieved between
-trajectory generation and safety correction.
+When a valid safe corridor exists and the ALM-corrected state satisfies the
+corresponding safety constraints within the prescribed violation tolerance,
+$v_{t^{-}}=1$; otherwise it is zero. The correction and validity flag participate
+in the next state prediction through the encoding and gated fusion module in
+Section~III-A, closing the loop between trajectory generation and safety
+correction. The input $\mathcal H_t$ and output $\mathcal H_{t^{-}}$ in
+Fig.~\ref{fig:framework} denote currently available feedback and feedback
+passed to the next reverse-diffusion step, respectively.
 
 \subsection{Training Strategy and Loss Function}
-% ---------- 源稿段 43 ----------
-To enable the network to learn to exploit historical safety corrections, a
-two-forward training strategy with shared parameters is adopted. First, noise is
-added to the reference control points at a random diffusion time step $t$, a
-first forward prediction is performed without historical feedback, and ALM
-correction is applied using the offline convex safe corridor associated with the
-reference route, which also constructs the historical safety feedback and the
-DDIM sampling state of the next time step. The updated control points and the
-historical feedback are then fed into the same network for a second forward
-prediction. The two forward passes share the network parameters, and the
-gradients of the second pass do not back-propagate to the first. During
-training, part of the historical feedback is masked at random, so as to
-accommodate the initial sampling state in which no feedback is available.
+To teach the network to exploit historical safety corrections, training uses
+two forward passes with shared parameters. First, noise is added to reference
+control points at a random diffusion time step $t$, and the first prediction
+is corrected by ALM to obtain a historical correction and validity flag and
+update the next sampling state. The updated state $\mathbf Q_{t^{-}}$ and
+historical feedback $\mathcal H_{t^{-}}$ are then input to the same network
+for a second prediction. The two passes share parameters, and the gradient
+of the second pass does not propagate back into the first. A random subset
+of historical feedback is masked during training to improve adaptation to
+states without feedback.
 
-% ---------- 源稿段 44-45（按作者要求：删去表 1，改用一段文字表述） ----------
-The training loss consists of three parts. The trajectory prediction losses
-$\mathcal L_{\mathrm{ctrl}}$, $\mathcal L_{\mathrm{boundary}}$ and
-$\mathcal L_{\mathrm{smooth}}$ supervise, respectively, control point
-reconstruction, the endpoint neighbourhood and smoothness. The safety
-constraint generation losses $\mathcal L_{\mathrm{topo}}$,
-$\mathcal L_{\mathrm{shape}}$, $\mathcal L_{\mathrm{IoU}}$ and
-$\mathcal L_{\mathrm{ell,safe}}$ supervise, respectively, route selection,
-ellipse shape, region coverage and obstacle intrusion. The continuous safety
-loss $\mathcal L_{\mathrm{safe}}$ penalizes continuous safety violations of the
-trajectory through the B\'ezier convex-hull constraint. These losses are
-combined by weighted summation to form the final training objective.
+The training loss has three parts. State prediction losses
+$\mathcal L_{\mathrm{state}}$, $\mathcal L_{\mathrm{end}}$, and
+$\mathcal L_{\mathrm{smooth}}$ supervise reconstruction of the control-point
+parameterized state, endpoint neighborhoods, and smoothness, respectively.
+Safety constraint generation losses $\mathcal L_{\mathrm{route}}$,
+$\mathcal L_{\mathrm{ellipse}}$, $\mathcal L_{\mathrm{IoU}}$, and
+$\mathcal L_{\mathrm{intrusion}}$ supervise route selection, ellipse shape,
+region coverage, and obstacle intrusion. The continuous safety loss
+$\mathcal L_{\mathrm{continuous}}$ penalizes continuous trajectory safety
+violations through B\'ezier convex-hull constraints. Their weighted sum is
+the final training objective.
 
 \section{Experiments and Results}
 
 \subsection{Experimental Setup}
 % ---------- 源稿 [4.1] 段 1 ----------
 Experiments are conducted on a two-dimensional static occupancy grid dataset
-built from CARLA road scenes. The map covers
+built from CARLA road scenes~\cite{carla}. The map covers
 $160\,\mathrm{m}\times160\,\mathrm{m}$ with a grid resolution of $256\times256$,
 i.e., a spatial resolution of $0.625\,\mathrm{m/grid}$. The training, validation
 and test sets contain 3850, 1550 and 420 samples, respectively, and the test set
@@ -641,9 +604,9 @@ The proposed method is compared with unconstrained diffusion, fixed penalty
 guidance, primal--dual guidance and SDF augmented Lagrangian guidance.
 Unconstrained diffusion generates trajectories directly. Fixed penalty guidance
 corrects a trajectory with the gradient of a collision cost defined on a signed
-distance field (SDF). Primal--dual guidance alternately updates the control
-variables and the constraint multipliers. SDF-ALM additionally introduces an
-augmented Lagrangian penalty term. The parameters of the three SDF-based
+distance field (SDF)~\cite{fast}. Primal--dual guidance alternately updates the control
+variables and the constraint multipliers~\cite{nocedal}. SDF-ALM additionally introduces an
+augmented Lagrangian penalty term~\cite{hestenes,nocedal}. The parameters of the three SDF-based
 guidance methods are all selected on the validation set.
 
 \begin{table*}[!t]
@@ -755,21 +718,58 @@ Figure~\ref{fig:feedback} shows the corresponding denoising-process curves.
 In the paired statistics over forwards 5--16, enabling the historical feedback
 reduces the mean safety violation before ALM correction from 0.2749~m to
 0.1167~m (about 57.5\%), and the mean correction magnitude from 0.4609~m to
-0.2488~m (about 46.0\%). Both paired tests reach significance (Wilcoxon test,
+0.2488~m (about 46.0\%). Both paired tests reach significance (Wilcoxon test~\cite{wilcoxon},
 $p<0.001$). Neither group exhibits any collision in the end, so the effect of
 the feedback is mainly to improve how well the intermediate predictions satisfy
 the safety constraint and to reduce the correction subsequently required from
 the ALM.
 
 \subsection{ALM Iteration Budget Analysis}
+To analyze how the ALM iteration budget affects safety constraint correction,
+the model predictions, constraint package, and input Lagrange multipliers are
+held fixed. Only the maximum number of iterations per ALM call is varied,
+using six configurations with 1, 2, 4, 6, 8, and 10 iterations. The original
+tolerance-based early stopping mechanism is retained.
+
+\begin{table}[!t]
+\caption{Constraint Correction under Different ALM Iteration Budgets}
+\label{tab:budget}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccc}
+\hline
+Config. & \shortstack{Constraint\\feas. (\%)} & \shortstack{95\% CI\\(\%)} &
+\shortstack{Residual\\max. viol.} & P95 & \shortstack{Mean corr.\\(m)} \\
+\hline
+I1 & 32.20 & [26.71, 37.92] & 0.00697 & 0.00999 & 0.359 \\
+I2 & 50.32 & [44.69, 56.02] & 0.00266 & 0.00460 & 0.410 \\
+I4 & 87.82 & [84.18, 90.91] & 0.00056 & 0.00130 & 0.422 \\
+I6 & 95.01 & [93.14, 96.65] & 0.00048 & 0.00110 & 0.419 \\
+I8 & 96.92 & [95.49, 98.11] & 0.00044 & 0.00098 & 0.418 \\
+I10 & 97.38 & [96.01, 98.51] & 0.00042 & 0.00090 & 0.417 \\
+\hline
+\end{tabular}
+\end{table}
+
+The results show that increasing the iteration budget improves constraint
+correction. Raising the budget from 2 to 4 iterations increases the constraint
+feasibility rate by 37.50 percentage points and reduces the residual maximum
+violation by approximately 78.9\%. At 6 iterations, the feasibility rate reaches
+95.01\%, while further increases bring progressively smaller improvements.
+Overall, \textbf{4 iterations capture the main correction gains, while
+6 iterations further improve constraint feasibility}, indicating that the
+effect of ALM correction gradually saturates as the iteration budget increases.
 
 \begin{figure}[!htb]
 \centering
 \includegraphics[width=\columnwidth]{fig05_alm_budget.png}
-\caption{ALM iteration budget analysis: (a) continuous-constraint satisfaction and collision rate; (b) end-to-end inference cost. The default configuration is marked by a star.}
+\caption{Effect of the ALM iteration budget on safety constraint correction:
+(a) constraint feasibility rate under different iteration budgets;
+(b) residual maximum constraint violation after correction.
+Both horizontal axes show the maximum number of iterations per ALM call.}
 \label{fig:alm-budget}
 \end{figure}
-
 
 \begin{figure*}[!t]
 \centering
@@ -777,62 +777,6 @@ the ALM.
 \caption{Trajectory generation in CARLA road scenes. Columns show straight roads, intersections, curved roads and long-distance routes; the two rows show separate examples. Green bands indicate the drivable range and highlighted centerlines show the generated trajectories.}
 \label{fig:carla}
 \end{figure*}
-
-
-% ---------- 源稿 [4.4] 段 1 ----------
-Figure~\ref{fig:alm-budget} visualizes the safety--budget relation and inference cost. To assess the influence of the maximum number of ALM inner iterations on safety,
-an accelerated inference configuration is used: the model weights, the DDIM step
-count, the convex-region sharing scheme and the other optimization parameters are
-fixed, and only the maximum ALM iteration count is varied. I2--I10 set the
-iteration limit of every ALM call to 2, 4, 6, 8 and 10, respectively, whereas
-Default keeps the original strategy of at most 8 iterations for the first call
-and at most 10 for the subsequent ones. Iteration stops early under the original
-condition once the constraint tolerance is met.
-
-\begin{table}[!t]
-\caption{Safety and Trajectory Quality under Different ALM Iteration Budgets}
-\label{tab:budget}
-\centering
-\scriptsize
-\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{lccccccc}
-\hline
- & Cont.\ feas. & & Clear. & Detour & NRMSE & Max curv. & Mean sq. \\
-Config. & (\%) $\uparrow$ & Coll. & (m) $\uparrow$ & ratio $\downarrow$ &
-(\%) $\downarrow$ & (1/m) $\downarrow$ & curv. (1/m$^2$) $\downarrow$ \\
-\hline
-I2  & 79.60 & 3/1260 & 3.221 & 1.3139 & 8.576 & 1.0349 & 0.02087 \\
-I4  & 95.32 & 0/1260 & 3.315 & 1.3209 & 8.642 & 1.0499 & 0.02068 \\
-I6  & 98.10 & 2/1260 & 3.329 & 1.3216 & 8.659 & 1.0471 & 0.02065 \\
-I8  & 98.57 & 0/1260 & 3.321 & 1.3211 & 8.668 & 1.0406 & 0.02057 \\
-I10 & 99.13 & 0/1260 & 3.318 & 1.3212 & 8.668 & 1.0436 & 0.02058 \\
-\textbf{Default} & \textbf{98.81} & \textbf{0/1260} &
-\textbf{3.319} & \textbf{1.3209} & \textbf{8.668} & \textbf{1.0397} &
-\textbf{0.02055} \\
-\hline
-\end{tabular}
-\end{table}
-
-% ---------- 源稿 [4.4] 段 2 ----------
-Raising the budget from 2 to 4 iterations increases the continuous-constraint
-satisfaction rate from 79.60\% to 95.32\%, and 8 iterations reach 98.57\%.
-Raising it further to 10 iterations improves the rate by only 0.56 percentage
-points, which shows that the return of the iterations gradually saturates.
-Paired bootstrap results show that I2 and I4 lie 19.21 and 3.49 percentage
-points below Default, with 95\% confidence intervals of
-$[-22.78,-15.79]$ and $[-5.48,-1.98]$ percentage points; the intervals of the
-differences between I6/I8 and Default contain zero, so the present data do not
-establish a difference for the two configurations.
-
-% ---------- 源稿 [4.4] 段 3 ----------
-The detour ratio, the NRMSE and the curvature vary little across budgets, which
-indicates that the iteration budget mainly affects the degree to which the
-continuous constraint is satisfied. The number of collisions does not change
-monotonically with the budget, so the budgets cannot be ranked on the basis of a
-few discrete collision events alone. Taken together, an overly small iteration
-budget markedly degrades the constraint satisfaction rate, whereas a further
-increase of the budget brings limited benefit; under the present experimental
-setting the current default strategy exhibits the best safety.
 
 \subsection{Trajectory Generation in Real CARLA Road Scenes}
 % ---------- 源稿 [4.5] 段 1 ----------
@@ -847,5 +791,135 @@ of the different road scenes, which complements the quantitative experiments
 above.
 
 
+
+\section{Conclusion}
+This paper presented TrajSafe-Diffuser, a diffusion-based trajectory planning
+method with generative safety constraints and closed-loop correction. By
+combining environmental topology with local obstacle information, the method
+generates convex safe corridors, guides trajectory denoising with safety
+geometry features, and closes the generation loop through ALM correction and
+historical feedback. Experiments on CARLA road scenes showed no detected
+collisions across all test trajectories. Historical feedback reduced safety
+violations in intermediate predictions and the required correction, while
+moderately increasing the ALM iteration budget further improved constraint
+feasibility. Future work will address dynamic obstacle environments and
+further investigate the real-time performance and safety of trajectory
+generation.
+
+\begin{thebibliography}{28}
+
+\bibitem{ddpm}
+Jonathan Ho, Ajay Jain, Pieter Abbeel, ``Denoising Diffusion Probabilistic Models,'' \emph{Advances in Neural Information Processing Systems, vol. 33, pp. 6840--6851}, 2020.
+\url{https://arxiv.org/abs/2006.11239}.
+
+\bibitem{diffuser}
+Michael Janner, Yilun Du, Joshua Tenenbaum, Sergey Levine, ``Planning with Diffusion for Flexible Behavior Synthesis,'' \emph{Proceedings of the 39th International Conference on Machine Learning, PMLR 162, pp. 9902--9915}, 2022.
+\url{https://proceedings.mlr.press/v162/janner22a.html}.
+
+\bibitem{scene}
+Siyuan Huang, Zan Wang, Puhao Li, Baoxiong Jia, Tengyu Liu, Yixin Zhu, Wei Liang, Song-Chun Zhu, ``Diffusion-Based Generation, Optimization, and Planning in 3D Scenes,'' \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 16750--16761}, 2023.
+\url{https://openaccess.thecvf.com/content/CVPR2023/papers/Huang_Diffusion-Based_Generation_Optimization_and_Planning_in_3D_Scenes_CVPR_2023_paper.pdf}.
+
+\bibitem{mpd}
+Jo\~ao Carvalho, An Thai Le, Piotr Kicki, Dorothea Koert, Jan Peters, ``Motion Planning Diffusion: Learning and Adapting Robot Motion Planning With Diffusion Models,'' \emph{IEEE Transactions on Robotics, vol. 41, pp. 4881--4901}, 2025.
+\url{https://doi.org/10.1109/tro.2025.3593109}.
+
+\bibitem{raptor}
+Boyu Zhou, Jie Pan, Fei Gao, Shaojie Shen, ``RAPTOR: Robust and Perception-Aware Trajectory Replanning for Quadrotor Fast Flight,'' \emph{IEEE Transactions on Robotics, vol. 37, no. 6, pp. 1992--2009}, 2021.
+\url{https://doi.org/10.1109/tro.2021.3071527}.
+
+\bibitem{multimodal}
+Yongjae Lim, Seungwoo Jung, Dabin Kim, Dongjae Lee, H. Jin Kim, ``Safe Multimodal Replanning via Projection-Based Trajectory Clustering in Crowded Environments,'' \emph{IEEE Robotics and Automation Letters, vol. 11, no. 3, pp. 3558--3565}, 2026.
+\url{https://doi.org/10.1109/lra.2026.3656780}.
+
+\bibitem{safe}
+Wei Xiao, Tsun-Hsuan Wang, Chuang Gan, Ramin Hasani, Mathias Lechner, Daniela Rus, ``SafeDiffuser: Safe Planning with Diffusion Probabilistic Models,'' \emph{International Conference on Learning Representations}, 2025.
+\url{https://openreview.net/pdf?id=ig2wk7kK9J}.
+
+\bibitem{cbf}
+Aaron D. Ames, Xiangru Xu, Jessy W. Grizzle, Paulo Tabuada, ``Control Barrier Function Based Quadratic Programs for Safety Critical Systems,'' \emph{IEEE Transactions on Automatic Control, vol. 62, no. 8, pp. 3861--3876}, 2017.
+\url{https://doi.org/10.1109/tac.2016.2638961}.
+
+\bibitem{projected}
+Jacob K. Christopher, Stephen Baek, Ferdinando Fioretto, ``Constrained Synthesis with Projected Diffusion Models,'' \emph{Advances in Neural Information Processing Systems, vol. 37}, 2024.
+\url{https://arxiv.org/abs/2402.03559}.
+
+\bibitem{nurbs}
+Les Piegl, Wayne Tiller, ``The NURBS Book,'' \emph{2nd ed., Springer}, 1997.
+\url{https://doi.org/10.1007/978-3-642-59223-2}.
+
+\bibitem{fast}
+Boyu Zhou, Fei Gao, Luqi Wang, Chuhao Liu, Shaojie Shen, ``Robust and Efficient Quadrotor Trajectory Generation for Fast Autonomous Flight,'' \emph{IEEE Robotics and Automation Letters, vol. 4, no. 4, pp. 3529--3536}, 2019.
+\url{https://doi.org/10.1109/lra.2019.2927938}.
+
+\bibitem{ego}
+Xin Zhou, Zhepei Wang, Hongkai Ye, Chao Xu, Fei Gao, ``EGO-Planner: An ESDF-Free Gradient-Based Local Planner for Quadrotors,'' \emph{IEEE Robotics and Automation Letters, vol. 6, no. 2, pp. 478--485}, 2021.
+\url{https://doi.org/10.1109/lra.2020.3047728}.
+
+\bibitem{fourier}
+Matthew Tancik, Pratul P. Srinivasan, Ben Mildenhall, Sara Fridovich-Keil, Nithin Raghavan, Utkarsh Singhal, Ravi Ramamoorthi, Jonathan T. Barron, Ren Ng, ``Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains,'' \emph{Advances in Neural Information Processing Systems, vol. 33, pp. 7537--7547}, 2020.
+\url{https://arxiv.org/abs/2006.10739}.
+
+\bibitem{attention}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, \L{}ukasz Kaiser, Illia Polosukhin, ``Attention Is All You Need,'' \emph{Advances in Neural Information Processing Systems, vol. 30}, 2017.
+\url{https://arxiv.org/abs/1706.03762}.
+
+\bibitem{guo}
+Zicheng Guo, Richard W. Hall, ``Parallel thinning with two-subiteration algorithms,'' \emph{Communications of the ACM, vol. 32, no. 3, pp. 359--373}, 1989.
+\url{https://doi.org/10.1145/62065.62074}.
+
+\bibitem{homotopy}
+Haoze Dong, Minghan Li, Meng Guo, Zhongkui Li, ``Homotopy-Aware Corridor Generation Without Predefined Reference Paths,'' \emph{IEEE Robotics and Automation Letters, vol. 11, no. 10, pp. 11196--11203}, 2026.
+\url{https://doi.org/10.1109/lra.2026.3723318}.
+
+\bibitem{iris}
+Robin Deits, Russ Tedrake, ``Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming,'' \emph{Springer Tracts in Advanced Robotics, pp. 109--124}, 2015.
+\url{https://doi.org/10.1007/978-3-319-16595-0_7}.
+
+\bibitem{firi}
+Qianhao Wang, Zhepei Wang, Mingyang Wang, Jialin Ji, Zhichao Han, Tianyue Wu, Rui Jin, Yuman Gao, Chao Xu, Fei Gao, ``Fast Iterative Region Inflation for Computing Large 2-D/3-D Convex Regions of Obstacle-Free Space,'' \emph{IEEE Transactions on Robotics, vol. 41, pp. 3223--3243}, 2025.
+\url{https://doi.org/10.1109/tro.2025.3562482}.
+
+\bibitem{sfc}
+Sikang Liu, Michael Watterson, Kartik Mohta, Ke Sun, Subhrajit Bhattacharya, Camillo J. Taylor, Vijay Kumar, ``Planning Dynamically Feasible Trajectories for Quadrotors Using Safe Flight Corridors in 3-D Complex Environments,'' \emph{IEEE Robotics and Automation Letters, vol. 2, no. 3, pp. 1688--1695}, 2017.
+\url{https://doi.org/10.1109/lra.2017.2663526}.
+
+\bibitem{bound}
+Thies Oelerich, Christian Hartl-Nesic, Florian Beck, Andreas Kugi, ``BoundPlanner: A Convex-Set-Based Approach to Bounded Manipulator Trajectory Planning,'' \emph{IEEE Robotics and Automation Letters, vol. 10, no. 6, pp. 5393--5400}, 2025.
+\url{https://doi.org/10.1109/lra.2025.3558450}.
+
+\bibitem{nguyen}
+Ngoc Thinh Nguyen, Lars Schilling, Michael Sebastian Angern, Heiko Hamann, Floris Ernst, Georg Schildbach, ``B-spline path planner for safe navigation of mobile robots,'' \emph{2021 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS), pp. 339--345}, 2021.
+\url{https://doi.org/10.1109/iros51168.2021.9636612}.
+
+\bibitem{minvo}
+Jesus Tordesillas, Jonathan P. How, ``MINVO Basis: Finding Simplexes with Minimum Volume Enclosing Polynomial Curves,'' \emph{Computer-Aided Design, vol. 151, Art. 103341}, 2022.
+\url{https://doi.org/10.1016/j.cad.2022.103341}.
+
+\bibitem{boehm}
+Wolfgang Boehm, ``Inserting new knots into B-spline curves,'' \emph{Computer-Aided Design, vol. 12, no. 4, pp. 199--201}, 1980.
+\url{https://doi.org/10.1016/0010-4485(80)90154-2}.
+
+\bibitem{hestenes}
+Magnus R. Hestenes, ``Multiplier and gradient methods,'' \emph{Journal of Optimization Theory and Applications, vol. 4, no. 5, pp. 303--320}, 1969.
+\url{https://doi.org/10.1007/bf00927673}.
+
+\bibitem{nocedal}
+Jorge Nocedal, Stephen J. Wright, ``Numerical Optimization,'' \emph{2nd ed., Springer}, 2006.
+\url{https://doi.org/10.1007/978-0-387-40065-5}.
+
+\bibitem{ddim}
+Jiaming Song, Chenlin Meng, Stefano Ermon, ``Denoising Diffusion Implicit Models,'' \emph{International Conference on Learning Representations}, 2021.
+\url{https://arxiv.org/abs/2010.02502}.
+
+\bibitem{carla}
+Alexey Dosovitskiy, German Ros, Felipe Codevilla, Antonio Lopez, Vladlen Koltun, ``CARLA: An Open Urban Driving Simulator,'' \emph{Proceedings of the 1st Annual Conference on Robot Learning, PMLR 78, pp. 1--16}, 2017.
+\url{https://proceedings.mlr.press/v78/dosovitskiy17a.html}.
+
+\bibitem{wilcoxon}
+Frank Wilcoxon, ``Individual Comparisons by Ranking Methods,'' \emph{Biometrics Bulletin, vol. 1, no. 6, pp. 80}, 1945.
+\url{https://doi.org/10.2307/3001968}.
+
+\end{thebibliography}
 
 \end{document}

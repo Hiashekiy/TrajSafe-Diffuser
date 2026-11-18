@@ -16,8 +16,10 @@
 |---|---|---|---|---|
 | `E2_fig1_feedback_process.png` | 2130×840 | 144 KB | **实验 2 第二部分核心图**：(a) ALM 修正前安全违规量、(b) ALM 修正幅度随第 4–16 次前向的变化；有/无历史反馈两条曲线 | ✅ 本次实测生成，论文可直接用 |
 | `E2_fig1_feedback_process.pdf` | 矢量 | 24 KB | 同上，300 dpi 矢量版 | ✅ 推荐排版用 PDF |
-| `E3_fig1_alm_budget.png` | 2130×870 | 151 KB | **实验 3 核心图**：(a) 连续约束满足率 + 碰撞率 vs ALM 迭代预算、(b) 端到端延迟（batch=1，含 95% CI 带） | ✅ 本次实测生成 |
-| `E3_fig1_alm_budget.pdf` | 矢量 | 25 KB | 同上，矢量版 | ✅ 推荐排版用 PDF |
+| `E3_fig1_alm_internal_budget.png` | 2130×870 | 175 KB | **实验 3 核心图（当前版）**：单次 `bspline_alm_correct()` 在固定缓存输入上的 (a) Bézier 约束可行率、(b) 残余最大违反量 vs 迭代预算 I1–I10 | ✅ 本次实测生成 |
+| `E3_fig1_alm_internal_budget.pdf` | 矢量 | 23 KB | 同上，矢量版 | ✅ 推荐排版用 PDF |
+| `E3_superseded_fullchain_budget.png` | 2130×870 | 151 KB | 旧版实验 3（整链路预算扫描）：连续约束满足率 + 端到端延迟 | ⚠️ **已被取代**（不评价最终轨迹/耗时的新版取代） |
+| `E3_superseded_fullchain_budget.pdf` | 矢量 | 25 KB | 同上，矢量版 | ⚠️ 同上 |
 | `E3_superseded_ellipse_prior.png` | 2202×839 | 126 KB | 原实验 3（椭圆几何先验）：Fixed Circle / Fixed Ellipse / Learned Ellipse 三列并排的凸走廊与先验椭圆 | ⚠️ **已被取代**，仅可作补充材料 |
 | `E3_superseded_ellipse_prior.pdf` | 矢量 | 60 KB | 同上，矢量版 | ⚠️ 同上 |
 | `E1_case293_denoising.png` | 2570×1689 | 571 KB | 单任务（case 293）逆扩散过程中的轨迹预测与 ALM 修正；6 面板 | ✅ 历史实测，可作实验 1/2 的可视化佐证 |
@@ -56,8 +58,9 @@
 | `M05_alm_schematic.svg` | `论文整合/论文/TrajSafe_methods_and_figures/figures/fig3-5_alm.svg` |
 | `M06_alm_continuous_safety.png` | `figures/alm_schematic/alm_continuous_safety.png` |
 | `E2_fig1_*` | `论文整合/实验/results/exp2/fig_feedback_process.{png,pdf}` |
-| `E3_fig1_*` | `论文整合/实验/results/exp3/alm_budget_safety_runtime.{png,pdf}` |
-| `E3_superseded_*` | `论文整合/实验/results/exp3_superseded_ellipse_prior/fig3_geometry_priors.{png,pdf}` |
+| `E3_fig1_alm_internal_budget.*` | `outputs/alm_budget_analysis/figures/alm_budget_analysis.{png,pdf}` |
+| `E3_superseded_fullchain_budget.*` | `论文整合/实验/results/exp3/alm_budget_safety_runtime.{png,pdf}` |
+| `E3_superseded_ellipse_prior.*` | `论文整合/实验/results/exp3_superseded_ellipse_prior/fig3_geometry_priors.{png,pdf}` |
 
 ---
 
@@ -65,23 +68,30 @@
 
 ```powershell
 $py = "E:\CondaEnvData\envs\GGMPC\python.exe"
+$ds = "outputs\paper_ral\run_20261009_no_projection\data\carla_processed_160k4p_c48_square_safe"
+$ck = "outputs\paper_ral\run_20261009_no_projection\A\ckpt\best_task.pt"
 
 # 实验 2 图（历史反馈过程双子图）
 & $py -u scripts\experiments\exp2_feedback_process.py --stage summarise
 
-# 实验 3 图（ALM 迭代预算双子图）
-& $py -u scripts\experiments\exp3_alm_budget.py --stage figure
+# 实验 3 图（当前版：单次 ALM 调用的预算扫描；复用缓存即可，无需重新推理）
+& $py -u scripts\alm_budget_analysis.py --config configs\paper_modified.yaml `
+    --ckpt $ck --processed $ds --reuse-cache --allow-commit-drift
 ```
 
-两个脚本的输入都已落盘（`exp2/raw_feedback/*_process.csv`、`exp3/timing_interleaved.json`），
-因此重画图**不需要重新推理**。
+> 实验 3 的**缓存阶段**必须用能加载论文 checkpoint 的代码版本
+> （`v3-skeleton-dynamic`；当前 v4 分支的模型架构已变、无法加载该 ckpt）。
+> 缓存生成后，**回放/统计阶段**在任何分支都能跑（不做网络前向，只调用 ALM）。
 
 ---
 
 ## 五、排版注意
 
 * `E2_*` / `E3_*` 的图内文字为英文（Times/DejaVu Serif），若与中文正文混排，建议统一改用 PDF 版。
-* `E3_fig1_alm_budget` 的横轴为最大 ALM 内迭代次数，`Default (8/10)` 用星标单独标出，
-  引用时须说明 Default ≠ I8/I10（首次 8、后续 10）。
+* `E3_fig1_alm_internal_budget` 的横轴为**单次 ALM 调用**的最大内迭代次数（1/2/4/6/8/10），
+  纵轴为约束可行率与残余最大违反量；单位是**场景单位**（1 scene = 80 m，容差 1e-3 scene = 0.08 m）。
+  本轮采用 **v4 模型**（4_map16_c48/best_task.pt）；论文 A 权重的同协议结果存档在
+  outputs/alm_budget_analysis_paperA_v3/，结论方向一致。
+  该实验只评价单次 ALM 修正，不评价最终碰撞率或推理耗时。
 * 曲率相关数值（实验 1 表 1、实验 3 表 4）按 **0.5 m 弧长分辨率**评估，需在表注说明。
 * `M01_framework.png` 体积 14.6 MB（6292×2780，300 dpi），投稿前建议按期刊要求压缩或改投矢量版。
