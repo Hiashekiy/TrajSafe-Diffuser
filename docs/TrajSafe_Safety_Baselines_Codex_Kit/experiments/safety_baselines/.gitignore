@@ -1,0 +1,8 @@
+# Project-local research PDFs shipped in this ZIP; avoid committing large uploads
+papers/*.pdf
+# All generated experiments, logs, and checkpoints
+results/**
+!results/.gitkeep
+__pycache__/
+.pytest_cache/
+*.pyc
