@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import sys
@@ -125,62 +126,55 @@ def experiment2():
 
 
 def experiment3():
-    """实验 3（ALM 迭代预算）：安全/质量表 + 计算开销表 + 配对 bootstrap。"""
-    summary = _read(os.path.join(RES, "exp3", "table3_summary.json"))
-    if not summary or "table1" not in summary:
+    """实验 3（单次 ALM 调用的迭代预算扫描）。
+
+    数据源是 ``outputs/alm_budget_analysis``（缓存输入 + 预算回放），
+    不是旧版的整链路预算表。
+    """
+    out_dir = os.path.join(C.ROOT, "outputs", "alm_budget_analysis")
+    summary_csv = os.path.join(out_dir, "summary.csv")
+    if not os.path.exists(summary_csv):
         return None, ["_实验 3 尚未运行_"]
-    order = ["I2", "I4", "I6", "I8", "I10", "Default"]
-    t1 = {r["config"]: r for r in summary["table1"]}
-    rows = []
-    for tag in order:
-        r = t1.get(tag)
-        if not r:
-            continue
-        rows.append([tag, _num(r["constraint_feasible_pct"], 2),
-                     _num(r["collision_pct"], 2),
-                     "%d/%d" % (r["collisions"], r["n"]),
-                     _num(r["clearance_m"], 3), _num(r["detour_ratio"], 4),
-                     _num(r["nrmse_pct"], 3), _num(r["kappa_max_inv_m"], 4),
-                     _num(r["kappa2_mean_inv_m2"], 5)])
-    out = ["**Table 3 — ALM iteration budget: safety and trajectory quality**", "",
-           _table(["Config", "Continuous feasible (%)", "Collision (%)",
-                   "Collisions/N", "Min clearance (m)", "Detour", "NRMSE (%)",
-                   "Max curvature (1/m)", "Sq. curvature (1/m2)"], rows), ""]
-    t2 = {r["config"]: r for r in summary["table2"]}
-    rows = []
-    for tag in order:
-        r = t2.get(tag)
-        if not r:
-            continue
-        rows.append([tag, _num(r["iterations_mean"], 3),
-                     _num(r["iterations_p95"], 2), _num(r["at_budget_pct"], 1),
-                     _num(r["alm_ms_per_call"], 2),
-                     _num(r.get("e2e_ms_batch32_median"), 2),
-                     _num(r["e2e_ms_batch1"], 2),
-                     _num(r.get("e2e_ms_batch1_median"), 2),
-                     _num(r["e2e_ms_batch1_p95"], 2)])
-    out += ["**Table 3b — cost and solver diagnostics**", "",
-            _table(["Config", "Mean iters", "P95 iters", "At budget (%)",
-                    "ALM ms/call", "E2E ms (b=32, med)", "E2E ms (b=1, mean)",
-                    "E2E ms (b=1, med)", "E2E P95 (b=1)"], rows), ""]
-    boot = summary.get("bootstrap_vs_default") or {}
-    if boot:
-        rows = []
-        for tag in order:
-            entry = boot.get(tag) or {}
-            for key in ("constraint_feasible", "collision", "detour_ratio",
-                        "nrmse_pct"):
-                ci = entry.get(key)
-                if not ci:
-                    continue
-                rows.append([tag, key, _num(ci["mean"], 4), _num(ci["lo"], 4),
-                             _num(ci["hi"], 4), str(ci["n"])])
-        if rows:
-            out += ["**Table 3c — paired bootstrap vs Default (95% CI, "
-                    "resampled by task)**", "",
-                    _table(["Config", "Quantity", "Mean diff", "CI low",
-                            "CI high", "Tasks"], rows), ""]
-    return summary, out
+    with open(summary_csv, encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    run_cfg = {}
+    cfg_path = os.path.join(out_dir, "run_config.json")
+    if os.path.exists(cfg_path):
+        with open(cfg_path, encoding="utf-8") as handle:
+            run_cfg = json.load(handle)
+
+    table_rows = []
+    for r in rows:
+        table_rows.append([
+            "I%s" % r["budget"], _num(float(r["feasible_rate_pct"]), 2),
+            "[%s, %s]" % (_num(float(r["feasible_ci_lo"]), 2),
+                          _num(float(r["feasible_ci_hi"]), 2)),
+            _num(float(r["violation_after_mean_scene"]), 5),
+            _num(float(r["violation_after_p95_scene"]), 5),
+            _num(float(r["correction_mean_m"]), 5),
+            _num(float(r["iterations_mean"]), 2),
+            str(r["n_calls"])])
+    out = ["**Table 4 — ALM iteration budget vs constraint-correction quality** "
+           "(main set: calls whose cached input already violated the corridor)",
+           "",
+           _table(["Max iters", "Feasible calls (%)", "95% CI",
+                   "Residual violation (scene)", "P95", "Correction (m)",
+                   "Actual iters", "Calls"], table_rows), ""]
+    st = (run_cfg.get("stats") or {})
+    man = (run_cfg.get("manifest") or {})
+    if st:
+        out += ["Coverage: cached calls %s (all valid), baseline-satisfied "
+                "%.2f%%, main set %s calls / %s scenes / %s trajectories; "
+                "parity check max |diff| = %s."
+                % (st.get("n_cached_calls"), st.get("baseline_satisfied_pct") or 0.0,
+                   st.get("n_calls_baseline_infeasible"), st.get("n_scenes_main"),
+                   st.get("n_trajectories_main"),
+                   (st.get("parity") or {}).get("max_abs_diff")), ""]
+    if man:
+        out += ["Model: `%s` (sha256 `%s`), branch `%s`."
+                % (man.get("checkpoint"), man.get("checkpoint_hash"),
+                   man.get("branch")), ""]
+    return run_cfg, out
 
 
 def main() -> int:
@@ -194,7 +188,7 @@ def main() -> int:
                  "所有数字均来自实际运行，未做任何人工填写。", "",
                  "## 实验 1：不同安全规划方法对比与计算效率", ""] + e1
     sections += ["## 实验 2：关键模块消融与历史反馈作用分析", ""] + e2
-    sections += ["## 实验 3：ALM 迭代预算与安全性-计算效率权衡", ""] + e3
+    sections += ["## 实验 3：ALM 迭代预算对安全约束修正效果的影响", ""] + e3
     path = os.path.join(OUT, "PAPER_TABLES.md")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(sections) + "\n")

@@ -44,6 +44,9 @@ from src.geometry.sdf_field import build_occupancy_sdf  # noqa: E402
 from src.utils.checkpoint import load_model  # noqa: E402
 from src.utils.config import load_config  # noqa: E402
 
+ROOT = _ROOT
+
+
 def _first_existing(*candidates: str) -> str:
     """First candidate path that exists (the repo tree was reorganised once)."""
     for path in candidates:
