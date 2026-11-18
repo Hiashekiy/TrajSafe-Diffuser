@@ -39,11 +39,13 @@ def focal_astar(safe, start_idx, goal_idx, w=1.2, secondary="clearance",
 
 def pdg_focal_astar(safe, start_idx, goal_idx, guidance, w=1.2, alpha_d=1.0,
                     alpha_p=1.0, sigma_m=None, L_ref_m=None, neighbors=None,
-                    snapshots=(1, 10, 50, 100, 500)) -> SearchResult:
-    cfg = SearchConfig(w=float(w), heuristic="octile", secondary="guidance",
+                    snapshots=(1, 10, 50, 100, 500), h_table=None,
+                    secondary="guidance", h_tie_tol_cells=0.0) -> SearchResult:
+    cfg = SearchConfig(w=float(w), heuristic="octile", secondary=secondary,
                        alpha_d=float(alpha_d), alpha_p=float(alpha_p),
                        sigma_m=sigma_m, L_ref_m=L_ref_m, guidance=guidance,
-                       snapshots=snapshots)
+                       h_table=h_table, snapshots=snapshots,
+                       h_tie_tol_cells=float(h_tie_tol_cells))
     return focal_search(safe, start_idx, goal_idx, cfg, neighbors)
 
 

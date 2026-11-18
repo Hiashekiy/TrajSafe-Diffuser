@@ -144,18 +144,25 @@ def clearance_field(free: np.ndarray, cell_m: float) -> np.ndarray:
 
 
 def inflate_obstacles(free: np.ndarray, radius_cells: float,
-                      cell_m: float = 1.0) -> np.ndarray:
+                      cell_m: float = 1.0, return_distance: bool = False):
     """Circular (Euclidean) obstacle inflation.
 
     A cell stays free iff its centre is farther than ``radius_cells`` from every
     blocked cell CENTRE.  ``radius_cells <= 0`` returns the input unchanged.
+
+    With ``return_distance`` the raw clearance field (metres, distance to the
+    nearest blocked cell) is returned as well: it is the same EDT call
+    ``path_centering`` would otherwise repeat, so callers can share it.
     """
     r = float(radius_cells)
     if r <= 0.0:
-        return np.array(free, dtype=bool, copy=True)
+        f = np.array(free, dtype=bool, copy=True)
+        return (f, clearance_field(f, cell_m)) if return_distance else f
     dist_cells = clearance_field(free, 1.0)     # metres==cells when cell_m=1
     safe = dist_cells > r
     safe &= np.asarray(free, dtype=bool)
+    if return_distance:
+        return safe, dist_cells * float(cell_m)
     return safe
 
 
@@ -171,6 +178,7 @@ class SafeGrid:
     safety_margin_m: float
     notes: list = field(default_factory=list)
     raw_free: np.ndarray = None
+    raw_clearance_m: np.ndarray = None   # distance of the RAW map, reused by centring
 
     @property
     def n_free(self) -> int:
@@ -212,7 +220,8 @@ def build_safe_grid(occupancy, spec: GridSpec, robot_radius_m: float = 0.8,
     r_inflate_m = float(robot_radius_m) + float(safety_margin_m)
     r_cells = r_inflate_m / float(spec.cell_m)
     r_eff = max(0.0, r_cells - float(already_inflated_cells))
-    free = inflate_obstacles(raw_free, r_eff, spec.cell_m)
+    free, raw_clearance = inflate_obstacles(raw_free, r_eff, spec.cell_m,
+                                            return_distance=True)
     notes = []
     if grid.unknown.any():
         notes.append("%d unknown cells treated as obstacle"
@@ -230,4 +239,4 @@ def build_safe_grid(occupancy, spec: GridSpec, robot_radius_m: float = 0.8,
                     clearance_m=clearance_field(free, spec.cell_m),
                     inflation_cells=r_eff, robot_radius_m=float(robot_radius_m),
                     safety_margin_m=float(safety_margin_m), notes=notes,
-                    raw_free=raw_free)
+                    raw_free=raw_free, raw_clearance_m=raw_clearance)

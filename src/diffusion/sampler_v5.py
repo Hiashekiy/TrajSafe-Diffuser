@@ -135,19 +135,44 @@ def _search_once(grids, spec, cond, x0_curve, cfg, b):
                 ref, spec, J=int(gcfg.get("J", 3)))
         s_idx = int(spec.cell_to_index(spec.world_to_cell(start)))
         g_idx = int(spec.cell_to_index(spec.world_to_cell(goal)))
+        # ---- heuristic: exact geodesic distance-to-goal when it is cheap ----
+        # octile (straight line) is ~20 % loose on these maps, which is what
+        # makes the f0 == C* plateau explode (12k+ expansions).  The MCP field
+        # is admissible AND consistent, costs ~3 ms, and cuts expansions by an
+        # order of magnitude (docs/new_framework_SEARCH_PERF_AUDIT.md).
+        h_tab = None
+        if str(gcfg.get("heuristic", "geodesic")).lower().startswith("geo"):
+            from ..grid_search.geodesic_heuristic import geodesic_distance_field
+            t_geo = time.perf_counter()
+            try:
+                h_tab = geodesic_distance_field(
+                    safe.free, float(spec.cell_m),
+                    spec.index_to_rc(np.array([g_idx]))[0])
+            except Exception:                     # optional dependency / odd map
+                h_tab = None
+            stats["geo_ms"] = (time.perf_counter() - t_geo) * 1000.0
+            if h_tab is not None and not np.isfinite(h_tab[s_idx]):
+                h_tab = None                      # goal unreachable per MCP
+        stats["heuristic"] = "geodesic" if h_tab is not None else "octile"
         res = None
         if field.valid:
             res = pdg_focal_astar(safe, s_idx, g_idx, field,
-                                  w=float(gcfg.get("focal_w", 1.2)),
+                                  w=float(gcfg.get("focal_w", 1.0)),
                                   alpha_p=float(gcfg.get("alpha_p", 1.0)),
-                                  neighbors=nbr)
+                                  neighbors=nbr, h_table=h_tab,
+                                  secondary=str(gcfg.get("secondary",
+                                                         "guidance")),
+                                  h_tie_tol_cells=float(
+                                      gcfg.get("h_tie_tol_cells", 0.0)))
             stats["guide_valid"] = True
         if res is None or res.status != "SUCCESS":
-            res = focal_astar(safe, s_idx, g_idx, w=1.2, secondary="clearance",
-                              neighbors=nbr)
+            res = focal_astar(safe, s_idx, g_idx,
+                              w=float(gcfg.get("fallback_w", 1.2)),
+                              secondary="clearance", neighbors=nbr,
+                              h_table=h_tab)
             stats["fallback"] = "focal_clearance"
             if res.status != "SUCCESS":
-                res = astar(safe, s_idx, g_idx, nbr)
+                res = astar(safe, s_idx, g_idx, nbr, h_table=h_tab)
                 stats["fallback"] = "astar"
         stats["status"] = res.status
         stats["expanded"] = res.stats.get("expanded_nodes", 0)
@@ -184,7 +209,8 @@ def _search_once(grids, spec, cond, x0_curve, cfg, b):
                         pts, free_b, float(spec.cell_m),
                         iters=int(cen_cfg.get("iters", 40)),
                         step_cells=float(cen_cfg.get("step_cells", 1.0)),
-                        smooth=float(cen_cfg.get("smooth", 0.25)))
+                        smooth=float(cen_cfg.get("smooth", 0.25)),
+                        clearance=getattr(g_b, "raw_clearance_m", None))
                     stats["clearance_before"] = cen_st["clearance_before"]
                     stats["clearance_after"] = cen_st["clearance_after"]
                     pts[0], pts[-1] = start, goal

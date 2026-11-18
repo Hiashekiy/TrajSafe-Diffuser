@@ -45,14 +45,40 @@ def _bilinear(field: np.ndarray, xy: np.ndarray) -> np.ndarray:
             + f01 * (1 - fx) * fy + f11 * fx * fy)
 
 
+def _bilinear3(fields: np.ndarray, xy: np.ndarray) -> np.ndarray:
+    """Same as :func:`_bilinear` for a stack ``fields[C,H,W]`` -> ``[C,K]``.
+
+    One gather instead of ``C`` calls: at C=3 this turns 3 x ~66 us of numpy
+    call overhead per centring iteration into one.  Values are bit-identical to
+    calling :func:`_bilinear` per channel (``tests/test_grid_search_hotpath.py``).
+    """
+    _, H, W = fields.shape
+    px = (xy[:, 0] + 1.0) / 2.0 * (W - 1)
+    py = (xy[:, 1] + 1.0) / 2.0 * (H - 1)
+    x0 = np.clip(np.floor(px).astype(int), 0, W - 2)
+    y0 = np.clip(np.floor(py).astype(int), 0, H - 2)
+    fx = np.clip(px - x0, 0.0, 1.0)
+    fy = np.clip(py - y0, 0.0, 1.0)
+    f00 = fields[:, y0, x0]
+    f10 = fields[:, y0, x0 + 1]
+    f01 = fields[:, y0 + 1, x0]
+    f11 = fields[:, y0 + 1, x0 + 1]
+    return (f00 * (1 - fx) * (1 - fy) + f10 * fx * (1 - fy)
+            + f01 * (1 - fx) * fy + f11 * fx * fy)
+
+
 def center_path(path, free, cell_m: float, *, iters: int = 40,
                 step_cells: float = 1.0, smooth: float = 0.25,
-                keep_ends: bool = True):
+                keep_ends: bool = True, clearance=None):
     """Return ``(centered_path, stats)``.
 
     ``path [K,2]`` scene coordinates, ``free [H,W]`` bool, ``cell_m`` metres per
     cell of that grid.  Only interior points move: ``path[0]``/``path[-1]`` are
     the start/goal and stay exact.
+
+    ``clearance`` optionally supplies ``clearance_field(free, cell_m)`` when the
+    caller already has it (``SafeGrid.raw_clearance_m``) -- it is the same array
+    the safe-grid inflation computes, so sharing it saves one 256x256 EDT.
     """
     path = np.asarray(path, dtype=np.float64).copy()
     orig_path = path.copy()
@@ -63,24 +89,24 @@ def center_path(path, free, cell_m: float, *, iters: int = 40,
     if K < 3 or not free.any():
         return path, stats
 
-    clear = clearance_field(free, cell_m).astype(np.float64)
+    if clearance is not None and np.shape(clearance) == free.shape:
+        clear = np.array(clearance, dtype=np.float64, copy=True)
+    else:
+        clear = clearance_field(free, cell_m).astype(np.float64)
     clear[~free] = 0.0
-    # nearest free cell for the projection step
-    from scipy.ndimage import distance_transform_edt
-    _, (iy, ix) = distance_transform_edt(~free, return_indices=True)
 
     scene_per_cell = 2.0 / W
     step = float(step_cells) * scene_per_cell
     gy, gx = np.gradient(clear)
+    # one stacked gather per iteration instead of three ~66 us _bilinear calls
+    fields = np.stack([clear, gx, gy])
 
     before = _bilinear(clear, path)
     stats["clearance_before"] = float(np.mean(before))
     stats["clearance_min_before"] = float(np.min(before))
 
     for _ in range(int(iters)):
-        c = _bilinear(clear, path)
-        gxv = _bilinear(gx, path)
-        gyv = _bilinear(gy, path)
+        c, gxv, gyv = _bilinear3(fields, path)
         norm = np.sqrt(gxv ** 2 + gyv ** 2) + 1e-12
         # scale the step by the local clearance so points in wide space settle
         # and points squeezed against a wall move decisively

@@ -33,7 +33,7 @@ __all__ = ["SearchConfig", "SearchResult", "focal_search", "octile_heuristic",
            "SECONDARY_RULES"]
 
 SQRT2 = float(np.sqrt(2.0))
-SECONDARY_RULES = ("guidance", "clearance", "index", "f0_index")
+SECONDARY_RULES = ("guidance", "guidance_h", "clearance", "index", "f0_index")
 
 
 def octile_heuristic(rows, cols, goal_rc, cell_m: float) -> np.ndarray:
@@ -61,6 +61,7 @@ class SearchConfig:
 
     w: float = 1.2
     heuristic: str = "octile"          # "octile" | "none" (Dijkstra)
+    h_table: object = None             # [n] float64 precomputed h (e.g. geodesic)
     secondary: str = "guidance"        # one of SECONDARY_RULES
     fallback_secondary: str = "clearance"   # used when the guidance is invalid
     alpha_d: float = 1.0
@@ -71,6 +72,8 @@ class SearchConfig:
     guide_weight: float = 0.0          # lambda: 0 = pure A*, no fused penalty
     snapshots: tuple = (1, 10, 50, 100, 500)
     max_expansions: int = None
+    fast_path: bool = True             # use the heap loop when w == 1 (see focal_fast)
+    h_tie_tol_cells: float = 0.0       # guidance_h: treat h-ties within N cells as tied
 
     def copy(self, **kw) -> "SearchConfig":
         d = dict(self.__dict__)
@@ -91,17 +94,24 @@ class SearchResult:
     guidance_used: bool = False
 
 
-def _tiebreak_pick(cand_idx, h_d, f0, clearance, secondary):
+def _tiebreak_pick(cand_idx, h_d, f0, clearance, secondary, h=None):
     """Return the FOCAL member to expand (deterministic, documented order).
 
     The primary key is found with ``argmin`` (O(k) with a small constant); only
     the (usually single) tied set goes through ``lexsort``.  This keeps the
     per-iteration cost dominated by the guidance gather itself even when FOCAL
     holds tens of thousands of nodes.
+
+    ``guidance_h`` is the progress-aware variant: inside one FOCAL set prefer the
+    node with the smallest remaining cost ``h`` (fewest expansions) and use the
+    diffusion score only to break THOSE ties -- it still only reorders nodes with
+    the same ``f0``, so the w-bound is untouched.
     """
     if len(cand_idx) == 0:
         return -1
-    if secondary == "guidance" and h_d is not None:
+    if secondary == "guidance_h" and h is not None:
+        primary = h
+    elif secondary == "guidance" and h_d is not None:
         primary = h_d
     elif secondary == "clearance":
         primary = -clearance
@@ -117,8 +127,8 @@ def _tiebreak_pick(cand_idx, h_d, f0, clearance, secondary):
         return int(cand_idx[tight[0]])
     sub = tight
     idxk = cand_idx[sub].astype(np.float64)
-    if secondary == "guidance":
-        order = np.lexsort((idxk, -clearance[sub], f0[sub]))
+    if secondary in ("guidance", "guidance_h") and h_d is not None:
+        order = np.lexsort((idxk, -clearance[sub], h_d[sub], f0[sub]))
     elif secondary == "clearance":
         order = np.lexsort((idxk, f0[sub]))
     elif secondary == "f0_index":
@@ -169,6 +179,12 @@ def focal_search(safe: SafeGrid, start_idx: int, goal_idx: int,
                  cfg: SearchConfig = None,
                  neighbors: NeighborTable = None) -> SearchResult:
     cfg = cfg or SearchConfig()
+    # At w == 1 the focal rule degenerates to "pop f0 == f_min", which the heap
+    # loop in focal_fast does in O(log n) per expansion instead of the O(open)
+    # band rebuild below.  Same search, ~20x cheaper (see that module).
+    from .focal_fast import focal_search_fast, supports as _fast_supports
+    if _fast_supports(cfg):
+        return focal_search_fast(safe, start_idx, goal_idx, cfg, neighbors)
     neighbors = neighbors or build_neighbor_table(safe.free, safe.spec.cell_m)
     spec = safe.spec
     n = spec.n_cells
@@ -177,9 +193,9 @@ def focal_search(safe: SafeGrid, start_idx: int, goal_idx: int,
     # guidance-free Focal A* variant named by ``fallback_secondary``.
     secondary = cfg.secondary
     guidance_ok = bool(getattr(cfg.guidance, "valid", False))
-    if secondary == "guidance" and not guidance_ok:
+    if secondary in ("guidance", "guidance_h") and not guidance_ok:
         secondary = cfg.fallback_secondary
-    use_guidance = secondary == "guidance" and guidance_ok
+    use_guidance = secondary in ("guidance", "guidance_h") and guidance_ok
     # the FUSED variant (guide_weight > 0) needs the field even when the
     # ordering rule is plain A* (secondary='index')
     guidance_fused = cfg.guidance if guidance_ok else None
@@ -238,8 +254,15 @@ def focal_search(safe: SafeGrid, start_idx: int, goal_idx: int,
 
     # The octile heuristic only depends on the cell -> precompute it once per
     # search (one vectorised pass over the grid) instead of evaluating it in
-    # Python for every neighbour of every expansion.
-    if cfg.heuristic == "none":
+    # Python for every neighbour of every expansion.  A caller may also hand in
+    # a stronger admissible field (geodesic distance, see
+    # ``grid_search.geodesic_heuristic``) through ``cfg.h_table``.
+    if cfg.h_table is not None:
+        h_tab = np.ascontiguousarray(np.asarray(cfg.h_table, dtype=np.float64))
+        if h_tab.shape != (n,):
+            raise ValueError("h_table must have shape (%d,), got %s"
+                             % (n, h_tab.shape))
+    elif cfg.heuristic == "none":
         h_tab = None
     else:
         rr, cc = np.divmod(np.arange(n, dtype=np.int64), width)
@@ -288,11 +311,31 @@ def focal_search(safe: SafeGrid, start_idx: int, goal_idx: int,
         if len(cand) == 0:               # defensive
             break
 
-        h_d = (guidance.score(cand, g[cand], cfg.alpha_d, cfg.alpha_p,
-                              cfg.sigma_m, cfg.L_ref_m)
-               if guidance is not None else None)
-        current = _tiebreak_pick(cand, h_d, f0[cand], clearance_flat[cand],
-                                 secondary)
+        # ---- pick the FOCAL member ----------------------------------------
+        if secondary == "guidance_h" and h_tab is not None:
+            # Progress first.  `h_tie_tol_cells` widens "tied" from exact float
+            # equality to "within N cells of the best remaining cost": with a
+            # continuous geodesic h exact ties essentially never happen, so
+            # tol=0 leaves the diffusion guidance inert (measured: 0 of 8657
+            # expansions consulted a tie), while tol>=1 keeps the guidance
+            # deciding among the progress-near candidates.
+            hc = h_tab[cand]
+            h_min = float(hc.min())
+            tight = cand[hc <= h_min + float(cfg.h_tie_tol_cells) * cell_m]
+            if len(tight) > 1:
+                h_d = (guidance.score(tight, g[tight], cfg.alpha_d, cfg.alpha_p,
+                                      cfg.sigma_m, cfg.L_ref_m)
+                       if guidance is not None else None)
+                current = _tiebreak_pick(tight, h_d, f0[tight],
+                                         clearance_flat[tight], "guidance")
+            else:
+                current = int(tight[0])
+        else:
+            h_d = (guidance.score(cand, g[cand], cfg.alpha_d, cfg.alpha_p,
+                                  cfg.sigma_m, cfg.L_ref_m)
+                   if guidance is not None else None)
+            current = _tiebreak_pick(cand, h_d, f0[cand], clearance_flat[cand],
+                                     secondary)
         in_open[current] = False
         closed[current] = True
         expanded += 1

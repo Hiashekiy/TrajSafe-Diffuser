@@ -151,7 +151,11 @@ grid_search:
   safety_margin_m: 0.3
   # 数据侧已腐蚀 4 格；按方案 §4.3 这不算安全膨胀，故这里不做抵消
   already_inflated_cells: 0.0
-  focal_w: 1.2
+  focal_w: 1.2                 # unchanged: with a tight h + guidance_h the band no longer binds
+  heuristic: "geodesic"        # exact MCP distance-to-goal; "octile" = old straight line
+  secondary: "guidance_h"      # prefer smallest h inside FOCAL, diffusion score breaks its ties
+  h_tie_tol_cells: 0.0         # 0 = guidance inert (fastest); 1-2 = guidance active, ~1.8x slower
+  fallback_w: 1.2
   J: 3
   alpha_p: 1.0
   scene_to_meter: 80.0
