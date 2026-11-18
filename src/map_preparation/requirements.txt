@@ -1,0 +1,8 @@
+# Standalone map preparation only; install into your chosen Python environment.
+numpy>=1.26
+scipy>=1.11.4
+matplotlib>=3.8
+scikit-image==0.26.0
+sknw==0.15
+networkx>=3.0
+numba>=0.61
