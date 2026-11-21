@@ -40,7 +40,7 @@ from ..position_encoding import (Sinusoidal1DPositionEmbedding,
                                  Sinusoidal2DPositionEmbedding,
                                  SinusoidalTimestepEmbedding)
 from .blocks import MatchBlock, TrajBlock
-from .boundary import BoundaryDecoder
+from .boundary import BoundaryDecoder, modulate_heading
 from .ellipse import EllipseGeometry
 from .encoders import SkeletonEncoder, TrajectoryEncoder
 from .feedback import FeedbackEncoder, FeedbackFusion
@@ -244,45 +244,9 @@ class TrajSafePlannerV5(nn.Module):
         same "smooth fix" idea as the position condition, not a hard teleport).
         ``heading`` [B,2,2] = (t0, t1) unit vectors in SCENE coordinates.
         """
-        if not self.heading_enabled or heading is None:
-            return q
-        B, C, _ = q.shape
-        dev, dt = q.device, q.dtype
-        ell = self._ell_of(cond)                                      # [B]
-        valid = (heading_valid if heading_valid is not None
-                 else torch.ones(B, 2, device=dev, dtype=torch.bool))
-        valid = valid.bool()
-        ws, wg = self.boundary_decoder.weights(C, device=dev, dtype=dt)
-        # profile starting at the SECOND control (Q0 must stay exact)
-        prof = ws.clone()
-        prof[0] = 0.0
-        q_out = q
-        # The DIRECTION is the constraint, the segment length is the network's:
-        # keeping the current |Q1-Q0| (clipped) means the soft profile blend
-        # rotates the tangent instead of fighting the learned control spacing.
-        seg = torch.linalg.norm(cond[:, 1] - cond[:, 0], dim=-1, keepdim=True)
-        hi = 0.30 * seg
-        def _len(cur):
-            return torch.maximum(torch.minimum(cur, hi),
-                                 torch.full_like(cur, float(self.heading_ell_min)))
-        # start tangent: target for Q1
-        t0 = heading[:, 0] / heading[:, 0].norm(dim=-1, keepdim=True).clamp_min(1e-9)
-        l0 = _len((q_out[:, 1] - q_out[:, 0]).norm(dim=-1, keepdim=True))
-        tgt1 = cond[:, 0] + l0 * t0
-        d1 = (tgt1 - q_out[:, 1]) * valid[:, 0][:, None].to(dt)
-        q_out = q_out + prof[None, :, None] * d1[:, None, :]
-        if self.heading_goal and (valid_goal is None or valid_goal):
-            t1 = heading[:, 1] / heading[:, 1].norm(dim=-1, keepdim=True).clamp_min(1e-9)
-            l1 = _len((q_out[:, C - 1] - q_out[:, C - 2]).norm(dim=-1, keepdim=True))
-            tgt2 = cond[:, 1] - l1 * t1
-            d2 = (tgt2 - q_out[:, C - 2]) * valid[:, 1][:, None].to(dt)
-            prof_g = torch.flip(prof, dims=[0])
-            q_out = q_out + prof_g[None, :, None] * d2[:, None, :]
-        # the two endpoints stay exact
-        q_out = q_out.clone()
-        q_out[:, 0] = cond[:, 0]
-        q_out[:, C - 1] = cond[:, 1]
-        return q_out
+        return modulate_heading(self.boundary_decoder, q, cond, heading, heading_valid,
+                                enabled=self.heading_enabled, apply_goal=self.heading_goal,
+                                min_length=self.heading_ell_min, valid_goal=valid_goal)
 
     def hard_control_endpoints(self, q: torch.Tensor, cond: torch.Tensor,
                                heading: torch.Tensor | None = None,

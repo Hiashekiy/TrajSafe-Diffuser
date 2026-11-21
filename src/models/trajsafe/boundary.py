@@ -119,3 +119,46 @@ class BoundaryDecoder(nn.Module):
         e_g = cond[:, 1] - q_raw[:, C - 1]
         return (q_raw + ws[None, :, None] * e_s[:, None, :]
                 + wg[None, :, None] * e_g[:, None, :])
+
+
+def modulate_heading(decoder, q, cond, heading, heading_valid=None, *, enabled=True,
+                     apply_goal=True, min_length=0.01, valid_goal=None):
+    """Rotate the endpoint tangents using the same local profile as V5."""
+    if not enabled or heading is None:
+        return q
+    B, C, _ = q.shape
+    dev, dt = q.device, q.dtype
+    valid = (heading_valid if heading_valid is not None
+             else torch.ones(B, 2, device=dev, dtype=torch.bool))
+    valid = valid.bool()
+    ws, _ = decoder.weights(C, device=dev, dtype=dt)
+    # profile starting at the SECOND control (Q0 must stay exact)
+    prof = ws.clone()
+    prof[0] = 0.0
+    q_out = q
+    # The DIRECTION is the constraint, the segment length is the network's:
+    # keeping the current |Q1-Q0| (clipped) means the soft profile blend
+    # rotates the tangent instead of fighting the learned control spacing.
+    seg = torch.linalg.norm(cond[:, 1] - cond[:, 0], dim=-1, keepdim=True)
+    hi = 0.30 * seg
+    def _len(cur):
+        return torch.maximum(torch.minimum(cur, hi),
+                             torch.full_like(cur, float(min_length)))
+    # start tangent: target for Q1
+    t0 = heading[:, 0] / heading[:, 0].norm(dim=-1, keepdim=True).clamp_min(1e-9)
+    l0 = _len((q_out[:, 1] - q_out[:, 0]).norm(dim=-1, keepdim=True))
+    tgt1 = cond[:, 0] + l0 * t0
+    d1 = (tgt1 - q_out[:, 1]) * valid[:, 0][:, None].to(dt)
+    q_out = q_out + prof[None, :, None] * d1[:, None, :]
+    if apply_goal and (valid_goal is None or valid_goal):
+        t1 = heading[:, 1] / heading[:, 1].norm(dim=-1, keepdim=True).clamp_min(1e-9)
+        l1 = _len((q_out[:, C - 1] - q_out[:, C - 2]).norm(dim=-1, keepdim=True))
+        tgt2 = cond[:, 1] - l1 * t1
+        d2 = (tgt2 - q_out[:, C - 2]) * valid[:, 1][:, None].to(dt)
+        prof_g = torch.flip(prof, dims=[0])
+        q_out = q_out + prof_g[None, :, None] * d2[:, None, :]
+    # the two endpoints stay exact
+    q_out = q_out.clone()
+    q_out[:, 0] = cond[:, 0]
+    q_out[:, C - 1] = cond[:, 1]
+    return q_out

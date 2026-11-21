@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""12_build_pdg_paths.py - offline training paths from a teacher x0 + PDG-Focal A*.
+"""12_build_pdg_paths.py - offline training paths from a teacher x0 + field-guided search.
 
 Bootstrap step 2-4 of plan 搂9.2, for the C=32 / Q=64 root:
 
@@ -11,7 +11,7 @@ Bootstrap step 2-4 of plan 搂9.2, for the C=32 / Q=64 root:
      ``already_inflated_cells=0``: the k4p map is ERODED (obstacles shrunk by 4
      cells, ``05_erode_occupancy.py``), which is NOT a safety inflation, so the
      robot radius must not be cancelled (plan 搂4.3);
-  3. PDG-Focal A* (w=1.2) on that grid with the x0 curve as the soft reference;
+  3. field-guided search (w=1.2) on that grid with the x0 curve as the soft reference;
   4. independent ``validate_path`` re-check; on success the path centres are
      converted to scene coordinates and resampled to 128 arc-length-uniform
      points (endpoints pinned to the continuous start/goal, like every other
@@ -25,7 +25,7 @@ Output (new root, per split):
     pdg_path_status.npy  [N]       int8   (see STATUS_NAMES; 0 = search success)
   + pdg_stats.json (per split: success rate, expansions, timings, reasons)
 
-Resumable: partial arrays are flushed to ``<split>/_pdg_partial.npz`` every
+Resumable: partial arrays are flushed to ``<split>/_field_partial.npz`` every
 ``--save-every`` samples.
 
     # self-check, then the REQUIRED order: test -> val -> train
@@ -50,9 +50,9 @@ sys.path.insert(0, REPO_ROOT)
 
 from src.diffusion.sampler import sample  # noqa: E402
 from src.diffusion.schedule import NoiseSchedule  # noqa: E402
-from src.grid_search import (GridSpec, baselines, build_neighbor_table,  # noqa: E402
-                             build_progress_guidance, build_safe_grid,
-                             prepare_reference_path, validate_path)
+from src.grid_search import GridSpec  # noqa: E402
+from src.diffusion.sampler_v5 import _build_safe_grids  # noqa: E402
+from src.grid_search.field_search import search_path  # noqa: E402
 from src.utils.checkpoint import load_model  # noqa: E402
 from src.utils.config import load_config  # noqa: E402
 
@@ -65,8 +65,6 @@ PATH_POINTS = 128
 ROBOT_RADIUS_M = 0.8
 SAFETY_MARGIN_M = 0.3
 ALREADY_INFLATED_CELLS = 0.0        # plan 搂4.3: erosion is NOT inflation
-W_FOCAL = 1.2
-J_GUIDE = 3
 STATUS_NAMES = {0: "SUCCESS", 1: "NO_PATH", 2: "INVALID_START",
                 3: "INVALID_GOAL", 4: "DEGENERATE_PATH", 5: "EXCEPTION",
                 6: "VALIDATION_FAILED"}
@@ -149,71 +147,40 @@ def _straight(start, goal, n) -> np.ndarray:
 
 
 def _x0_free_fraction(occ_free: np.ndarray, x0: np.ndarray) -> float:
-    rc = np.rint((np.asarray(x0, np.float64) + 1.0) / 2.0 * RES - 0.5).astype(np.int64)
-    rc = np.clip(rc, 0, RES - 1)
-    return float(occ_free[rc[:, 1], rc[:, 0]].mean())
+    h, w = occ_free.shape
+    xy = np.rint((np.asarray(x0, np.float64) + 1.0) / 2.0
+                 * np.array([w, h]) - 0.5).astype(np.int64)
+    valid = ((xy[:, 0] >= 0) & (xy[:, 0] < w)
+             & (xy[:, 1] >= 0) & (xy[:, 1] < h))
+    free = np.zeros(len(xy), dtype=bool)
+    free[valid] = occ_free[xy[valid, 1], xy[valid, 0]]
+    return float(free.mean())
 
 
 def _solve_one(occ, start, goal, x0, spec):
-    """One sample: safe grid -> PDG path -> 128 path points + diagnostics."""
-    t0 = time.perf_counter()
-    safe = build_safe_grid(occ, spec, robot_radius_m=ROBOT_RADIUS_M,
-                           safety_margin_m=SAFETY_MARGIN_M,
-                           already_inflated_cells=ALREADY_INFLATED_CELLS)
-    nbr = build_neighbor_table(safe.free, spec.cell_m)
-    t1 = time.perf_counter()
-    ref = prepare_reference_path(np.asarray(x0, np.float64), spec,
-                                 np.asarray(start, np.float64),
-                                 np.asarray(goal, np.float64))
-    field = build_progress_guidance(ref, spec, J=J_GUIDE)
-    t2 = time.perf_counter()
-    s_idx = int(spec.cell_to_index(spec.world_to_cell(np.asarray(start, np.float64))))
-    g_idx = int(spec.cell_to_index(spec.world_to_cell(np.asarray(goal, np.float64))))
-    res = baselines.pdg_focal_astar(safe, s_idx, g_idx, field, w=W_FOCAL,
-                                   neighbors=nbr)
-    t3 = time.perf_counter()
-    diag = dict(prep_ms=(t1 - t0) * 1e3, guide_ms=(t2 - t1) * 1e3,
-                search_ms=(t3 - t2) * 1e3, expanded=int(res.stats.get(
-                    "expanded_nodes", -1)), cost_m=float(res.cost_m),
-                x0_free_frac=_x0_free_fraction(safe.free, x0),
-                ref_valid=bool(ref.valid), ref_reason=ref.reason or "",
-                guide_valid=bool(getattr(field, "valid", False)),
-                start_free=bool(safe.is_free_index(np.array([s_idx]))[0]),
-                goal_free=bool(safe.is_free_index(np.array([g_idx]))[0]),
-                search_cost_m=float(res.stats.get("search_cost_m", np.nan)))
-    if res.status != "SUCCESS" or res.path is None or len(res.path) < 2:
-        code = {"SUCCESS": 4, "NO_PATH": 1, "INVALID_START": 2,
-                "INVALID_GOAL": 3}.get(str(res.status), 5)
-        diag["status"] = code
-        diag["detail"] = str(res.status)
-        diag["snap_m"] = [float("nan"), float("nan")]
-        return None, diag
-    chk = validate_path(safe, res.path, s_idx, g_idx, res.cost_m)
-    if not chk.get("valid", False):
-        diag["status"] = 6
-        diag["detail"] = ";".join(chk.get("errors") or ["invalid"])
-        diag["snap_m"] = [float("nan"), float("nan")]
-        return None, diag
-    rc = spec.index_to_rc(res.path)
-    cells = rc.astype(np.float64)[:, ::-1]                  # (col, row)
-    pts = spec.cell_to_world(cells)
-    diag["snap_m"] = [float(np.linalg.norm(pts[0] - start) * spec.scene_to_meter
-                            / 1.0),
-                      float(np.linalg.norm(pts[-1] - goal) * spec.scene_to_meter
-                            / 1.0)]
-    out = _resample(pts, PATH_POINTS, start, goal)
-    if out is None:
-        diag["status"] = 4
-        diag["detail"] = "degenerate_resample"
-        return None, diag
-    diag["status"] = 0
-    diag["detail"] = ""
-    return out, diag
+    """Use the same footprint map and field-search defaults as online V5."""
+    config = {"grid_search": dict(scene_to_meter=spec.scene_to_meter,
+              robot_radius_m=ROBOT_RADIUS_M, safety_margin_m=SAFETY_MARGIN_M,
+              already_inflated_cells=ALREADY_INFLATED_CELLS)}
+    grids, _, prep_ms = _build_safe_grids(
+        torch.as_tensor(np.array(occ, copy=True))[None, None], config)
+    safe = grids[0][0]
+    try:
+        path, stats = search_path(safe, spec, start, goal, x0, config["grid_search"])
+    except RuntimeError as exc:
+        return None, dict(status=1, detail=str(exc), prep_ms=prep_ms,
+                          guide_ms=0., search_ms=0., expanded=0,
+                          cost_m=float("nan"), x0_free_frac=_x0_free_fraction(safe.free, x0))
+    return path, dict(status=0, detail="", prep_ms=prep_ms,
+                     guide_ms=stats["guide_ms"], search_ms=stats["search_ms"],
+                     expanded=stats["expanded"], cost_m=stats["path_len_m"],
+                     x0_free_frac=_x0_free_fraction(safe.free, x0),
+                     guide_valid=stats["guide_valid"], backend="field_guided")
 
 
 def _partial_paths(split_dir: str, limit=None) -> str:
-    name = ("_pdg_partial.npz" if limit is None
-            else "_pdg_partial_limit%d.npz" % int(limit))
+    name = ("_field_partial.npz" if limit is None
+            else "_field_partial_limit%d.npz" % int(limit))
     return os.path.join(split_dir, name)
 
 
@@ -290,7 +257,7 @@ def main() -> int:
               "safety_margin_m": SAFETY_MARGIN_M,
               "already_inflated_cells": ALREADY_INFLATED_CELLS,
               "inflation_cells": (ROBOT_RADIUS_M + SAFETY_MARGIN_M) / spec.cell_m,
-              "w_focal": W_FOCAL, "j_guide": J_GUIDE,
+              "backend": "field_guided",
               "guidance": "none", "steps": args.steps, "batch": args.batch,
               "seed": args.seed, "caveats": CAVEATS}
     if isinstance(stats_all, dict) and "per_split" in stats_all:

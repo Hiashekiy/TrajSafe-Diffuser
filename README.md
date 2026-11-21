@@ -1,5 +1,11 @@
 # TrajSafe-Diffuser（报告一致的骨架引导安全扩散规划器）
 
+> **当前 V5 搜索更新（2026-11-21）**：在线搜索已用随附 `field-guided-search`
+> 替换 PDG-Focal A*，采用包内端到端推荐参数。搜索前按机器人半径与安全裕度
+> 膨胀障碍，引导场、净空距离与搜索均使用膨胀图；网络仍接收原始占据图。
+> 参见 [`docs/field_guided_search_integration.md`](docs/field_guided_search_integration.md)。
+> V5 主配置为 `configs/config_v5_c32q128.yaml`；下文旧骨架网络描述用于历史版本。
+
 独立地图准备工具：[`src/map_preparation/README.md`](src/map_preparation/README.md)。使用 `python -m src.map_preparation` 将二维占据图转换为 DMA 骨架和 sknw 稀疏曲线图，支持 JSON/NPZ 导出与可视化。
 
 > **栅格搜索模块（独立实验）**：`src/grid_search/` 实现

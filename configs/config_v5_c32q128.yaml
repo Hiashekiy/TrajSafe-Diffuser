@@ -145,17 +145,23 @@ alm:
   dense_verify_points: 512
 
 grid_search:
-  lazy_guidance: true          # H_D computed on demand (28 ms -> 1.6 ms)
   enabled: true
+  backend: field_guided
   robot_radius_m: 0.8
   safety_margin_m: 0.3
-  # 数据侧已腐蚀 4 格；按方案 §4.3 这不算安全膨胀，故这里不做抵消
+  # Eroded obstacles do not count as existing safety inflation.
   already_inflated_cells: 0.0
-  focal_w: 1.2                 # unchanged: with a tight h + guidance_h the band no longer binds
-  heuristic: "geodesic"        # exact MCP distance-to-goal; "octile" = old straight line
-  secondary: "guidance_h"      # prefer smallest h inside FOCAL, diffusion score breaks its ties
-  h_tie_tol_cells: 0.0         # 0 = guidance inert (fastest); 1-2 = guidance active, ~1.8x slower
-  fallback_w: 1.2
-  J: 3
-  alpha_p: 1.0
   scene_to_meter: 80.0
+  field_guided:
+    weight: quadratic
+    lam: 0.01
+    distance: manhattan
+    source_method: drop
+    num_samples: 64
+    method: auto
+    alpha: 0.15
+    gamma: 1.0
+    adaptive: false
+    clearance_beta: 0.10
+    clearance_mode: quadratic_hinge
+    clearance_threshold: 3.0

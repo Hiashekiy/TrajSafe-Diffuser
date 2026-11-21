@@ -2,22 +2,20 @@
 
     step 1  plain denoise: no path, no safety stream, no feedback
             -> x0_1 -> 128-point curve
-    (once)  PDG-Focal A* on the INFLATED safe grid, guided by x0_1
+    (once)  Field-guided search on the INFLATED safe grid, guided by x0_1
             -> initial_search_path; active_path = it (arc-length resampled 128)
-    step 2  active_path + 64 ellipses, NO feedback -> x0_2
+    step 2  active_path + configured safety ellipses, NO feedback -> x0_2
     step 3  latest verified active_path (+ feedback from step 2 if valid)
     step 4  latest verified active_path (+ latest valid feedback)
 
-After every step >= 2: decode -> collision check on the safe grid -> (only if a
+After every step >= 2: decode -> collision check on the network occupancy -> (only if a
 collision exists) build the corridor from the predicted ellipses -> ALM ->
 GLOBAL validation -> update ``active_path`` and the feedback only when it passes.
 No AMENDMENT of the noise schedule: training keeps T=16, inference executes
 ``steps`` (default 4) DDIM forwards over a subsampled schedule.
 
-Scope note for tonight's run: the corridor is still built over the WHOLE ellipse
-set (the "local collision interval" version needs ``build_local_constraint_pack``,
-which is tracked as the remaining S4 item); the collision-interval detection and
-its diagnostics are already computed here.
+Search fields use only the footprint-inflated occupancy. Network conditioning
+and the existing downstream ALM map retain the original occupancy.
 """
 
 from __future__ import annotations
@@ -92,7 +90,6 @@ def _curve_collision_frac(curves, occ, n_dense=None):
 def _build_safe_grids(occ: torch.Tensor, cfg: dict):
     """One SafeGrid + neighbour table per sample (project occupancy semantics)."""
     from ..grid_search.grid_map import GridSpec, build_safe_grid
-    from ..grid_search.grid_neighbors import build_neighbor_table
     gcfg = dict(cfg.get("grid_search") or {})
     s2m = float(gcfg.get("scene_to_meter", _SCENE_TO_METER))
     occ_np = occ.detach().cpu().numpy()
@@ -106,128 +103,23 @@ def _build_safe_grids(occ: torch.Tensor, cfg: dict):
             robot_radius_m=float(gcfg.get("robot_radius_m", 0.8)),
             safety_margin_m=float(gcfg.get("safety_margin_m", 0.3)),
             already_inflated_cells=float(gcfg.get("already_inflated_cells", 0.0)))
-        nbr = build_neighbor_table(safe.free, spec.cell_m)
-        out.append((safe, nbr))
+        # Treat the outside as occupied before applying the footprint radius.
+        from scipy.ndimage import distance_transform_edt
+        boundary_distance = distance_transform_edt(
+            np.pad(safe.raw_free, 1, constant_values=False))[1:-1, 1:-1]
+        safe.free &= boundary_distance > safe.inflation_cells
+        out.append((safe, None))
     return out, spec, (time.perf_counter() - t0) * 1000.0
 
 
 def _search_once(grids, spec, cond, x0_curve, cfg, b):
-    """PDG-Focal A* for sample ``b``; returns (path_scene[128,2], stats dict)."""
-    from ..grid_search import diffusion_path, progress_guidance
-    from ..grid_search.baselines import astar, focal_astar, pdg_focal_astar
-    gcfg = dict(cfg.get("grid_search") or {})
-    safe, nbr = grids[b]
-    start = cond[b, 0].detach().cpu().numpy().astype(np.float64)
-    goal = cond[b, 1].detach().cpu().numpy().astype(np.float64)
-    curve = x0_curve[b].detach().cpu().numpy().astype(np.float64)
-    stats = {"guide_valid": False, "fallback": None, "expanded": 0,
-             "search_ms": 0.0, "guide_ms": 0.0, "status": "NA"}
-    t0 = time.perf_counter()
-    try:
-        ref = diffusion_path.prepare_reference_path(curve, spec, start_world=start,
-                                     goal_world=goal)
-        if bool(gcfg.get("lazy_guidance", True)):
-            # compute H_D only for the nodes the search touches (28 ms -> 1.6 ms)
-            from ..grid_search.lazy_guidance import LazyGuidance
-            field = LazyGuidance(ref, spec, J=int(gcfg.get("J", 3)))
-        else:
-            field = progress_guidance.build_progress_guidance(
-                ref, spec, J=int(gcfg.get("J", 3)))
-        s_idx = int(spec.cell_to_index(spec.world_to_cell(start)))
-        g_idx = int(spec.cell_to_index(spec.world_to_cell(goal)))
-        # ---- heuristic: exact geodesic distance-to-goal when it is cheap ----
-        # octile (straight line) is ~20 % loose on these maps, which is what
-        # makes the f0 == C* plateau explode (12k+ expansions).  The MCP field
-        # is admissible AND consistent, costs ~3 ms, and cuts expansions by an
-        # order of magnitude (docs/new_framework_SEARCH_PERF_AUDIT.md).
-        h_tab = None
-        if str(gcfg.get("heuristic", "geodesic")).lower().startswith("geo"):
-            from ..grid_search.geodesic_heuristic import geodesic_distance_field
-            t_geo = time.perf_counter()
-            try:
-                h_tab = geodesic_distance_field(
-                    safe.free, float(spec.cell_m),
-                    spec.index_to_rc(np.array([g_idx]))[0])
-            except Exception:                     # optional dependency / odd map
-                h_tab = None
-            stats["geo_ms"] = (time.perf_counter() - t_geo) * 1000.0
-            if h_tab is not None and not np.isfinite(h_tab[s_idx]):
-                h_tab = None                      # goal unreachable per MCP
-        stats["heuristic"] = "geodesic" if h_tab is not None else "octile"
-        res = None
-        if field.valid:
-            res = pdg_focal_astar(safe, s_idx, g_idx, field,
-                                  w=float(gcfg.get("focal_w", 1.0)),
-                                  alpha_p=float(gcfg.get("alpha_p", 1.0)),
-                                  neighbors=nbr, h_table=h_tab,
-                                  secondary=str(gcfg.get("secondary",
-                                                         "guidance")),
-                                  h_tie_tol_cells=float(
-                                      gcfg.get("h_tie_tol_cells", 0.0)))
-            stats["guide_valid"] = True
-        if res is None or res.status != "SUCCESS":
-            res = focal_astar(safe, s_idx, g_idx,
-                              w=float(gcfg.get("fallback_w", 1.2)),
-                              secondary="clearance", neighbors=nbr,
-                              h_table=h_tab)
-            stats["fallback"] = "focal_clearance"
-            if res.status != "SUCCESS":
-                res = astar(safe, s_idx, g_idx, nbr, h_table=h_tab)
-                stats["fallback"] = "astar"
-        stats["status"] = res.status
-        stats["expanded"] = res.stats.get("expanded_nodes", 0)
-        if res.status == "SUCCESS":
-            rc = spec.index_to_rc(res.path)
-            pts = spec.cell_to_world(rc.astype(np.float64)[:, ::-1])
-            pts[0] = start
-            pts[-1] = goal
-            # ONE arc-length resample of the raw grid path to exactly 128 points
-            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-            cum = np.concatenate([[0.0], np.cumsum(seg)])
-            if cum[-1] <= 1e-9:
-                raise ValueError("degenerate search path")
-            s = np.linspace(0.0, cum[-1], 128)
-            pts = np.stack([np.interp(s, cum, pts[:, k]) for k in range(2)], -1)
-            pts[0], pts[-1] = start, goal
-            # ---- push the grid path towards the middle of the free channel ---
-            # A* hugs obstacle corners; the ellipses are centred on this path, so
-            # a wall-hugging line makes the local regions degenerate / stop
-            # overlapping (invalid_base_region / bridge_gamma_failed).  Centering
-            # is a clearance-gradient ascent with pinned endpoints.
-            cen_cfg = dict(((cfg.get("grid_search") or {}).get("center_path")
-                            or {}))
-            if bool(cen_cfg.get("enabled", True)):
-                try:
-                    from ..grid_search.path_centering import center_path
-                    g_b = grids[b] if isinstance(grids, (list, tuple)) else grids
-                    if isinstance(g_b, (list, tuple)):
-                        g_b = g_b[0]          # (SafeGrid, neighbour_table)
-                    raw_free = getattr(g_b, "raw_free", None)
-                    free_b = (np.asarray(raw_free, dtype=bool) if raw_free
-                              is not None else np.asarray(g_b.free, dtype=bool))
-                    pts, cen_st = center_path(
-                        pts, free_b, float(spec.cell_m),
-                        iters=int(cen_cfg.get("iters", 40)),
-                        step_cells=float(cen_cfg.get("step_cells", 1.0)),
-                        smooth=float(cen_cfg.get("smooth", 0.25)),
-                        clearance=getattr(g_b, "raw_clearance_m", None))
-                    stats["clearance_before"] = cen_st["clearance_before"]
-                    stats["clearance_after"] = cen_st["clearance_after"]
-                    pts[0], pts[-1] = start, goal
-                except Exception as exc:
-                    stats["center_error"] = repr(exc)[:80]
-            stats["path_len_m"] = float(cum[-1] * spec.scene_to_meter)
-            stats["search_ms"] = (time.perf_counter() - t0) * 1000.0
-            return pts.astype(np.float32), stats
-    except Exception as exc:                      # never let search kill sampling
-        import traceback as _tb
-        stats["search_tb"] = _tb.format_exc()[-700:]
-        stats["search_error"] = repr(exc)[:160]
-    stats["search_ms"] = (time.perf_counter() - t0) * 1000.0
-    u = np.linspace(0.0, 1.0, 128)[:, None]
-    straight = (start[None] * (1 - u) + goal[None] * u).astype(np.float32)
-    stats["fallback"] = stats["fallback"] or "straight"
-    return straight, stats
+    """Field-guided search on the footprint-inflated map; network map is unchanged."""
+    from ..grid_search.field_search import search_path
+    safe, _ = grids[b]
+    return search_path(
+        safe, spec, cond[b, 0].detach().cpu().numpy(),
+        cond[b, 1].detach().cpu().numpy(),
+        x0_curve[b].detach().cpu().numpy(), cfg.get("grid_search") or {})
 
 
 @torch.no_grad()

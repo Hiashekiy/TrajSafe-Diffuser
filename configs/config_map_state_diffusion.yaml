@@ -1,0 +1,21 @@
+seed: 42
+data_root: data/processed/160m-k4p-c32q64
+output: outputs/models/map_state_diffusion
+model:
+  num_controls: 32
+  width: 128
+  heads: 4
+  ffn_dim: 512
+  blocks: 4
+  boundary_profile: [1.0, 0.75, 0.5, 0.25]
+  heading_min_length: 0.01
+diffusion:
+  timesteps: 16
+  beta_schedule: squaredcos_cap_v2
+train:
+  epochs: 100
+  batch_size: 64
+  lr: 0.0003
+  min_lr: 0.00003
+  weight_decay: 0.0001
+  eval_every: 5
